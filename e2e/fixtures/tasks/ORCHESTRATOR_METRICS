@@ -1,0 +1,10 @@
+{
+  "contextPct": 82,
+  "inputTokens": 820000,
+  "outputTokens": 41000,
+  "model": {
+    "id": "claude-opus-5",
+    "display_name": "Opus 5"
+  },
+  "updatedAt": "2026-09-08T09:00:00Z"
+}

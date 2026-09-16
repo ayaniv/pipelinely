@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.superpowers/
+test-results/
+playwright-report/
+blob-report/
+
+# Root-level TASK.md is a scratch/dispatch artifact copied in by each
+# worker's dispatch step — not meant to be permanent. Anchored to the repo
+# root only; tasks/*/TASK.md below is a separate, deliberately tracked file.
+/TASK.md
+
+# Unlike the private cockpit-ai repo, this public checkout doesn't track
+# task history — only the empty scaffold ships.
+tasks/**
+!tasks/.gitkeep
+!tasks/BACKLOG.md

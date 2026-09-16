@@ -1,0 +1,10 @@
+{
+  "contextPct": 42,
+  "inputTokens": 400000,
+  "outputTokens": 20000,
+  "model": {
+    "id": "claude-sonnet-5",
+    "display_name": "Sonnet 5"
+  },
+  "updatedAt": "2026-08-20T09:00:00Z"
+}
