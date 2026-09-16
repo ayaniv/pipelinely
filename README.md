@@ -42,7 +42,7 @@ itself, it only dispatches.
   edit it once here to change what every future dispatch expects.
 - **`docs/tech-design-template.md`** — the shape a `tech-design.md` should
   take; planning writes to this template, plan review holds it to it.
-- **`.claude/skills/`** — the pipeline, one skill per stage plus two
+- **`.claude/skills/`** — the pipeline, one skill per stage plus three
   cross-cutting ones:
   - `run-orchestrator` — turns the current tab into the orchestrator.
   - `cockpit-planning` — explores the repo, decides milestones vs. flat,
@@ -67,6 +67,9 @@ itself, it only dispatches.
     `TRIAGE.json`, pushes, and annotates which comments were skipped.
   - `handover` — end-of-session transfer: writes continuation context and
     opens a fresh tab that auto-resumes the task.
+  - `feedback` — files what you tell it as a GitHub issue on this repo via
+    `gh issue create`, with a short summary of what you were doing right
+    before it. Try `/feedback <what's wrong>`.
 
 ### Want a more thorough, team-specific reviewer?
 
@@ -76,6 +79,19 @@ team-specific self-review step, start from
 and wire it in as your own review skill.
 
 ## Quick start
+
+One command clones the repo (skipped if you already have it), installs
+dependencies, symlinks the pipeline skills into `~/.claude/skills/` (see
+below — no manual loop needed), and runs whichever optional [dotfiles
+installers](#dotfiles) their required binary is already on your `PATH`:
+
+```bash
+curl -fsSL https://pipelinely.cc/install.sh | sh
+```
+
+`PIPELINELY_DIR` overrides where it clones to (defaults to
+`~/Dev/pipelinely`). Safe to re-run any time — it always picks up your
+latest checkout. Or do it by hand:
 
 ```bash
 git clone git@github.com:ayaniv/pipelinely.git ~/Dev/pipelinely
@@ -102,8 +118,9 @@ preview against fixture data, or `TASKS_DIR=~/Dev/pipelinely/tasks npm run dev`
 to deliberately point at real data.
 
 The skills under `.claude/skills/` are **project skills** — Claude Code
-auto-discovers them when you work in this repo. To use them from anywhere,
-symlink them into your global skills dir:
+auto-discovers them when you work in this repo. `install.sh` already
+symlinks them into your global skills dir for you; doing it by hand looks
+like:
 
 ```bash
 for s in .claude/skills/*/; do
