@@ -6,6 +6,7 @@
     "dev": "tsx --watch src/server.ts",
     "test": "vitest run",
     "pipelinely-merge": "tsx src/pipelinelyMergeCli.ts",
+    "pipelinely-onboard": "tsx src/pipelinelyOnboardCli.ts",
     "test:e2e": "playwright test --project=ui",
     "test:e2e:integration": "bash scripts/e2e-integration/run.sh"
   },

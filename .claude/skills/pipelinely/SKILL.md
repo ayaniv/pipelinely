@@ -1,7 +1,61 @@
 ---
 name: pipelinely
-description: Activate the workflow orchestrator in the current session — loads working memory, adopts the orchestrator role, and shows the status board. Use to dispatch tasks to worker agents (new iTerm2 tabs), track progress, and manage worktrees/scratch dirs.
+description: Idempotent entry point — onboards a fresh project on first run (inspect, configure, first task) and turns this tab into the orchestrator on every run after. Invoke as `/pipelinely` from inside the project you want to work on.
+allowed-tools: ["Bash", "Read", "Write"]
 ---
+
+# Pipelinely
+
+## 1. Resolve the target project
+
+If the current directory is inside a git repo, that's the target — use it. If it isn't a git repo, or it's this pipelinely checkout itself, ask which project to work on (a path). Don't guess, and don't try to "onboard" pipelinely's own checkout.
+
+## 2. Check onboarding status
+
+Run, using an absolute path:
+
+```bash
+npm --prefix ${REPOS_DIR:-$HOME/Dev}/pipelinely run --silent pipelinely-onboard -- "<target-dir>"
+```
+
+and parse its JSON output.
+
+- `alreadyOnboarded: true` → skip straight to Step 5 (orchestrator mode).
+- Otherwise, continue to Step 3.
+
+## 3. Resolve what's ambiguous
+
+For each entry in the reported `ambiguous` list, ask:
+
+- `plan-review` → "Enable the optional Plan Review stage? (default: yes)"
+- `test-command` / `lint-command` / `typecheck-command` → these are reported for awareness only; the CLI does not yet accept overrides for them (a future CLI change would be needed to wire user-supplied commands through — don't imply to the user that answering changes anything yet).
+
+Then re-run the CLI with the answers folded in:
+
+```bash
+npm --prefix ${REPOS_DIR:-$HOME/Dev}/pipelinely run --silent pipelinely-onboard -- "<target-dir>" --confirm-plan-review=<true|false>
+```
+
+(Only plan-review is actually wired through the CLI today — see the note above about the other three.)
+
+If `validation.ok` was `false` in Step 2's output, report every entry in `validation.failures` plainly and stop here — do not proceed to config generation against a broken environment.
+
+## 4. Confirm readiness and offer the first task
+
+Once `configWritten: true` comes back, tell the user:
+
+```
+Your pipeline is ready.
+Planning → Dev → Code Review → QA → Merge
+
+Want to run a real task through it?
+```
+
+A "yes" prompts for a one-line task description, then proceeds exactly as `pipelinely-planning` would for that description, against the target repo.
+
+Either way — once this exchange is done, continue to Step 5 (orchestrator mode); onboarding always falls through into it on a fresh run, the same as an already-onboarded run skips straight there.
+
+## 5. Orchestrator mode
 
 You are activating the workflow orchestrator. Do NOT open a new tab for yourself — operate as the orchestrator in the current session.
 
