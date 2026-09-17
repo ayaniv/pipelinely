@@ -36,8 +36,8 @@ async function stubGit() {
     git: `#!/bin/sh
 echo "git $*" >> "${callLog}"
 if [ "$1" = "clone" ]; then
-  mkdir -p "$3/.claude/skills/run-orchestrator" "$3/dotfiles/lib" "$3/dotfiles/${OPTIONAL_INSTALLER_DIR}"
-  echo "fake skill" > "$3/.claude/skills/run-orchestrator/SKILL.md"
+  mkdir -p "$3/.claude/skills/pipelinely" "$3/dotfiles/lib" "$3/dotfiles/${OPTIONAL_INSTALLER_DIR}"
+  echo "fake skill" > "$3/.claude/skills/pipelinely/SKILL.md"
   cp "${path.join(REPO_ROOT, 'dotfiles/lib/install-helpers.sh')}" "$3/dotfiles/lib/install-helpers.sh"
   cat > "$3/dotfiles/${OPTIONAL_INSTALLER_DIR}/install.sh" <<'INNER'
 #!/usr/bin/env bash
@@ -108,15 +108,15 @@ test.describe('install.sh', () => {
     expect(calls).toContain(`git clone git@github.com:ayaniv/pipelinely.git ${dest}`)
     expect(calls).toContain(`npm --prefix ${dest} install`)
 
-    const linked = path.join(home, '.claude/skills/run-orchestrator')
+    const linked = path.join(home, '.claude/skills/pipelinely')
     expect(await fs.lstat(linked).then((s) => s.isSymbolicLink())).toBe(true)
-    expect(await fs.realpath(linked)).toBe(await fs.realpath(path.join(dest, '.claude/skills/run-orchestrator')))
+    expect(await fs.realpath(linked)).toBe(await fs.realpath(path.join(dest, '.claude/skills/pipelinely')))
   })
 
   test('skips cloning when PIPELINELY_DIR already exists as a git checkout', async () => {
     await execa('git', ['init', '-q', dest]) // real git — only to create a .git dir the fake `git -C ... rev-parse` can see
     await writeFiles(dest, {
-      '.claude/skills/run-orchestrator/SKILL.md': '---\nname: run-orchestrator\n---\n',
+      '.claude/skills/pipelinely/SKILL.md': '---\nname: pipelinely\n---\n',
       'dotfiles/lib/install-helpers.sh': await fs.readFile(path.join(REPO_ROOT, 'dotfiles/lib/install-helpers.sh'), 'utf-8'),
     })
 
@@ -128,12 +128,12 @@ test.describe('install.sh', () => {
   })
 
   test('backs up a differing existing skill instead of silently overwriting it', async () => {
-    await writeFiles(home, { '.claude/skills/run-orchestrator/SKILL.md': 'my own local copy\n' })
+    await writeFiles(home, { '.claude/skills/pipelinely/SKILL.md': 'my own local copy\n' })
 
     const result = await runInstaller({ withStubBin: true })
     expect(result.exitCode, result.all).toBe(0)
 
-    expect(await fs.lstat(path.join(home, '.claude/skills/run-orchestrator')).then((s) => s.isSymbolicLink())).toBe(true)
+    expect(await fs.lstat(path.join(home, '.claude/skills/pipelinely')).then((s) => s.isSymbolicLink())).toBe(true)
     const backups = await fs.readdir(path.join(home, '.claude/skills.bak'))
     expect(backups).toHaveLength(1)
     expect(await fs.readFile(path.join(home, '.claude/skills.bak', backups[0], 'SKILL.md'), 'utf-8')).toBe('my own local copy\n')

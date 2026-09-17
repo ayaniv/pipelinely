@@ -65,4 +65,4 @@ done
 echo
 echo "Done. Next steps:"
 echo "  cd $DEST && npm start"
-echo "  then run /run-orchestrator in a dedicated Claude Code tab"
+echo "  then run /pipelinely in a dedicated Claude Code tab"
