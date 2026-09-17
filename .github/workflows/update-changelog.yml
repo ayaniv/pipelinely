@@ -1,0 +1,54 @@
+name: Update changelog
+
+# Fires on the PR-merge event itself (not `push`), so it only reacts to
+# actual merged pull requests, and so this workflow's own commit to main
+# (a direct push, not a PR) never re-triggers it.
+#
+# This repo's `main` has no branch-protection / required review rule, so
+# this workflow can just commit the changelog entry and push straight to
+# main — no standing "release PR" or admin-bypass token needed.
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-changelog
+  cancel-in-progress: false
+
+jobs:
+  update-changelog:
+    if: |
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.user.login != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Append changelog entry
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          MERGED_AT: ${{ github.event.pull_request.merged_at }}
+        run: python3 .github/scripts/update_changelog.py
+
+      - name: Commit and push
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if git diff --quiet -- CHANGELOG.md; then
+            echo "No changelog changes to commit"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "docs: log #${PR_NUMBER} in changelog (#${PR_NUMBER})"
+          git push origin HEAD:main
