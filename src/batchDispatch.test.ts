@@ -17,14 +17,14 @@ describe('composeBatchMessage', () => {
     })
     expect(message).toBe(
       'Dispatch these 2 milestones in parallel: ' +
-      '(1) /cockpit-dev pipelinely-dashboard-redesign-m2; ' +
-      '(2) /cockpit-dev pipelinely-dashboard-redesign-m3',
+      '(1) /pipelinely-dev pipelinely-dashboard-redesign-m2; ' +
+      '(2) /pipelinely-dev pipelinely-dashboard-redesign-m3',
     )
   })
 
   it('composes a wave batch of 1 slug with the singular stem and no numbering', () => {
     const message = composeBatchMessage({ kind: 'wave', slugs: ['pipelinely-dashboard-redesign-m2'] })
-    expect(message).toBe('Dispatch this milestone: /cockpit-dev pipelinely-dashboard-redesign-m2')
+    expect(message).toBe('Dispatch this milestone: /pipelinely-dev pipelinely-dashboard-redesign-m2')
   })
 
   it('composes a backlog batch of 3 items, numbered, in order, contexts joined with —', () => {

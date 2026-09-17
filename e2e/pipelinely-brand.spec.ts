@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 // M0 of the pipelinely redesign, later re-aligned to the "Pipelinely
 // Pipeline" Claude Design project: the design-token swap, the two-family
 // type stack (Figtree + JetBrains Mono), and the user-visible rebrand from
-// "Cockpit AI" to "pipelinely.cc".
+// "Pipelinely" to "pipelinely.cc".
 //
 // The token assertions below are the enforcement mechanism for
 // tech-design.md's Decision 1 — the old names are DELETED, not aliased to

@@ -134,7 +134,7 @@ test.describe('tmux dispatch — no copy of the pattern still carries -A', () =>
   // ones at all.
   const DISPATCH_SOURCES = [
     'orchestrator-prompt.md',
-    '.claude/skills/handover/SKILL.md',
+    '.claude/skills/pipelinely-handover/SKILL.md',
     'src/focusTab.ts',
   ]
 

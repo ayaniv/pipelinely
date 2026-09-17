@@ -1,5 +1,5 @@
 ---
-name: run-orchestrator
+name: pipelinely
 description: Activate the workflow orchestrator in the current session — loads working memory, adopts the orchestrator role, and shows the status board. Use to dispatch tasks to worker agents (new iTerm2 tabs), track progress, and manage worktrees/scratch dirs.
 ---
 
@@ -17,7 +17,7 @@ If a personal working-memory file exists (e.g. `~/Dev/my-context/CLAUDE.md` or a
 
 So the dashboard's backlog panel can paste a promoted item directly into this session (its "Start" button), capture this session's stable iTerm2 id and persist it to `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/ORCHESTRATOR_SESSION`.
 
-**Guarded write — do not skip this check.** Every `/cockpit-<stage>` dashboard button stages its command into whatever session `ORCHESTRATOR_SESSION` currently points at, sitting unsent at the prompt until a human presses Enter. If this file gets silently overwritten to point at the wrong tab (e.g. `/run-orchestrator` was accidentally run inside a task's own worker tab), a dispatch meant for the real orchestrator lands in that unrelated tab instead and sits there as a dormant command — the developer can trigger it by accident just by typing normally and hitting Enter later, with no warning it was ever misdirected. (Confirmed root cause of a real incident: a stale `/cockpit-qa` dispatch fired inside `marketing-landing-page`'s own worker tab, unrelated to what that session was doing.) Run this instead of a bare overwrite:
+**Guarded write — do not skip this check.** Every `/cockpit-<stage>` dashboard button stages its command into whatever session `ORCHESTRATOR_SESSION` currently points at, sitting unsent at the prompt until a human presses Enter. If this file gets silently overwritten to point at the wrong tab (e.g. `/pipelinely` was accidentally run inside a task's own worker tab), a dispatch meant for the real orchestrator lands in that unrelated tab instead and sits there as a dormant command — the developer can trigger it by accident just by typing normally and hitting Enter later, with no warning it was ever misdirected. (Confirmed root cause of a real incident: a stale `/pipelinely-qa` dispatch fired inside `marketing-landing-page`'s own worker tab, unrelated to what that session was doing.) Run this instead of a bare overwrite:
 
 ```bash
 TASKS_DIR_RESOLVED="${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}"

@@ -11,7 +11,7 @@ import { withOrchestratorSessionLock } from '../fixtures/orchestratorSessionLock
 // auto-submitting N real dispatches with zero confirmation.
 //
 // Design history: this batch button originally auto-submitted N independent
-// `/cockpit-dev <slug>` pastes, one per milestone (recorded in
+// `/pipelinely-dev <slug>` pastes, one per milestone (recorded in
 // compare-batch-dispatch-tasks/TASK.md), so both batch features would behave
 // identically to batch-backlog-dispatch's own per-item auto-submit loop. On
 // 2026-09-06 that auto-submit fired two real dispatches into the developer's
@@ -21,13 +21,13 @@ import { withOrchestratorSessionLock } from '../fixtures/orchestratorSessionLock
 // tech-design.md's "Decision reversed again" section.
 //
 // The orchestrator-interaction tests below now cover POST /batch-dispatch,
-// not the deleted POST /cockpit-dev/:slug — see
+// not the deleted POST /pipelinely-dev/:slug — see
 // e2e/integration/batch-dispatch-staging.spec.ts for the full mechanism
 // proof (one combined command landing unsent in a real session). What
 // remains here is specific to the wave button itself: eligibility/
 // visibility (unaffected by the staging change) and anti-double-dispatch
 // (now guarding the one in-flight /batch-dispatch request, not N sequential
-// /cockpit-dev/:slug ones).
+// /pipelinely-dev/:slug ones).
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const TASKS_DIR = path.join(__dirname, '..', 'fixtures', 'tasks')

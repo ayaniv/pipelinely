@@ -61,7 +61,7 @@ import { requestIsRemote } from './remoteAccess.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-// Orchestrator/handover task state is the cockpit's own responsibility, so it
+// Orchestrator/pipelinely-handover task state is the cockpit's own responsibility, so it
 // defaults under the cockpit-ai checkout (gitignored — ephemeral local state)
 // for the canonical checkout only — a worktree with no explicit TASKS_DIR
 // throws rather than silently binding the real one (see tasksDir.ts).
@@ -88,19 +88,19 @@ const WEEKLY_FOCUS_PATH = path.join(TASKS_DIR, 'WEEKLY_FOCUS')
 // BACKLOG.md is a sibling file at the top of TASKS_DIR, not a task
 // subdirectory — parsed separately from parseAllTasks.
 const BACKLOG_PATH = path.join(TASKS_DIR, 'BACKLOG.md')
-// Written by the /run-orchestrator skill on startup — its own iTerm2 session
+// Written by the /pipelinely skill on startup — its own iTerm2 session
 // id, so the backlog's "Start" button knows which tab to paste into.
 const ORCHESTRATOR_SESSION_PATH = path.join(TASKS_DIR, 'ORCHESTRATOR_SESSION')
-// Also written by /run-orchestrator, but only when it's running inside tmux —
+// Also written by /pipelinely, but only when it's running inside tmux —
 // the session name to reattach to when the recorded iTerm tab is gone.
 const ORCHESTRATOR_TMUX_PATH = path.join(TASKS_DIR, 'ORCHESTRATOR_TMUX')
 // Orchestrator-level preferences — see readSettings/parseSettingsContent in
 // taskParser.ts. Currently just the global auto-mode default.
 const SETTINGS_PATH = path.join(TASKS_DIR, 'SETTINGS.json')
 
-// The literal slash-command text both Handover routes stage. /handover is a
+// The literal slash-command text both Handover routes stage. /pipelinely-handover is a
 // Claude Code skill the receiving session runs itself, not a dashboard route.
-const HANDOVER_COMMAND = '/handover'
+const HANDOVER_COMMAND = '/pipelinely-handover'
 
 type OrchestratorWriteResult =
   | { status: 'ok' }
@@ -110,14 +110,14 @@ type OrchestratorWriteResult =
   | { status: 'locked' }
 
 // Writes `text` into the orchestrator's own iTerm2 session (registered via
-// ORCHESTRATOR_SESSION by /run-orchestrator), reattaching a
+// ORCHESTRATOR_SESSION by /pipelinely), reattaching a
 // detached-but-alive tmux session first if the recorded tab is gone — and
 // verifying, before every write, that the tmux pane it is about to write
 // into has not fallen back to a shell (see tmuxPaneIsStrayShell). `write` is
 // the only thing that varies between callers: pasteIntoSession (types and
 // sends — /backlog/dispatch, the /focus/:slug fallback) or stageInSession
 // (types and leaves it unsent for review — /stage-skill,
-// /orchestrator/handover). The liveness-check -> reattach -> retry logic
+// /orchestrator/pipelinely-handover). The liveness-check -> reattach -> retry logic
 // lives here and nowhere else.
 //
 // The whole read-decide-write body runs under withOrchestratorLock: every
@@ -159,7 +159,7 @@ async function writeToOrchestratorLocked(
   // the fast path below must not trust the recorded id on sight. When
   // ORCHESTRATOR_TMUX names a live session, the recorded tab must actually
   // be a client of it to count as "the orchestrator"; if it's absent, dead,
-  // or names a session this tab isn't attached to (run-orchestrator only
+  // or names a session this tab isn't attached to (pipelinely only
   // writes that file when $TMUX is set, and never clears it, so it can be
   // stale), there is nothing to verify and the recorded tab is trusted
   // exactly as before. Computed once and shared with the stray-shell gate
@@ -231,7 +231,7 @@ async function writeToOrchestratorLocked(
 
 // Submits `/cockpit-<skill> <slug>` into the orchestrator's own session for
 // a stage whose STAGE_SKILL entry targets it. THE single automated dispatch
-// path: the wave-batch route (POST /cockpit-dev/:slug) and auto mode's
+// path: the wave-batch route (POST /pipelinely-dev/:slug) and auto mode's
 // advancement pass both go through here, so a second unattended dispatcher
 // cannot fork a path that skips the liveness/self-heal checks
 // writeToOrchestrator owns.
@@ -379,7 +379,7 @@ async function runAutoAdvancePassOnce(): Promise<void> {
 // OrchestratorLockTimeoutError — one body, called from all six sites
 // (/focus/:slug's fallback, /backlog/dispatch, /batch-dispatch,
 // /stage-skill/:slug's orchestrator branch, POST /orchestrator/tab's catch,
-// and POST /orchestrator/handover) instead of six copy-pasted bodies.
+// and POST /orchestrator/pipelinely-handover) instead of six copy-pasted bodies.
 function respondOrchestratorLocked(res: express.Response): void {
   res.status(503).json({ error: 'Another orchestrator operation is already in progress — try again in a moment' })
 }
@@ -763,7 +763,7 @@ app.post('/orchestrator/tab', async (req, res) => {
 
     return res.status(503).json({
       error: sessionId
-        ? 'Orchestrator tab and tmux session are both gone — start it with /run-orchestrator'
+        ? 'Orchestrator tab and tmux session are both gone — start it with /pipelinely'
         : 'Orchestrator not running — no ORCHESTRATOR_SESSION found',
     })
   } catch (err) {
@@ -776,20 +776,20 @@ app.post('/orchestrator/tab', async (req, res) => {
   }
 })
 
-// POST /orchestrator/handover — stage `/handover` into the orchestrator's own
+// POST /orchestrator/pipelinely-handover — stage `/pipelinely-handover` into the orchestrator's own
 // session, unsent, for the developer to review before running it. Sits next
 // to POST /orchestrator/tab, but goes through writeToOrchestrator (like
 // /backlog/dispatch and /batch-dispatch) rather than reattachOrFocus, since
 // this one has something to type once the tab is found. See
 // tech-design.md's "stage, don't send" decision for why this never
 // auto-submits.
-app.post('/orchestrator/handover', async (_req, res) => {
+app.post('/orchestrator/pipelinely-handover', async (_req, res) => {
   try {
     const result = await writeToOrchestrator(HANDOVER_COMMAND, stageInSession)
     if (result.status === 'ok') return res.sendStatus(200)
     return respondOrchestratorWriteFailure(res, result, 'Orchestrator handover', 'Click Handover again.')
   } catch (err) {
-    console.error('Failed to stage /handover into the orchestrator:', err)
+    console.error('Failed to stage /pipelinely-handover into the orchestrator:', err)
     res.sendStatus(500)
   }
 })
@@ -1085,7 +1085,7 @@ app.post('/shelve/:slug', async (req, res) => {
   }
 })
 
-// POST /merge-pr/:slug — the gated Merge button and the /cockpit-merge CLI's
+// POST /merge-pr/:slug — the gated Merge button and the /pipelinely-merge CLI's
 // one shared path (see taskCompletion.ts's mergeTask): refuse unless the PR
 // is open, conflict-free and green, then merge pinned to the checked head
 // commit and finish exactly like /mark-done, plus deleting the merged PR's
@@ -1170,7 +1170,7 @@ app.post('/qa-triage/:slug', async (req, res) => {
 })
 
 // POST /backlog/dispatch — paste a backlog item into the orchestrator's own
-// iTerm2 session (registered via ORCHESTRATOR_SESSION by /run-orchestrator),
+// iTerm2 session (registered via ORCHESTRATOR_SESSION by /pipelinely),
 // as if the developer had typed "let's do this". The orchestrator runs its
 // normal promote-to-task flow from there — PM expansion, repo/branch
 // determination, opening the worker tab, and removing the item from
@@ -1204,7 +1204,7 @@ app.post('/backlog/dispatch', async (req, res) => {
 // the orchestrator's own session, unsent, for the developer to review before
 // running it. The one route both batch surfaces share (see
 // tech-design.md's requirement 1) — never auto-submits, unlike the deleted
-// POST /cockpit-dev/:slug this replaces, which is exactly the incident this
+// POST /pipelinely-dev/:slug this replaces, which is exactly the incident this
 // route exists to remove. Body: BatchDispatchRequest (composeBatchMessage
 // earns the type out of untrusted JSON; see its own comment for why the
 // check lives there and not at this boundary).
@@ -1263,12 +1263,12 @@ app.post('/stage-skill/:slug', async (req, res) => {
     if (route.target === 'orchestrator') {
       // No currentTasks lookup here on purpose: an undispatched milestone
       // (e.g. "Start Dev" on fanout-parent-m1) has no task dir yet — that's
-      // exactly what /cockpit-dev is about to create. writeToOrchestrator
+      // exactly what /pipelinely-dev is about to create. writeToOrchestrator
       // reads ORCHESTRATOR_SESSION/ORCHESTRATOR_TMUX itself.
       const result = await writeToOrchestrator(text, write)
       if (result.status === 'ok') return res.json({ submitted: shouldAutoSubmit })
       if (result.status === 'reattached-failed') {
-        console.error(`Stage /cockpit-${stage} for ${req.params.slug}: reattached the orchestrator but the retry stage still failed`)
+        console.error(`Stage /pipelinely-${stage} for ${req.params.slug}: reattached the orchestrator but the retry stage still failed`)
         return res.status(409).json({
           reattached: true,
           error: 'Orchestrator was detached — reattached it in a new tab, but the command still failed to stage. Click again.',
@@ -1298,7 +1298,7 @@ app.post('/stage-skill/:slug', async (req, res) => {
     // write); this one writes to task.itermSessionId directly, with no lock and
     // no pane inspection — true today for staging, and auto-submit raises the
     // stakes: submitting into a task tab that has fallen back to a shell runs
-    // `/cockpit-qa-fixes` as a shell command and gets `command not found`. That
+    // `/pipelinely-qa-fixes` as a shell command and gets `command not found`. That
     // is a visible annoyance in the task's own scratch tab, not the class of
     // incident the peer-address gate exists to prevent, so it is accepted for
     // now — see tech-design.md's "Known, accepted gap". Closing it means
@@ -1312,19 +1312,19 @@ app.post('/stage-skill/:slug', async (req, res) => {
         : 'This task has no recorded session to stage into',
     })
   } catch (err) {
-    console.error(`Failed to stage /cockpit-${req.body?.stage} for ${req.params.slug}:`, err)
+    console.error(`Failed to stage /pipelinely-${req.body?.stage} for ${req.params.slug}:`, err)
     res.sendStatus(500)
   }
 })
 
-// POST /handover/:slug — stage `/handover` into the task's own tracked
+// POST /pipelinely-handover/:slug — stage `/pipelinely-handover` into the task's own tracked
 // session, unsent, for the developer to review before running it. Goes
 // through pasteIntoTrackedSession (not /stage-skill's own-session branch),
 // which brings reattach-and-retry for a closed-tab-but-live-tmux task —
 // /stage-skill's own-session branch lacks that and just 503s flat.
 // `focus: true`: a staged-but-unsent command the developer can't find is
 // useless — see stageInSession's own reasoning.
-app.post('/handover/:slug', async (req, res) => {
+app.post('/pipelinely-handover/:slug', async (req, res) => {
   const { slug } = req.params
   try {
     const task = currentTasks.find((t) => t.slug === slug)
@@ -1356,7 +1356,7 @@ app.post('/handover/:slug', async (req, res) => {
       noSessionVerb: 'stage into',
     })
   } catch (err) {
-    console.error(`Failed to stage /handover for ${slug}:`, err)
+    console.error(`Failed to stage /pipelinely-handover for ${slug}:`, err)
     res.sendStatus(500)
   }
 })
@@ -1655,7 +1655,7 @@ export async function main(): Promise<Server> {
   return new Promise<Server>((resolve, reject) => {
     const server = app.listen(PORT, '0.0.0.0', () => {
       const boundPort = resolveBoundPort(server.address(), PORT)
-      console.log(`Cockpit AI running at http://localhost:${boundPort}`)
+      console.log(`Pipelinely running at http://localhost:${boundPort}`)
       // Playwright's own webServer (see playwright.config.ts) starts this
       // same server as a test fixture, not something a developer is sitting
       // in front of — COCKPIT_SKIP_AUTO_OPEN keeps an e2e run from popping a

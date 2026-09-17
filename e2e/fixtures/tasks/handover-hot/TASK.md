@@ -2,7 +2,7 @@
 
 ## Workspace
 - Repo: cockpit-ai
-- Branch: claude/handover-hot
+- Branch: claude/pipelinely-handover-hot
 - Branch status: existing
 
 ## Mode: implement
@@ -12,7 +12,7 @@ Fixture task for the handover-dispatch e2e suite — not real work.
 Its METRICS reports a hot context (74% > CTX_HOT_THRESHOLD's 60), and its
 STATUS is `paused:` (not `working`), so both the board card and the detail
 header render a Handover pill. It deliberately has NO ITERM_SESSION and NO
-TMUX_SESSION: an unstubbed POST /handover/handover-hot then resolves to
+TMUX_SESSION: an unstubbed POST /pipelinely-handover/pipelinely-handover-hot then resolves to
 pasteIntoTrackedSession's pure no-session exit (no osascript, no tmux), so the
 failure-path case can run against the real fixture server in the local-safe
 `ui` project.

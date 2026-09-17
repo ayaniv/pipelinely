@@ -88,9 +88,9 @@ describe('POST /batch-dispatch', () => {
     expect(res.status).toBe(200)
     expect(stageCalls).toHaveLength(1)
     expect(pasteCalls).toHaveLength(0)
-    expect(stageCalls[0].text).toContain('/cockpit-dev parent-m1')
-    expect(stageCalls[0].text).toContain('/cockpit-dev parent-m2')
-    expect(stageCalls[0].text).toContain('/cockpit-dev parent-m3')
+    expect(stageCalls[0].text).toContain('/pipelinely-dev parent-m1')
+    expect(stageCalls[0].text).toContain('/pipelinely-dev parent-m2')
+    expect(stageCalls[0].text).toContain('/pipelinely-dev parent-m3')
   })
 
   it('stages a 3-item backlog batch: 200, one stage call, zero paste calls, all 3 descriptions in the text', async () => {
@@ -156,8 +156,8 @@ describe('POST /batch-dispatch', () => {
     expect(stageCalls).toHaveLength(0)
   })
 
-  it('404s POST /cockpit-dev/:slug — the auto-submit route is gone', async () => {
-    const res = await fetch(`${baseUrl}/cockpit-dev/some-milestone`, { method: 'POST' })
+  it('404s POST /pipelinely-dev/:slug — the auto-submit route is gone', async () => {
+    const res = await fetch(`${baseUrl}/pipelinely-dev/some-milestone`, { method: 'POST' })
     expect(res.status).toBe(404)
   })
 })

@@ -46,8 +46,8 @@ import {
 //  4. Every liveness check above — including gap 2's adopt step — only
 //     confirms a tty is attached to ORCHESTRATOR_TMUX, never that the pane
 //     is actually running claude. Found live via the wave-batch "Run wave"
-//     button: it typed a raw /cockpit-dev command into a bare zsh shell
-//     ("zsh: no such file or directory: /cockpit-dev") because the tmux
+//     button: it typed a raw /pipelinely-dev command into a bare zsh shell
+//     ("zsh: no such file or directory: /pipelinely-dev") because the tmux
 //     session had outlived the claude process that used to be in it.
 //     writeToOrchestrator now checks tmuxSessionRunningOrchestrator before
 //     attempting either adopt or reattach, and refuses — same as "no
@@ -206,7 +206,7 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
           // staged unsent, which is what stageInSession promises.
           await expect
             .poll(() => readSessionContents(healedSessionId))
-            .toContain('/cockpit-dev dev-ready')
+            .toContain('/pipelinely-dev dev-ready')
         } finally {
           if (healedSessionId) await closeScratchTab(healedSessionId)
           await clearPointers()
@@ -241,7 +241,7 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
 
             await expect
               .poll(() => readSessionContents(sessionId))
-              .toContain('/cockpit-dev dev-ready')
+              .toContain('/pipelinely-dev dev-ready')
 
             // Untouched — the live path must not open a tab or rewrite this.
             expect(await readPointer()).toBe(sessionId)
@@ -288,7 +288,7 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
             // ...the command landed in it...
             await expect
               .poll(() => readSessionContents(attachedSessionId))
-              .toContain('/cockpit-dev dev-ready')
+              .toContain('/pipelinely-dev dev-ready')
             // ...and nothing new was opened.
             expect(await countSessions()).toBe(tabsBefore)
           } finally {
@@ -307,7 +307,7 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
     // ORCHESTRATOR_TMUX, so without the step-0 gate ahead of the fast path
     // this reproduces the reported symptom verbatim: the fast-path write
     // lands straight into the shell and returns 200
-    // ("zsh: no such file or directory: /cockpit-dev").
+    // ("zsh: no such file or directory: /pipelinely-dev").
     await withOrchestratorSessionLock(async () => {
       await withLiveTmuxSession(async () => {
         const liveTab = await openScratchSession()
@@ -323,8 +323,8 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
             // Pointer untouched, and — the whole point — nothing was typed
             // into either the tracked tab or the raw tmux pane.
             expect(await readPointer()).toBe(liveTab)
-            await expect(readSessionContents(liveTab)).resolves.not.toContain('/cockpit-dev')
-            expect(await readTmuxPaneContents(TMUX_SESSION_NAME)).not.toContain('/cockpit-dev')
+            await expect(readSessionContents(liveTab)).resolves.not.toContain('/pipelinely-dev')
+            expect(await readTmuxPaneContents(TMUX_SESSION_NAME)).not.toContain('/pipelinely-dev')
           } finally {
             await clearPointers()
           }
@@ -339,7 +339,7 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
     // The wave-batch "Run wave" bug: the tmux session had outlived the
     // claude process (crash / /exit / quit), so every prior liveness check
     // (tty-attachment only) reattached anyway and typed the staged command
-    // into a bare zsh prompt — "zsh: no such file or directory: /cockpit-dev".
+    // into a bare zsh prompt — "zsh: no such file or directory: /pipelinely-dev".
     // withLiveTmuxSession (not withOrchestratorTmuxSession) is deliberate
     // here: this is the "tmux alive, pane is a plain shell" state itself.
     await withOrchestratorSessionLock(async () => {
@@ -360,7 +360,7 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
           // and the stray shell never saw the staged command.
           expect(await readPointer()).toBe(DEAD_SESSION_ID)
           expect(await countSessions()).toBe(tabsBefore)
-          expect(await readTmuxPaneContents(TMUX_SESSION_NAME)).not.toContain('/cockpit-dev')
+          expect(await readTmuxPaneContents(TMUX_SESSION_NAME)).not.toContain('/pipelinely-dev')
         } finally {
           await clearPointers()
         }
@@ -389,7 +389,7 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
             // Not adopted: the pointer is untouched, the already-attached
             // tab never received the command, and nothing new opened.
             expect(await readPointer()).toBe(DEAD_SESSION_ID)
-            await expect(readSessionContents(attachedSessionId)).resolves.not.toContain('/cockpit-dev')
+            await expect(readSessionContents(attachedSessionId)).resolves.not.toContain('/pipelinely-dev')
             expect(await countSessions()).toBe(tabsBefore)
           } finally {
             await clearPointers()

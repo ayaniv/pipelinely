@@ -308,7 +308,7 @@ export async function pasteIntoSession(sessionId: string, text: string): Promise
   // own repeated reads under real multi-session AppleEvent load) —
   // and runOsascriptWithTabListRaceRetry then retries the WHOLE script,
   // including a fresh `write text`, even though the first write had already
-  // landed. Reproduced: auto mode double-dispatching `/cockpit-cr` into the
+  // landed. Reproduced: auto mode double-dispatching `/pipelinely-cr` into the
   // orchestrator session while other tasks churned concurrently
   // (e2e/integration/orchestrator-auto-mode.spec.ts's "dispatches exactly
   // once" case) — the double landed even after moving the return ahead of
@@ -724,7 +724,7 @@ export async function openAnnotationSession(
     // loudly (a `COCKPIT_TMUX_COLLISION` line printed into the otherwise-empty
     // tab) on a name collision, which is always safer than a silent
     // misdirect. This marker must stay byte-identical to the copies in
-    // orchestrator-prompt.md and .claude/skills/handover/SKILL.md —
+    // orchestrator-prompt.md and .claude/skills/pipelinely-handover/SKILL.md —
     // e2e/tmux-session-collision.spec.ts holds it as a single constant.
     const sid = await openNewTabRunning(
       `tmux new-session -s '${tmuxSession}' "bash '${launchScriptPath}'" || echo COCKPIT_TMUX_COLLISION`,
@@ -788,7 +788,7 @@ export type TrackedSessionPasteResult =
 // `message` into it: paste into the recorded iTerm session; failing that (tab
 // closed), reattach its detached-but-alive tmux session into a fresh tab,
 // re-record the new id at target.sessionFilePath, and retry once. Used by
-// POST /handover/:slug so a task's own session gets the same reattach-and-retry
+// POST /pipelinely-handover/:slug so a task's own session gets the same reattach-and-retry
 // resilience /stage-skill's orchestrator-target branch already has via
 // writeToOrchestrator — /stage-skill's own-session branch currently has none
 // (`sessionId = task.itermSessionId ?? ''`, dead tab is a flat 503).

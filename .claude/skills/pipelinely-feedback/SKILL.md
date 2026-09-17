@@ -1,6 +1,6 @@
 ---
-name: feedback
-description: File feedback about pipelinely as a GitHub issue on ayaniv/pipelinely, including relevant context from what you were just doing. Use when the user says "/feedback", "give feedback", "report a bug", or similar.
+name: pipelinely-feedback
+description: File feedback about pipelinely as a GitHub issue on ayaniv/pipelinely, including relevant context from what you were just doing. Use when the user says "/pipelinely-feedback", "give feedback", "report a bug", or similar.
 allowed-tools: ["Bash"]
 ---
 
@@ -35,7 +35,7 @@ gh issue create --repo ayaniv/pipelinely \
 
 ---
 Context: <the summary from step 2 — omit this whole section if step 2 found nothing relevant>
-Filed via /feedback"
+Filed via /pipelinely-feedback"
 ```
 
 If this fails — most likely `gh` isn't authenticated — tell the user

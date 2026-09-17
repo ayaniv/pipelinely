@@ -22,7 +22,7 @@ import { firstNonLoopbackIPv4 } from '../../src/testNetwork.js'
 //
 // What only a real terminal can settle: whether the command was SUBMITTED or
 // left STAGED. The scratch session is an ordinary shell, so a submitted
-// `/cockpit-dev dev-ready` is executed and the shell answers "command not
+// `/pipelinely-dev dev-ready` is executed and the shell answers "command not
 // found"; a staged one sits at the prompt as inert text and the shell says
 // nothing. That difference is the entire assertion here, in both directions:
 //
@@ -46,8 +46,8 @@ const TASKS_DIR = path.join(__dirname, '..', 'fixtures', 'tasks')
 const ORCHESTRATOR_SESSION_PATH = path.join(TASKS_DIR, 'ORCHESTRATOR_SESSION')
 
 const CTA_SLUG = 'dev-ready'
-const STAGED_COMMAND = `/cockpit-dev ${CTA_SLUG}`
-// What an ordinary shell says when it is actually handed `/cockpit-dev …` as a
+const STAGED_COMMAND = `/pipelinely-dev ${CTA_SLUG}`
+// What an ordinary shell says when it is actually handed `/pipelinely-dev …` as a
 // command — i.e. the observable proof that a Return was really sent.
 // STAGED_COMMAND contains a `/`, so both zsh and bash treat it as a path
 // lookup rather than a PATH search and reject it as "no such file or

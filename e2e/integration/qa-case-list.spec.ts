@@ -139,7 +139,7 @@ test.describe('QA automation dispatch', () => {
           await btn.click()
           await expect(btn).toHaveClass(/btn-ok/)
 
-          await expect.poll(() => readSessionContents(sessionId)).toContain('/cockpit-qa qa-all-pass')
+          await expect.poll(() => readSessionContents(sessionId)).toContain('/pipelinely-qa qa-all-pass')
         } finally {
           await fs.rm(ORCHESTRATOR_SESSION_PATH, { force: true })
         }

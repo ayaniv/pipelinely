@@ -86,7 +86,7 @@ async function handOff(slug: string, marker: string) {
 }
 
 function expectedCommand(skill: string, slug: string) {
-  return `/cockpit-${skill} ${slug}`
+  return `/pipelinely-${skill} ${slug}`
 }
 
 // The control dispatch every absence proof synchronises on: a transition
@@ -124,7 +124,7 @@ test.afterEach(async () => {
 // orchestrator-write path. Quarantined 2026-09-01 after this suite was
 // confirmed live to reach the developer's actual, real orchestrator tab (not
 // the fixture ORCHESTRATOR_SESSION under e2e/fixtures/tasks) and dispatch a
-// real /cockpit-cr command into it, twice. The leading suspected cause —
+// real /pipelinely-cr command into it, twice. The leading suspected cause —
 // playwright.config.ts's `reuseExistingServer: true` picking up an
 // already-running stray server not scoped to this suite's fixture dirs — is
 // now fixed (`reuseExistingServer: false`, hardcoded, landed via
@@ -140,7 +140,7 @@ test.afterEach(async () => {
 test.describe('auto mode on — mechanical transitions advance themselves', () => {
   // The headline case: dev hands off with a PR open, and CR starts without
   // anyone clicking anything.
-  test('a dev → code-review handoff auto-submits /cockpit-cr into the orchestrator', async ({ request }) => {
+  test('a dev → code-review handoff auto-submits /pipelinely-cr into the orchestrator', async ({ request }) => {
     const sessionId = await openScratchSession()
     try {
       await withOrchestratorSessionLock(async () => {
@@ -210,7 +210,7 @@ test.describe('auto mode on — mechanical transitions advance themselves', () =
 // Un-quarantined 2026-09-07 — see the note above the first describe block in this file.
 test.describe('auto mode on — judgment-call transitions still stop for a human', () => {
   // Deciding which review findings are worth fixing is the human's call.
-  // Auto mode must never dispatch /cockpit-cr-fixes on their behalf.
+  // Auto mode must never dispatch /pipelinely-cr-fixes on their behalf.
   test('a CR-findings triage handoff never auto-dispatches', async ({ request }) => {
     const sessionId = await openScratchSession()
     try {
@@ -252,7 +252,7 @@ test.describe('auto mode on — judgment-call transitions still stop for a human
 
         const contents = await readSessionContents(sessionId)
         expect(contents).not.toContain(MERGE)
-        expect(contents).not.toContain('/cockpit-merge')
+        expect(contents).not.toContain('/pipelinely-merge')
         expect(autoTimelineEntries((await readTaskFile(MERGE, 'TIMELINE')) ?? '')).toHaveLength(0)
 
         const task = await apiTask(request, MERGE)

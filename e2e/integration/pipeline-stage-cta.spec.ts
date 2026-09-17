@@ -21,7 +21,7 @@ import { withOrchestratorSessionLock } from '../fixtures/orchestratorSessionLock
 // target stage and slug and the SERVER attempts to stage the right text
 // against the right session — not that a real terminal pane received
 // keystrokes, which no black-box HTTP/browser test can observe. The exact
-// composed text (e.g. "/cockpit-qa-fixes" with no slug) is asserted by a
+// composed text (e.g. "/pipelinely-qa-fixes" with no slug) is asserted by a
 // vitest unit test against `composeStageCommand` instead — see
 // tech-design.md's Testing section for why the split lands there.
 
@@ -53,7 +53,7 @@ async function openTask(page, slug: string) {
 test.describe('next-step CTA per stage — happy path', () => {
   // Each chain node runs its own skill, shown on itself (see
   // PLAN_TAB_OWN_CTA in public/index.html): Plan Review's own skill is
-  // /cockpit-plan-review, so "Start Plan Review" lives on the Plan Review
+  // /pipelinely-plan-review, so "Start Plan Review" lives on the Plan Review
   // tab — not on Planning, which has no skill of its own to dispatch (a
   // task's card only exists once planning has already started).
   test('planning done: the Plan Review tab shows a live, enabled "Start Plan Review" CTA', async ({ page }) => {
@@ -264,7 +264,7 @@ test.describe('milestone dependency gating', () => {
 test.describe('failure path — no orchestrator session registered', () => {
   test('ORCHESTRATOR_SESSION missing entirely: the CTA click fails gracefully, never a false success', async ({ page }) => {
     // withOrchestratorSession(null, ...) guarantees the file is absent —
-    // matches a machine where /run-orchestrator was never started.
+    // matches a machine where /pipelinely was never started.
     await withOrchestratorSession(null, async () => {
       await openTask(page, 'dev-ready')
       const cta = page.getByTestId('l2-cta')

@@ -4,7 +4,7 @@ import { gotoBoardTab } from './fixtures/boardTabs.js'
 // Covers the dashboard half of "batch dispatch stages, never auto-submits".
 //
 // Incident this exists for (2026-09-06): clicking "Run wave" auto-submitted one
-// real `/cockpit-dev <slug>` per milestone straight into the developer's live,
+// real `/pipelinely-dev <slug>` per milestone straight into the developer's live,
 // attended orchestrator session — N real dispatches, zero confirmation. The
 // batch-backlog "Run selected (N)" toolbar had the identical shape. Both now
 // stage ONE combined, unsent command via POST /batch-dispatch, which the
@@ -66,7 +66,7 @@ function recordDispatchPosts(page: Page): RecordedPosts {
       recorded.batch.push(req.postDataJSON())
       return
     }
-    const devMatch = url.match(/\/cockpit-dev\/([^/?]+)/)
+    const devMatch = url.match(/\/pipelinely-dev\/([^/?]+)/)
     if (devMatch) {
       recorded.cockpitDevSlugs.push(decodeURIComponent(devMatch[1]))
       return
@@ -90,7 +90,7 @@ async function stubBatchDispatch(page: Page, status: number, body?: unknown): Pr
 }
 
 test.describe('wave batch stages one combined command', () => {
-  test('Run wave sends exactly one /batch-dispatch carrying every eligible milestone, and never /cockpit-dev', async ({ page }) => {
+  test('Run wave sends exactly one /batch-dispatch carrying every eligible milestone, and never /pipelinely-dev', async ({ page }) => {
     const posts = recordDispatchPosts(page)
     await stubBatchDispatch(page, 200)
     await openWaves(page)

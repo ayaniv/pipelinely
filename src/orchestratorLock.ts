@@ -18,7 +18,7 @@ import path from 'node:path'
 //
 // File-based (not an in-memory mutex) on purpose: ORCHESTRATOR_SESSION and
 // ORCHESTRATOR_TMUX are themselves file-backed, process-external state — the
-// /run-orchestrator skill's own guarded-write step (see its own SKILL.md)
+// /pipelinely skill's own guarded-write step (see its own SKILL.md)
 // reads and writes them from a completely different OS process (the
 // orchestrator's own Claude Code session running plain bash), which an
 // in-memory lock inside this server's Node process could never see. A lock

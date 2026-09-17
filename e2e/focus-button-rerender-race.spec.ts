@@ -58,7 +58,7 @@ test.describe.configure({ retries: 2 })
 // `es` (the page's own EventSource, same classic-script scoping as the vars
 // above) is silenced for the width of the gesture. Root-caused 2026-09-13
 // (board-size-sensitive full-suite flake on the first test below — see
-// cockpit-merge-skill's tech-design.md "Risks"): every `ui`-project spec
+// pipelinely-merge-skill's tech-design.md "Risks"): every `ui`-project spec
 // shares one dev server and one chokidar-watched fixture TASKS_DIR
 // (playwright.config.ts's webServer), so a REAL, content-changing broadcast
 // triggered by a completely unrelated spec's own STATUS/METRICS/TIMELINE

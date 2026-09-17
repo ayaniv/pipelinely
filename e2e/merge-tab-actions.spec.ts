@@ -13,7 +13,7 @@ import { openTask } from './fixtures/taskDetail.js'
 // path for the underlying git operations (removeWorktreeAndBranch) is
 // covered for real against a throwaway git repo in src/gitOps.test.ts —
 // this suite is the HTTP/UI layer on top of it. The merge gate's own
-// blocked/green paths, against a fake gh, live in cockpit-merge-gate.spec.ts.
+// blocked/green paths, against a fake gh, live in pipelinely-merge-gate.spec.ts.
 
 // The card grid and the detail overlay both carry a mark-done-btn/
 // open-pr-btn (the overlay stays mounted behind the grid, so both are in
@@ -82,7 +82,7 @@ test.describe('Merge', () => {
     // The preflight gate's `gh pr view` can't even start — merge-ready's
     // repo has no checkout under the fixture REPOS_DIR — so the gate reports
     // itself unavailable rather than guessing the PR is safe. A persistent
-    // banner is the failure surface now (see cockpit-merge-gate.spec.ts's
+    // banner is the failure surface now (see pipelinely-merge-gate.spec.ts's
     // own mergeBanner helper) — there's no more btn-err flash to assert.
     expect(response.status()).toBe(503)
     const banner = page.getByTestId('task-detail').getByTestId('merge-banner')

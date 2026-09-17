@@ -3,7 +3,7 @@
 # playwright.config.ts). It serves canned PR state from ../gh/prs/<N>.json,
 # records `pr merge` calls to ../gh/merge-calls/<N>.log, and records/fakes
 # `api -X DELETE .../refs/heads/<branch>` + `api .../matching-refs/heads/<branch>`
-# (the remote-branch-delete step — see cockpit-merge-gate.spec.ts) instead of
+# (the remote-branch-delete step — see pipelinely-merge-gate.spec.ts) instead of
 # touching a real remote, so no e2e spec can ever merge a real PR or delete a
 # real branch, and the merge gate's blocked/green paths are reproducible
 # offline. Any command it doesn't model fails loudly rather than pretending

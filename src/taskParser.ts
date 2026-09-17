@@ -768,7 +768,7 @@ export type { Finding }
 // two places) — the tail then holds multiple comma/"and"-separated
 // locations, e.g. `` `a.ts:1` and `b.ts:2` `` or `a.ts:1` and `b.ts:2`
 // (bare). Skills should still write the backtick-quoted form — see
-// cockpit-qa/cockpit-cr's own instructions — this leniency only keeps a
+// pipelinely-qa/pipelinely-cr's own instructions — this leniency only keeps a
 // format slip from silently dropping the bullet.
 //
 // Group 2 (description) is greedy, not lazy: a description can legitimately
@@ -923,7 +923,7 @@ export function parseQaFailures(raw: string): QaFailure[] {
 // bullet lists together into the full case list — every case QA ran, not
 // just the failures parseQaFailures above surfaces. Same bullet shape and
 // same skip-what-doesn't-match philosophy; sections are emitted in file
-// order, which is Failing before Passing per the format cockpit-qa writes.
+// order, which is Failing before Passing per the format pipelinely-qa writes.
 export function parseQaCases(raw: string): QaCase[] {
   const cases: QaCase[] = []
   const lines = raw.split('\n')
@@ -1074,9 +1074,9 @@ export const NEXT_STAGE_BY_WAITING_REASON: { marker: string; stage: Stage }[] = 
   { marker: 'triage and dispatch qa-fixes', stage: 'qa-fixes' },
   { marker: 'fixes pushed, ready to re-run QA', stage: 'qa' },
   // "QA passed, ready to merge" deliberately has no entry — merge has a
-  // skill (cockpit-merge) but no staged CTA and no waiting-reason marker:
+  // skill (pipelinely-merge) but no staged CTA and no waiting-reason marker:
   // it stays a decision-waiting state, not a pipeline handoff, on purpose
-  // (see STAGE_SKILL below and cockpit-merge-skill's tech-design.md,
+  // (see STAGE_SKILL below and pipelinely-merge-skill's tech-design.md,
   // decision 2 and "The human gate is preserved").
 ]
 
@@ -1159,10 +1159,10 @@ export function isMilestoneReadyForDev(
 // about which session a stage targets. 'planning' and 'merge' are
 // deliberately absent: a card only exists once planning has already been
 // dispatched (nothing to "start planning" from a task's own detail view),
-// and merge — despite now having a real skill, /cockpit-merge — has no
+// and merge — despite now having a real skill, /pipelinely-merge — has no
 // staged CTA here on purpose: the Merge button already does the merge
-// in-process, one click, and a staged `/cockpit-merge <slug>` CTA would be
-// a third path to the same action (cockpit-merge-skill's tech-design.md,
+// in-process, one click, and a staged `/pipelinely-merge <slug>` CTA would be
+// a third path to the same action (pipelinely-merge-skill's tech-design.md,
 // decision 2).
 export const STAGE_SKILL: Partial<Record<Stage, { skillName: string; target: 'orchestrator' | 'own-session' }>> = {
   'plan-review': { skillName: 'plan-review', target: 'orchestrator' },
@@ -1175,9 +1175,9 @@ export const STAGE_SKILL: Partial<Record<Stage, { skillName: string; target: 'or
 
 // The exact text staged into a session. No slug at all for qa-fixes/cr-fixes
 // — matches each skill's own documented form ("invoke directly inside the
-// task's own tab as /cockpit-qa-fixes", no argument).
+// task's own tab as /pipelinely-qa-fixes", no argument).
 export function composeStageCommand(skillName: string, slugArg: string | null): string {
-  return slugArg ? `/cockpit-${skillName} ${slugArg}` : `/cockpit-${skillName}`
+  return slugArg ? `/pipelinely-${skillName} ${slugArg}` : `/pipelinely-${skillName}`
 }
 
 // POST /skip-stage/:slug's table — the escape hatch for a QA-fixes/CR-fixes

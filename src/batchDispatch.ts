@@ -18,10 +18,10 @@ export type BatchDispatchRequest =
 
 // The one bare-token charset shared by every directory-safe/shell-safe
 // identifier this codebase guards: task/milestone slugs (minted by
-// cockpit-planning — see taskParser's MILESTONE_SLUG_RE for the "<parent>-mN"
+// pipelinely-planning — see taskParser's MILESTONE_SLUG_RE for the "<parent>-mN"
 // shape those extend) and a backlog item's project tag (taskParser.ts's
 // isBacklogProject). Guards a wave batch's slugs before they're concatenated
-// into the staged /cockpit-dev command — same reasoning as
+// into the staged /pipelinely-dev command — same reasoning as
 // buildTmuxAttachCommand's SAFE_TMUX_SESSION_NAME in focusTab.ts. Shared by
 // POST /batch-dispatch and POST /stage-skill/:slug's orchestrator branch
 // (server.ts), which needs the identical guard for its own slug arg.
@@ -31,7 +31,7 @@ const BATCH_NOUN = { wave: 'milestones', backlog: 'backlog items' } as const
 const BATCH_SINGULAR = { wave: 'milestone', backlog: 'backlog item' } as const
 
 const RENDER_ITEM = {
-  wave: (slug: string) => `/cockpit-dev ${slug}`,
+  wave: (slug: string) => `/pipelinely-dev ${slug}`,
   backlog: (item: BacklogBatchItem) => {
     const prefix = item.project ? `[${item.project}] ` : ''
     return item.context ? `${prefix}${item.description} — ${item.context}` : `${prefix}${item.description}`
@@ -68,7 +68,7 @@ function composeMessage(kind: 'wave' | 'backlog', renderedItems: string[]): stri
 // session. A slugs/items element that doesn't fit the expected shape makes
 // the whole request null rather than being silently skipped — a `slugs`
 // array containing `{}` must not compose "Dispatch this milestone:
-// /cockpit-dev [object Object]".
+// /pipelinely-dev [object Object]".
 export function composeBatchMessage(request: unknown): string | null {
   if (!request || typeof request !== 'object' || Array.isArray(request)) return null
   const kind = (request as Record<string, unknown>).kind

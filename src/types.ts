@@ -74,7 +74,7 @@ export interface StageEvent {
 }
 
 // One Claude session's own metrics. Two sources feed this: the legacy chain
-// (the METRICS file plus the METRICS-N.json snapshots /handover writes), and
+// (the METRICS file plus the METRICS-N.json snapshots /pipelinely-handover writes), and
 // the per-session METRICS-<claude-session-id>.json files every session writes
 // for itself. The legacy chain records neither a stage nor a session id, so
 // those fields are null for its entries.

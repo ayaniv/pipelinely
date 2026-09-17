@@ -9,8 +9,8 @@ import { withRestoredFixtureFiles } from './fixtures/restoreFixtureFiles.js'
 import { openTask } from './fixtures/taskDetail.js'
 
 // The merge preflight gate, end to end, through both human triggers that
-// share it (see tech-design-cockpit-merge-skill.md, Design §3 "mergeTask"):
-// the Merge tab's button (POST /merge-pr/:slug) and the /cockpit-merge CLI
+// share it (see tech-design-pipelinely-merge-skill.md, Design §3 "mergeTask"):
+// the Merge tab's button (POST /merge-pr/:slug) and the /pipelinely-merge CLI
 // the skill runs. `gh` resolves to e2e/fixtures/bin/gh for the webServer and
 // for every process spawned here, so each fixture PR's state is canned
 // (e2e/fixtures/gh/prs/<N>.json) and a merge is only ever *recorded*
@@ -311,10 +311,10 @@ test.describe('Merge button — gh merge itself fails', () => {
   })
 })
 
-// The exact command .claude/skills/cockpit-merge/SKILL.md tells the
+// The exact command .claude/skills/pipelinely-merge/SKILL.md tells the
 // orchestrator to run, against the same fixture data and fake gh.
 async function runCockpitMerge(...args: string[]) {
-  return execa('npm', ['run', '--silent', 'cockpit-merge', '--', ...args], {
+  return execa('npm', ['run', '--silent', 'pipelinely-merge', '--', ...args], {
     cwd: REPO_ROOT,
     reject: false,
     all: true,
@@ -331,7 +331,7 @@ async function readStatusFile(slug: string): Promise<string> {
   return fs.readFile(path.join(FIXTURE_TASKS_DIR, slug, 'STATUS'), 'utf-8')
 }
 
-test.describe('/cockpit-merge CLI — what the skill runs', () => {
+test.describe('/pipelinely-merge CLI — what the skill runs', () => {
   test('refuses a PR with failing checks: exits 2 and prints each failing check by name', async () => {
     await withMergeFixture('merge-cli-blocked', 911, async () => {
       const result = await runCockpitMerge('merge-cli-blocked')
@@ -385,7 +385,7 @@ test.describe('/cockpit-merge CLI — what the skill runs', () => {
   // this file's own clean, single-line stderr message — the exact
   // env-leak scenario resolveTasksDir's own comment warns about.
   test('a TASKS_DIR that cannot be resolved fails cleanly, not with a raw stack trace', async () => {
-    const result = await execa('npm', ['run', '--silent', 'cockpit-merge', '--', 'merge-cli-green'], {
+    const result = await execa('npm', ['run', '--silent', 'pipelinely-merge', '--', 'merge-cli-green'], {
       cwd: REPO_ROOT,
       reject: false,
       all: true,

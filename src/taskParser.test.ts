@@ -1540,7 +1540,7 @@ describe('getMergeCommitDate', () => {
   let tmpDir: string
 
   beforeEach(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cockpit-merge-date-test-'))
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pipelinely-merge-date-test-'))
     await execa('git', ['init', '-q', tmpDir])
     await execa('git', ['-C', tmpDir, 'config', 'user.email', 'test@example.com'])
     await execa('git', ['-C', tmpDir, 'config', 'user.name', 'Test'])
@@ -1795,7 +1795,7 @@ describe('parseTask completedAt — merge-commit lookup caching', () => {
   let originalReposDir: string | undefined
 
   beforeEach(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cockpit-merge-cache-test-'))
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pipelinely-merge-cache-test-'))
     originalReposDir = process.env.REPOS_DIR
     process.env.REPOS_DIR = path.join(tmpDir, 'repos')
   })
@@ -3017,20 +3017,20 @@ describe('isMilestoneReadyForDev', () => {
 
 describe('composeStageCommand', () => {
   it('appends the slug when one is given', () => {
-    expect(composeStageCommand('dev', 'my-task')).toBe('/cockpit-dev my-task')
-    expect(composeStageCommand('plan-review', 'my-task')).toBe('/cockpit-plan-review my-task')
-    expect(composeStageCommand('qa', 'my-task')).toBe('/cockpit-qa my-task')
-    expect(composeStageCommand('cr', 'my-task')).toBe('/cockpit-cr my-task')
+    expect(composeStageCommand('dev', 'my-task')).toBe('/pipelinely-dev my-task')
+    expect(composeStageCommand('plan-review', 'my-task')).toBe('/pipelinely-plan-review my-task')
+    expect(composeStageCommand('qa', 'my-task')).toBe('/pipelinely-qa my-task')
+    expect(composeStageCommand('cr', 'my-task')).toBe('/pipelinely-cr my-task')
   })
 
   it('omits the slug entirely for the no-arg qa-fixes/cr-fixes form', () => {
-    expect(composeStageCommand('qa-fixes', null)).toBe('/cockpit-qa-fixes')
-    expect(composeStageCommand('cr-fixes', null)).toBe('/cockpit-cr-fixes')
+    expect(composeStageCommand('qa-fixes', null)).toBe('/pipelinely-qa-fixes')
+    expect(composeStageCommand('cr-fixes', null)).toBe('/pipelinely-cr-fixes')
   })
 })
 
 describe('STAGE_SKILL', () => {
-  // merge has a real skill (cockpit-merge) since cockpit-merge-skill, but
+  // merge has a real skill (pipelinely-merge) since pipelinely-merge-skill, but
   // deliberately no staged CTA/entry here — the Merge button already does
   // the merge in-process, one click, and a staged CTA would be a third path
   // to the same action (decision 2). This assertion stays unchanged.

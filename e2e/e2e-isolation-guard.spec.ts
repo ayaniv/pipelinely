@@ -108,7 +108,7 @@ test.describe('e2e isolation guard', () => {
     subprocess.stdout?.on('data', (chunk) => (output += chunk.toString()))
     subprocess.stderr?.on('data', (chunk) => (output += chunk.toString()))
     try {
-      await expect.poll(() => output, { timeout: 15_000 }).toContain('Cockpit AI running at')
+      await expect.poll(() => output, { timeout: 15_000 }).toContain('Pipelinely running at')
     } finally {
       subprocess.kill()
       await subprocess.catch(() => {})

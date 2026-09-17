@@ -1,11 +1,11 @@
 ---
-name: cockpit-plan-review
-description: Dispatches a fresh, independent Opus 5 session that has never seen the plan being written to review a task's tech-design.md cold — checks the dependency graph, the verifier, and per-milestone shippability — and revises tech-design.md in place. Invoke from the orchestrator's own session as `/cockpit-plan-review <task-slug>`. Do NOT open a new tab for yourself.
+name: pipelinely-plan-review
+description: Dispatches a fresh, independent Opus 5 session that has never seen the plan being written to review a task's tech-design.md cold — checks the dependency graph, the verifier, and per-milestone shippability — and revises tech-design.md in place. Invoke from the orchestrator's own session as `/pipelinely-plan-review <task-slug>`. Do NOT open a new tab for yourself.
 ---
 
 # Cockpit Plan Review
 
-What this stage checks and revises is fully owned here — the mechanical *how a tab gets opened* is the one thing shared with every other pipeline dispatch, via `orchestrator-prompt.md` step 4's "Reusable form" (see Step 3 below). Unlike `cockpit-planning`/`cockpit-dev`, this stage does **not** create a new worktree or branch: it revises the same `tech-design.md` on the same branch planning already created, in a genuinely new tab so the reviewing session shares no context with the session that wrote the plan.
+What this stage checks and revises is fully owned here — the mechanical *how a tab gets opened* is the one thing shared with every other pipeline dispatch, via `orchestrator-prompt.md` step 4's "Reusable form" (see Step 3 below). Unlike `pipelinely-planning`/`pipelinely-dev`, this stage does **not** create a new worktree or branch: it revises the same `tech-design.md` on the same branch planning already created, in a genuinely new tab so the reviewing session shares no context with the session that wrote the plan.
 
 ## Step 1 — Confirm there's something to review
 
@@ -33,7 +33,7 @@ Fresh Opus 5, independent review of this task's tech-design.md.
 1. Read `tech-design.md` cold. Review it critically — do not assume good faith or that the plan is correct just because it exists.
 2. Check the dependency graph declared in `## Milestones`: every `needs:` id must resolve to a milestone actually declared in that same section, and the graph must be acyclic.
 3. Check the verifier named in `VERIFY` is real — actually runnable in this repo — not a placeholder.
-4. Check per-milestone shippability: if milestone `M<n>` is merged in isolation (with only its declared `needs:` also merged), does it actually build/ship on its own? This is the crux of the review — `computeMilestones` in `taskParser.ts` trusts this dependency graph completely, so a hidden, undeclared dependency here means `cockpit-dev` can be dispatched on a milestone whose real prerequisite code doesn't exist yet.
+4. Check per-milestone shippability: if milestone `M<n>` is merged in isolation (with only its declared `needs:` also merged), does it actually build/ship on its own? This is the crux of the review — `computeMilestones` in `taskParser.ts` trusts this dependency graph completely, so a hidden, undeclared dependency here means `pipelinely-dev` can be dispatched on a milestone whose real prerequisite code doesn't exist yet.
 5. Check the `## Summary` section: it must exist, be prose only (no `**QA Spec:**` line or tables inside it — the dashboard pins and strips everything under that heading verbatim, so anything but prose there renders in the wrong place), and still match the revised plan — a review round that changes scope must update it too.
 6. Fix anything wrong by revising `tech-design.md` **in place** — there is no separate plan-review-fixes stage.
 7. Append a `TIMELINE` line for stage `plan-review` with a round number (count existing `plan-review` `TIMELINE` entries + 1), e.g. `round 2: tightened M4's needs:, corrected verifier command`.
@@ -48,7 +48,7 @@ Fresh Opus 5, independent review of this task's tech-design.md.
 The revised `tech-design.md`.
 
 ## Session continuity (required)
-When this session grows long, proactively suggest `/handover` before context degrades.
+When this session grows long, proactively suggest `/pipelinely-handover` before context degrades.
 
 ## Status reporting (required)
 Write by **absolute path**. When done: `echo "waiting: plan reviewed, ready for dev" > ${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>/STATUS`.
@@ -65,7 +65,7 @@ Periodically run `bash ~/Dev/pipelinely/scripts/write-metrics.sh` so the dashboa
 
 Follow `orchestrator-prompt.md` step 4's shared tab-opening procedure ("Reusable form" subsection) with:
 - `<tmux-name>`: `worker-<slug>-review` · `<launch-script>`: `launch-review.sh` (distinct from `launch.sh`, so planning's original dispatch record isn't overwritten)
-- Claim `ITERM_SESSION`/`TMUX_SESSION`: yes — there's no long-lived "home" tab to protect yet at this point in the pipeline (that starts at `cockpit-dev`)
+- Claim `ITERM_SESSION`/`TMUX_SESSION`: yes — there's no long-lived "home" tab to protect yet at this point in the pipeline (that starts at `pipelinely-dev`)
 - Worktree: **reuse existing** at `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>` — no new worktree/branch
 - `COCKPIT_STAGE`: `plan-review`
 - **`launch-review.sh`'s `claude` line must be `exec claude --model opus "<prompt>"`, not bare `exec claude`.** This stage requires Opus 5 (see this skill's own description — the entire point of the stage is a fresh, independent reviewer) — the shared form defaults to no model flag, so it does not get added unless stated here explicitly. Omitting it doesn't error, it just silently dispatches on the default model instead — confirm the flag is actually in `launch-review.sh` before opening the tab, don't just remember to add it.

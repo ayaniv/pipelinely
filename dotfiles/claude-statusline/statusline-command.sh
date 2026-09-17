@@ -226,7 +226,7 @@ done
 
 printf "%b\n" "$result"
 
-# Cockpit AI: write per-task metrics if this is a cockpit-ai worker session
+# Pipelinely: write per-task metrics if this is a cockpit-ai worker session
 if [ -n "$COCKPIT_TASK_SLUG" ]; then
   TASK_DIR="${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/$COCKPIT_TASK_SLUG"
   if [ -d "$TASK_DIR" ]; then

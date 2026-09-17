@@ -216,7 +216,7 @@ describe('POST /stage-skill/:slug — orchestrator-target stage (dev)', () => {
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ submitted: false })
     expect(stageInSessionCalls).toEqual([
-      { sessionId: ORCHESTRATOR_SESSION_ID, text: '/cockpit-dev dev-ready' },
+      { sessionId: ORCHESTRATOR_SESSION_ID, text: '/pipelinely-dev dev-ready' },
     ])
     expect(pasteIntoSessionQuietCalls).toEqual([])
     expect(pasteIntoSessionCalls).toEqual([])
@@ -237,7 +237,7 @@ describe('POST /stage-skill/:slug — orchestrator-target stage (dev)', () => {
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ submitted: true })
     expect(pasteIntoSessionQuietCalls).toEqual([
-      { sessionId: ORCHESTRATOR_SESSION_ID, text: '/cockpit-dev dev-ready' },
+      { sessionId: ORCHESTRATOR_SESSION_ID, text: '/pipelinely-dev dev-ready' },
     ])
     expect(stageInSessionCalls).toEqual([])
     // Never the focus-stealing variant — an unattended, phone-triggered write
@@ -276,7 +276,7 @@ describe('POST /stage-skill/:slug — own-session-target stage (qa-fixes)', () =
 
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ submitted: false })
-    expect(stageInSessionCalls).toEqual([{ sessionId: OWN_SESSION_ID, text: '/cockpit-qa-fixes' }])
+    expect(stageInSessionCalls).toEqual([{ sessionId: OWN_SESSION_ID, text: '/pipelinely-qa-fixes' }])
     expect(pasteIntoSessionQuietCalls).toEqual([])
     expect(pasteIntoSessionCalls).toEqual([])
   })
@@ -286,7 +286,7 @@ describe('POST /stage-skill/:slug — own-session-target stage (qa-fixes)', () =
 
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ submitted: true })
-    expect(pasteIntoSessionQuietCalls).toEqual([{ sessionId: OWN_SESSION_ID, text: '/cockpit-qa-fixes' }])
+    expect(pasteIntoSessionQuietCalls).toEqual([{ sessionId: OWN_SESSION_ID, text: '/pipelinely-qa-fixes' }])
     expect(stageInSessionCalls).toEqual([])
     expect(pasteIntoSessionCalls).toEqual([])
   })

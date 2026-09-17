@@ -193,7 +193,7 @@ describe('buildSessionWriteScript', () => {
 
 describe('buildPasteIntoSessionWriteScript', () => {
   // Regression test for a real double-dispatch: auto mode landed
-  // `/cockpit-cr` twice in the orchestrator session while other tasks
+  // `/pipelinely-cr` twice in the orchestrator session while other tasks
   // churned concurrently (e2e/integration/orchestrator-auto-mode.spec.ts's
   // "dispatches exactly once, even as other tasks churn" case). Root cause —
   // a first fix attempt (commit 29f2a0f) moved the `return` up to right

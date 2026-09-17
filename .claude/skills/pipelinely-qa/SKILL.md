@@ -1,6 +1,6 @@
 ---
-name: cockpit-qa
-description: Dispatches an independent, fresh QA pass against a task's already-open PR — runs the e2e tests planning wrote, against the live dev server, and writes QA_REPORT.md. The code's author is the worst judge of whether it works, so this always uses a brand-new session, and it never claims the task's ITERM_SESSION/TMUX_SESSION — the dev tab stays what → Terminal points at. Invoke from the orchestrator's own session as `/cockpit-qa <milestone-or-task-slug>`. Do NOT open a new tab for yourself.
+name: pipelinely-qa
+description: Dispatches an independent, fresh QA pass against a task's already-open PR — runs the e2e tests planning wrote, against the live dev server, and writes QA_REPORT.md. The code's author is the worst judge of whether it works, so this always uses a brand-new session, and it never claims the task's ITERM_SESSION/TMUX_SESSION — the dev tab stays what → Terminal points at. Invoke from the orchestrator's own session as `/pipelinely-qa <milestone-or-task-slug>`. Do NOT open a new tab for yourself.
 ---
 
 # Cockpit QA
@@ -9,7 +9,7 @@ What this stage tests and reports is fully owned here — the mechanical *how a 
 
 ## Step 1 — Confirm there's something to test
 
-Check `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>/DEV_URL` exists (the running dev server the PR stood up) and that e2e test files exist (written during `cockpit-planning`). If either is missing, report exactly what's missing and stop.
+Check `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>/DEV_URL` exists (the running dev server the PR stood up) and that e2e test files exist (written during `pipelinely-planning`). If either is missing, report exactly what's missing and stop.
 
 ## Step 2 — Write `TASK.md`
 
@@ -34,14 +34,14 @@ The e2e tests planning wrote already exist in this worktree; DEV_URL is already 
 2. Test as an adversarial outsider — don't read the dev session's reasoning or assume the implementation is correct because it exists.
 3. Run the e2e tests against the `DEV_URL` recorded for this task.
 4. Write `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>/QA_REPORT.md` (the tasks dir, **not** the worktree — the dashboard only reads from the tasks dir) in this exact format: `<n> of <m> cases failed` / `all <m> cases passed`, then a `### Failing Cases (<n>)` section with `` - [Label] What broke — `path/to/file.ts:42` `` bullets (omit that section entirely when nothing failed), followed by a `### Passing Cases (<m-n>)` section listing every passing case in the same bullet shape — `` - [Label] What it verified — `path/to/file.ts:42` `` — always, even when everything passed, so the dashboard can show the full case list, not just failures (`QaCase` / `parseQaCases` in `src/taskParser.ts`). **The trailing `path:line` MUST be backtick-quoted, exactly as shown above** — the dashboard's parser tolerates a bare, unquoted path too, but only as a fallback of last resort; a bullet that's malformed in some other way still silently drops even with that leniency, so always write the backtick-quoted form and never rely on it.
-5. If there are failures, also write `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>/QA_TRIAGE.json` (same tasks-dir rule) in the format the dashboard's existing checklist UI already reads (`QaFailure` / `parseQaFailures` / `applyQaTriageSelection` in `src/taskParser.ts` — one entry per failing case, selectable) so the developer can check which ones to send to `cockpit-qa-fixes`.
-6. Do not attempt fixes — that's `cockpit-qa-fixes`'s job, deliberately in a different, non-fresh session.
+5. If there are failures, also write `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>/QA_TRIAGE.json` (same tasks-dir rule) in the format the dashboard's existing checklist UI already reads (`QaFailure` / `parseQaFailures` / `applyQaTriageSelection` in `src/taskParser.ts` — one entry per failing case, selectable) so the developer can check which ones to send to `pipelinely-qa-fixes`.
+6. Do not attempt fixes — that's `pipelinely-qa-fixes`'s job, deliberately in a different, non-fresh session.
 
 ## Output
 `QA_REPORT.md`, `QA_TRIAGE.json` if anything failed.
 
 ## Session continuity (required)
-When this session grows long, proactively suggest `/handover` before context degrades.
+When this session grows long, proactively suggest `/pipelinely-handover` before context degrades.
 
 ## Status reporting (required)
 Write by **absolute path**. When done: `echo "waiting: QA found <n> issues, triage and dispatch qa-fixes" > ${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>/STATUS` if anything failed, or `echo "waiting: QA passed, ready to merge" > ...` if clean — QA is the last automated stage in this pipeline (Dev → CR → CR fixes → QA → QA fixes → Merge), so a clean pass is terminal, not a hand-off to another skill. Then exit — do not continue working, do not open another tab.
@@ -57,7 +57,7 @@ Periodically run `bash ~/Dev/pipelinely/scripts/write-metrics.sh` so the dashboa
 
 Follow `orchestrator-prompt.md` step 4's shared tab-opening procedure ("Reusable form" subsection) with:
 - `<tmux-name>`: `worker-<slug>-qa` · `<launch-script>`: `launch-qa.sh` (distinct filename, so the dev tab's own `launch.sh` isn't touched)
-- Claim `ITERM_SESSION`/`TMUX_SESSION`: **no** — deliberately skip that part of the procedure. Those must keep pointing at the dev tab, which is what `cockpit-qa-fixes` returns to and what the dashboard's → Terminal button reaches.
+- Claim `ITERM_SESSION`/`TMUX_SESSION`: **no** — deliberately skip that part of the procedure. Those must keep pointing at the dev tab, which is what `pipelinely-qa-fixes` returns to and what the dashboard's → Terminal button reaches.
 - Worktree: **reuse existing** at `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>` — no new worktree/branch
 - `COCKPIT_STAGE`: `qa`
 

@@ -10,7 +10,7 @@ import { startTestServer, stopTestServer, type TestServerHandle } from './server
 // paths — the same safety property server.batchDispatch.test.ts proves for
 // /batch-dispatch.
 //
-// Harness: main() (not a bare app.listen — POST /handover/:slug needs
+// Harness: main() (not a bare app.listen — POST /pipelinely-handover/:slug needs
 // currentTasks populated by main()'s own startup refreshTasks(), which
 // server.batchDispatch.test.ts's routes never touch) via startTestServer's
 // seed hook, which writes a task dir before server.js is imported.
@@ -59,7 +59,7 @@ beforeAll(async () => {
     taskDir = path.join(tmpDir, SLUG)
     await fs.mkdir(taskDir, { recursive: true })
     await fs.writeFile(path.join(taskDir, 'TASK.md'), '# Handover test task\n')
-    // /handover/:slug has no status gate (tech-design.md's own decision), so
+    // /pipelinely-handover/:slug has no status gate (tech-design.md's own decision), so
     // any STATUS is fine for its tests below.
     await fs.writeFile(path.join(taskDir, 'STATUS'), 'waiting: needs input on approach\n')
     await fs.writeFile(path.join(taskDir, 'ITERM_SESSION'), 'task-tab-id')
@@ -88,15 +88,15 @@ beforeEach(async () => {
 })
 
 function postHandover(slug: string) {
-  return fetch(`${baseUrl}/handover/${encodeURIComponent(slug)}`, { method: 'POST' })
+  return fetch(`${baseUrl}/pipelinely-handover/${encodeURIComponent(slug)}`, { method: 'POST' })
 }
 
 function postOrchestratorHandover() {
-  return fetch(`${baseUrl}/orchestrator/handover`, { method: 'POST' })
+  return fetch(`${baseUrl}/orchestrator/pipelinely-handover`, { method: 'POST' })
 }
 
-describe('POST /handover/:slug', () => {
-  it('200: calls pasteIntoTrackedSession once with /handover, submit:false/focus:true, and the task\'s recorded session/tmux/ITERM_SESSION path — never pasteIntoSession/stageInSession', async () => {
+describe('POST /pipelinely-handover/:slug', () => {
+  it('200: calls pasteIntoTrackedSession once with /pipelinely-handover, submit:false/focus:true, and the task\'s recorded session/tmux/ITERM_SESSION path — never pasteIntoSession/stageInSession', async () => {
     const { pasteIntoTrackedSession } = await import('./focusTab.js')
     // mockImplementationOnce (not mockResolvedValueOnce), which would bypass
     // the trackedPasteCalls-recording body entirely and leave the assertions
@@ -109,7 +109,7 @@ describe('POST /handover/:slug', () => {
     const res = await postHandover(SLUG)
     expect(res.status).toBe(200)
     expect(trackedPasteCalls).toHaveLength(1)
-    expect(trackedPasteCalls[0].text).toBe('/handover')
+    expect(trackedPasteCalls[0].text).toBe('/pipelinely-handover')
     expect(trackedPasteCalls[0].options).toEqual({ submit: false, focus: true })
     expect(trackedPasteCalls[0].target).toEqual({
       sessionId: 'task-tab-id',
@@ -186,14 +186,14 @@ describe('POST /handover/:slug', () => {
   })
 })
 
-describe('POST /orchestrator/handover', () => {
-  it('200: calls stageInSession once with the recorded session id and /handover; pasteIntoSession never called', async () => {
+describe('POST /orchestrator/pipelinely-handover', () => {
+  it('200: calls stageInSession once with the recorded session id and /pipelinely-handover; pasteIntoSession never called', async () => {
     await fs.writeFile(path.join(handle.tmpDir, 'ORCHESTRATOR_SESSION'), 'live-tab-id')
 
     const res = await postOrchestratorHandover()
     expect(res.status).toBe(200)
     expect(stageCalls).toHaveLength(1)
-    expect(stageCalls[0]).toEqual({ sessionId: 'live-tab-id', text: '/handover' })
+    expect(stageCalls[0]).toEqual({ sessionId: 'live-tab-id', text: '/pipelinely-handover' })
     expect(pasteCalls).toHaveLength(0)
   })
 

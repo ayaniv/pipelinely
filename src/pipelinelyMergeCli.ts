@@ -10,15 +10,15 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
-// What `.claude/skills/cockpit-merge/SKILL.md` tells the orchestrator to run
-// (`npm --prefix <repo> run --silent cockpit-merge -- <slug>`) — the other
+// What `.claude/skills/pipelinely-merge/SKILL.md` tells the orchestrator to run
+// (`npm --prefix <repo> run --silent pipelinely-merge -- <slug>`) — the other
 // human trigger for mergeTask (src/taskCompletion.ts), alongside the Merge
 // button's own POST /merge-pr/:slug. Exit codes let the skill tell "gate
 // refused" (2) apart from "something broke" (1) without parsing stdout text.
 async function main(): Promise<void> {
   const slug = process.argv[2]
   if (!slug || !SAFE_TOKEN.test(slug)) {
-    console.error(`Usage: cockpit-merge <slug>${slug ? ` — '${slug}' is not a safe task slug` : ''}`)
+    console.error(`Usage: pipelinely-merge <slug>${slug ? ` — '${slug}' is not a safe task slug` : ''}`)
     process.exitCode = 1
     return
   }

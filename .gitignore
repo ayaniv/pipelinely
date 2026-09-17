@@ -11,7 +11,6 @@ blob-report/
 /TASK.md
 
 # Unlike the private cockpit-ai repo, this public checkout doesn't track
-# task history — only the empty scaffold ships.
+# task history — a fresh clone ships no tasks/ scaffold at all, so local
+# runs generate this directory (TASKS_DIR) and it should stay untracked.
 tasks/**
-!tasks/.gitkeep
-!tasks/BACKLOG.md

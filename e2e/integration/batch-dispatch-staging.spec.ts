@@ -12,7 +12,7 @@ import { openScratchSession, closeScratchSession, readSessionContents } from '..
 //
 // Incident this exists for (2026-09-06): "Run wave" on
 // pipelinely-dashboard-redesign's wave 2 auto-submitted two real
-// `/cockpit-dev <slug>` commands into the developer's live, attended
+// `/pipelinely-dev <slug>` commands into the developer's live, attended
 // orchestrator session — via writeToOrchestrator(text, pasteIntoSession),
 // which types the text and then writes a second, empty `newline yes` to press
 // Return. The fix routes both batch paths through stageInSession instead
@@ -67,14 +67,14 @@ test.describe('batch dispatch stages one unsent command in a real session', () =
         const contents = await readSessionContents(sessionId)
 
         // One command carrying both milestones — not two separate ones.
-        expect(contents).toContain('/cockpit-dev wave-batch-parent-m1')
-        expect(contents).toContain('/cockpit-dev wave-batch-parent-m2')
+        expect(contents).toContain('/pipelinely-dev wave-batch-parent-m1')
+        expect(contents).toContain('/pipelinely-dev wave-batch-parent-m2')
         expect(contents).toContain('in parallel')
 
         // The regression that matters: it is STILL AT THE PROMPT. Before the
         // fix this text would have been submitted and gone, replaced by two
         // real dispatches spawning two real worktrees.
-        expect(stagedTextIsUnsent(contents, '/cockpit-dev wave-batch-parent-m2')).toBe(true)
+        expect(stagedTextIsUnsent(contents, '/pipelinely-dev wave-batch-parent-m2')).toBe(true)
       } finally {
         await closeScratchSession(sessionId)
         await fs.rm(ORCHESTRATOR_SESSION_PATH, { force: true })
@@ -132,7 +132,7 @@ test.describe('batch dispatch stages one unsent command in a real session', () =
         expect(await postBatch(baseURL!, { kind: 'backlog', items: [{ description: 'Second batch item' }] })).toBe(200)
 
         const contents = await readSessionContents(sessionId)
-        expect(contents).toContain('/cockpit-dev wave-batch-parent-m1')
+        expect(contents).toContain('/pipelinely-dev wave-batch-parent-m1')
         expect(contents).toContain('Second batch item')
 
         // Neither batch ran. The second batch's text is the last thing on the

@@ -2453,7 +2453,7 @@
     // here — see computeNextStageCta's own client-side counterpart for the
     // same constraint). reviewRef is checked first for backward
     // compatibility, but no current skill writes it — the 'dev' stage's own
-    // TIMELINE note (documented in cockpit-dev's SKILL.md as "<PR note>",
+    // TIMELINE note (documented in pipelinely-dev's SKILL.md as "<PR note>",
     // e.g. "PR #42 open" or a full .../pull/42 URL) is the actual source
     // for a task using the modern TIMELINE-driven pipeline.
     function findPrNumber(task) {
@@ -2609,7 +2609,7 @@
       { marker: 'triage and dispatch qa-fixes', stage: 'qa-fixes' },
       { marker: 'fixes pushed, ready to re-run QA', stage: 'qa' },
       // "QA passed, ready to merge" deliberately has no entry — merge has a
-      // skill (cockpit-merge) but is never staged from here (decision 2).
+      // skill (pipelinely-merge) but is never staged from here (decision 2).
     ]
 
     function computeNextStageCta(task) {
@@ -3586,13 +3586,13 @@
     // ── Header context meter: Handover click ────────────────────────────────
     // Delegated (renderHeaderCtx replaces this slot's contents on every
     // refresh) rather than a listener bound to a node that gets torn out
-    // from under it. Stages /handover into the orchestrator's own session —
-    // POST /orchestrator/handover — via the same postStagingRequest rule
+    // from under it. Stages /pipelinely-handover into the orchestrator's own session —
+    // POST /orchestrator/pipelinely-handover — via the same postStagingRequest rule
     // every other staging button uses (disable in flight, ✓ staged / 409 /
     // 503 / no-server).
     document.getElementById('header-ctx-slot').addEventListener('click', (e) => {
       const btn = e.target.closest('button[data-action="orchestrator-handover"]')
-      if (btn) postStagingRequest(btn, '/orchestrator/handover')
+      if (btn) postStagingRequest(btn, '/orchestrator/pipelinely-handover')
     })
 
     // ── Sort ──────────────────────────────────────────────────────────────────
@@ -4463,7 +4463,7 @@
     // The single warning threshold for CTX, shared by the stat grid and
     // renderCard's own banner. Replaces the 50% threshold the two used
     // independently at HEAD — the spec's number is 80%, matching what an
-    // active session actually needs before /handover becomes urgent.
+    // active session actually needs before /pipelinely-handover becomes urgent.
     const CTX_WARN_THRESHOLD = 80
 
     // Stat grid — CTX/SESS/Model/Tokens/Cost. Shared verbatim between
@@ -4690,7 +4690,7 @@
     // ctx>60% is the design's one hot-context rule, applied at every meter
     // (top bar, this card, the inner-view header, a checklist row) — kept
     // distinct from CTX_WARN_THRESHOLD (80%), which drives the older, bigger
-    // "⚠ consider /handover" banner below and has its own established
+    // "⚠ consider /pipelinely-handover" banner below and has its own established
     // meaning this redesign doesn't touch.
     const CTX_HOT_THRESHOLD = 60
     function ctxIsHot(ctx) { return ctx !== null && ctx > CTX_HOT_THRESHOLD }
@@ -4797,7 +4797,7 @@
       const orphanWarningHtml = task.orphaned
         ? `<div class="ctx-warning">⚠ Tab closed but STATUS still "working" — verify and mark done</div>` : ''
       const warningHtml = (!task.orphaned && high) ? `
-        <div class="ctx-warning">⚠ Context at ${ctx}% — consider /handover</div>` : ''
+        <div class="ctx-warning">⚠ Context at ${ctx}% — consider /pipelinely-handover</div>` : ''
 
       // Waiting/paused reason — same visual treatment either way, just a
       // different source field depending on which status is set. The card's
@@ -5319,7 +5319,7 @@
     const STAGE_TO_CHAIN_ID = Object.fromEntries(FLAT_CHAIN_STAGES.map(s => [s.stage, s.id]))
 
     // Display-only grouping for the stepper chain: a fresh-eyes review really
-    // is its own dispatch (cockpit-plan-review), and cr-fixes/qa-fixes really
+    // is its own dispatch (pipelinely-plan-review), and cr-fixes/qa-fixes really
     // are their own tabs with their own panels/CTAs/URLs — none of that
     // changes here. This only says which chain nodes render as one circle in
     // renderStageChain below, folding the child id's state into the parent's.
@@ -5907,11 +5907,11 @@
 
       // Merge — gated (a real preflight check, not a simulation) and
       // completes the task on success, but deliberately has no STAGE_SKILL
-      // entry and no staged CTA (cockpit-merge-skill's plan, decision 2):
+      // entry and no staged CTA (pipelinely-merge-skill's plan, decision 2):
       // the button already merges in one click, in-process, and a staged
-      // `/cockpit-merge <slug>` CTA would be a third path to the same
+      // `/pipelinely-merge <slug>` CTA would be a third path to the same
       // action, one that adds a live orchestrator session as a dependency
-      // the button doesn't have. `/cockpit-merge` is the *other* human
+      // the button doesn't have. `/pipelinely-merge` is the *other* human
       // trigger for the exact same mergeTask() (src/taskCompletion.ts), run
       // from the orchestrator's own session — not staged from here. Failures
       // persist in the banner below rather than a button flash; there's no
@@ -6216,7 +6216,7 @@
     // to dispatch (STAGE_SKILL in taskParser.ts has no 'planning' entry — a
     // task's card only exists once planning has already started, so
     // there's nothing to "start"), and so it gets no CTA. Plan Review's own
-    // skill is /cockpit-plan-review, so it's the one that hosts "Start Plan
+    // skill is /pipelinely-plan-review, so it's the one that hosts "Start Plan
     // Review" — not Planning, even though Planning is what finishing
     // triggers it.
     const PLAN_TAB_OWN_CTA = {
@@ -6936,7 +6936,7 @@
       return postStagingRequest(btn, `/stage-skill/${encodeURIComponent(slug)}`, { stage, autoSubmit: isAutoSubmitEnabled() })
     }
     function stageHandover(btn, slug) {
-      return postStagingRequest(btn, `/handover/${encodeURIComponent(slug)}`)
+      return postStagingRequest(btn, `/pipelinely-handover/${encodeURIComponent(slug)}`)
     }
 
     // Resolves a data-action button to its handler — handleCardClick's own

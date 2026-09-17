@@ -275,7 +275,7 @@ test.describe('orchestrator pointer — the recorded tab must really be the orch
 
   test('a stale ORCHESTRATOR_TMUX naming a dead session does not block a healthy recorded tab', async ({ request }) => {
     // The other direction, and the reason the identity check cannot simply
-    // demand client-ship unconditionally. /run-orchestrator writes
+    // demand client-ship unconditionally. /pipelinely writes
     // ORCHESTRATOR_TMUX only when $TMUX is set and never clears it, so a
     // leftover name pointing at a long-dead session is a normal state — and
     // an orchestrator running outside tmux has no client-ship to prove.

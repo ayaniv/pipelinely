@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Snapshot this Claude Code session's token usage into the task's METRICS file
-# so the Cockpit AI dashboard's CTX/MODEL/TOKENS/COST tiles stay live.
+# so the Pipelinely dashboard's CTX/MODEL/TOKENS/COST tiles stay live.
 #
 # Usage: scripts/write-metrics.sh [slug]
 #   slug defaults to $COCKPIT_TASK_SLUG (set by the orchestrator when it
@@ -53,7 +53,7 @@ fi
 
 TASK_DIR="${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/$SLUG"
 
-# The legacy single-file snapshot. Still written: /handover, the statusline
+# The legacy single-file snapshot. Still written: /pipelinely-handover, the statusline
 # and every task dir that predates per-session files all depend on it.
 printf '%s\n' "$METRICS_JSON" > "$TASK_DIR/METRICS"
 

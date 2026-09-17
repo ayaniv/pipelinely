@@ -14,11 +14,11 @@ export interface StageScope {
 // own skillName so a renamed skill can't be updated in one map and missed
 // in the other. 'merge' has no STAGE_SKILL entry and so never appears here.
 export const STAGE_SKILL_DIR: Partial<Record<Stage, string>> = {
-  planning: 'cockpit-planning',
+  planning: 'pipelinely-planning',
   ...(Object.fromEntries(
     (Object.entries(STAGE_SKILL) as [Stage, { skillName: string }][]).map(([stage, { skillName }]) => [
       stage,
-      `cockpit-${skillName}`,
+      `pipelinely-${skillName}`,
     ])
   ) as Partial<Record<Stage, string>>),
 }

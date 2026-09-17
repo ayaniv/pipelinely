@@ -34,46 +34,46 @@ itself, it only dispatches.
   the tasks directory and pushes live updates over `/events`.
 - **`orchestrator-prompt.md`** — the orchestrator's behavior spec: dispatch
   rules, the weekly-focus gate, the `TASK.md` skeleton, milestone fan-out.
-  The source of truth `run-orchestrator` loads.
+  The source of truth `pipelinely` loads.
 - **`docs/engineering-constraints.md`** — the one file that defines what
   every dispatched task is required to do (test coverage, error logging,
   `data-testid` selectors, no duplication, follow existing conventions).
-  Every `cockpit-*` skill copies this verbatim into the `TASK.md` it writes —
+  Every `pipelinely-*` skill copies this verbatim into the `TASK.md` it writes —
   edit it once here to change what every future dispatch expects.
 - **`docs/tech-design-template.md`** — the shape a `tech-design.md` should
   take; planning writes to this template, plan review holds it to it.
 - **`.claude/skills/`** — the pipeline, one skill per stage plus three
   cross-cutting ones:
-  - `run-orchestrator` — turns the current tab into the orchestrator.
-  - `cockpit-planning` — explores the repo, decides milestones vs. flat,
+  - `pipelinely` — turns the current tab into the orchestrator.
+  - `pipelinely-planning` — explores the repo, decides milestones vs. flat,
     writes `tech-design.md` + e2e tests, in a fresh Opus 5 session.
-  - `cockpit-plan-review` — a *different*, fresh Opus 5 session that has
+  - `pipelinely-plan-review` — a *different*, fresh Opus 5 session that has
     never seen the plan reviews it cold and revises it in place.
-  - `cockpit-dev` — TDD implementation through to an opened PR, in its own
+  - `pipelinely-dev` — TDD implementation through to an opened PR, in its own
     long-lived tab (refuses to start a milestone whose `needs:` dependency
     hasn't merged yet).
-  - `cockpit-qa` — a fresh session runs the e2e tests planning wrote against
+  - `pipelinely-qa` — a fresh session runs the e2e tests planning wrote against
     the live PR and writes `QA_REPORT.md`. Never the dev's own tab or
     session — the code's author is the worst judge of whether it works.
-  - `cockpit-qa-fixes` — fixes the failures the developer checked off,
-    re-verifies, hands back to a fresh `cockpit-qa` re-run. Runs *in* the
+  - `pipelinely-qa-fixes` — fixes the failures the developer checked off,
+    re-verifies, hands back to a fresh `pipelinely-qa` re-run. Runs *in* the
     dev's own tab, deliberately, since fixing benefits from the context a
     fresh QA session doesn't have.
-  - `cockpit-cr` — a fresh session runs its own diff-based code review
+  - `pipelinely-cr` — a fresh session runs its own diff-based code review
     against the PR (a built-in review — `gh pr diff` plus
     `docs/engineering-constraints.md`) and persists it to
     `task-pr-review.md`. Same independence rule as QA.
-  - `cockpit-cr-fixes` — fixes the review comments checked off in
+  - `pipelinely-cr-fixes` — fixes the review comments checked off in
     `TRIAGE.json`, pushes, and annotates which comments were skipped.
-  - `handover` — end-of-session transfer: writes continuation context and
-    opens a fresh tab that auto-resumes the task.
-  - `feedback` — files what you tell it as a GitHub issue on this repo via
-    `gh issue create`, with a short summary of what you were doing right
-    before it. Try `/feedback <what's wrong>`.
+  - `pipelinely-handover` — end-of-session transfer: writes continuation
+    context and opens a fresh tab that auto-resumes the task.
+  - `pipelinely-feedback` — files what you tell it as a GitHub issue on this
+    repo via `gh issue create`, with a short summary of what you were doing
+    right before it. Try `/pipelinely-feedback <what's wrong>`.
 
 ### Want a more thorough, team-specific reviewer?
 
-`cockpit-cr`'s built-in review is generic on purpose. For a deeper,
+`pipelinely-cr`'s built-in review is generic on purpose. For a deeper,
 team-specific self-review step, start from
 [`ayaniv/t2a-review-template`](https://github.com/ayaniv/t2a-review-template)
 and wire it in as your own review skill.
@@ -129,8 +129,8 @@ for s in .claude/skills/*/; do
 done
 ```
 
-Then run `/run-orchestrator` in a dedicated tab and start dispatching —
-either free-text ("build X") or `/cockpit-planning <backlog item>` to go
+Then run `/pipelinely` in a dedicated tab and start dispatching —
+either free-text ("build X") or `/pipelinely-planning <backlog item>` to go
 straight into the pipeline.
 
 ## Dotfiles
@@ -153,15 +153,15 @@ the `plannotator` CLI) isn't on `PATH` yet.
 
 ## How it works
 
-1. `/run-orchestrator` turns the current tab into the **orchestrator**. It
+1. `/pipelinely` turns the current tab into the **orchestrator**. It
    never does task work itself — every task, however small, gets dispatched
    to its own worker. Before writing `TASK.md` it checks the free-text
    `WEEKLY_FOCUS` banner (set from the dashboard) and asks the developer to
    confirm if a new task doesn't obviously fit it.
-2. **Planning** (`cockpit-planning`) explores the target repo in a fresh
+2. **Planning** (`pipelinely-planning`) explores the target repo in a fresh
    Opus 5 session, decides whether the work splits into milestones, names a
    real verifier, writes runnable e2e tests, and writes `tech-design.md`.
-3. **Plan Review** (`cockpit-plan-review`) dispatches a *second*, independent
+3. **Plan Review** (`pipelinely-plan-review`) dispatches a *second*, independent
    Opus 5 session — one that has never seen the plan being written — to
    review it cold and revise it in place. This can run several rounds; each
    round's outcome is logged to `TIMELINE`. The developer can also open the
@@ -170,11 +170,11 @@ the `plannotator` CLI) isn't on `PATH` yet.
    feedback on `tech-design.md` before Dev is allowed to start — deliberately
    never the orchestrator's own session, since Plannotator blocks
    synchronously on the browser round-trip.
-4. **Dev** (`cockpit-dev`) creates the task's git worktree and branch, opens
+4. **Dev** (`pipelinely-dev`) creates the task's git worktree and branch, opens
    its own long-lived tab, and implements test-driven through to an opened
    PR. Every dispatched `TASK.md` carries the constraints from
    `docs/engineering-constraints.md` verbatim.
-5. **QA** (`cockpit-qa`) and **Code Review** (`cockpit-cr`) each run in a
+5. **QA** (`pipelinely-qa`) and **Code Review** (`pipelinely-cr`) each run in a
    fresh session against the live PR — QA runs the e2e suite and writes
    `QA_REPORT.md`; CR runs a diff-based code review and writes `task-pr-review.md`.
    Neither ever claims the task's `ITERM_SESSION`/`TMUX_SESSION`, so
@@ -230,7 +230,7 @@ Each task is a folder under `TASKS_DIR`:
   METRICS-<session-id>.json  # one per Claude session: stage, context, tokens, startedAt/updatedAt
   ITERM_SESSION     # stable iTerm2 session id for → Terminal focus
   TMUX_SESSION      # named tmux session backing that tab — survives the tab closing
-  HANDOVER-N.md     # continuation context written by /handover
+  HANDOVER-N.md     # continuation context written by /pipelinely-handover
   DEV_URL           # optional — enables the Browse App button
   VERIFY            # the command or target that decides whether this task is done
   TIMELINE          # append-only "<ISO> <stage> [note]" lines — the task's stage history

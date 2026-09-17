@@ -1,13 +1,13 @@
 import { test, expect, type Page, type Request, type Route } from '@playwright/test'
 
-// The Handover pills stage `/handover` into the right session instead of
+// The Handover pills stage `/pipelinely-handover` into the right session instead of
 // being decorative. See tech-design.md.
 //
 // Two targets, one rule:
 //   - a task's own Handover pill (board card, detail header) -> POST
-//     /handover/:slug -> the task's own tracked session
+//     /pipelinely-handover/:slug -> the task's own tracked session
 //   - the top bar's Handover segment (fused into the orchestrator ctx pill)
-//     -> POST /orchestrator/handover -> the orchestrator's own session
+//     -> POST /orchestrator/pipelinely-handover -> the orchestrator's own session
 // Both STAGE the text unsent (stageInSession / pasteIntoTrackedSession with
 // submit:false) — that half is proved at the vitest level against the real
 // route handlers (src/server.handover.test.ts), where the focusTab write
@@ -53,11 +53,11 @@ function recordDispatchPosts(page: Page): RecordedPosts {
   page.on('request', (req: Request) => {
     if (req.method() !== 'POST') return
     const { pathname } = new URL(req.url())
-    if (pathname === '/orchestrator/handover') {
+    if (pathname === '/orchestrator/pipelinely-handover') {
       recorded.orchestratorHandover++
       return
     }
-    const taskMatch = pathname.match(/^\/handover\/([^/]+)$/)
+    const taskMatch = pathname.match(/^\/pipelinely-handover\/([^/]+)$/)
     if (taskMatch) {
       recorded.taskHandover.push(decodeURIComponent(taskMatch[1]))
       return
@@ -98,9 +98,9 @@ test.describe('task Handover pill — board card', () => {
     await expect(pill).toHaveAttribute('data-slug', HOT_SLUG)
   })
 
-  test('clicking it stages into this task only — one POST /handover/:slug, no sibling route, no detail open', async ({ page }) => {
+  test('clicking it stages into this task only — one POST /pipelinely-handover/:slug, no sibling route, no detail open', async ({ page }) => {
     const posts = recordDispatchPosts(page)
-    await stubRoute(page, `**/handover/${HOT_SLUG}`, 200)
+    await stubRoute(page, `**/pipelinely-handover/${HOT_SLUG}`, 200)
     await page.goto('/')
 
     const pill = hotCard(page).getByTestId('card-handover')
@@ -120,7 +120,7 @@ test.describe('task Handover pill — board card', () => {
     const pill = hotCard(page).getByTestId('card-handover')
 
     const [response] = await Promise.all([
-      page.waitForResponse((res) => new URL(res.url()).pathname === `/handover/${HOT_SLUG}` && res.request().method() === 'POST'),
+      page.waitForResponse((res) => new URL(res.url()).pathname === `/pipelinely-handover/${HOT_SLUG}` && res.request().method() === 'POST'),
       pill.click(),
     ])
     expect(response.status()).toBe(503)
@@ -130,7 +130,7 @@ test.describe('task Handover pill — board card', () => {
   })
 
   test('a 409 (reattached but the retry still failed) shows the error state', async ({ page }) => {
-    await stubRoute(page, `**/handover/${HOT_SLUG}`, 409, { reattached: true, error: 'Session was gone — reattached a new tab, but the handover command still failed to stage. Click again.' })
+    await stubRoute(page, `**/pipelinely-handover/${HOT_SLUG}`, 409, { reattached: true, error: 'Session was gone — reattached a new tab, but the handover command still failed to stage. Click again.' })
     await page.goto('/')
     const pill = hotCard(page).getByTestId('card-handover')
     await pill.click()
@@ -140,7 +140,7 @@ test.describe('task Handover pill — board card', () => {
 
   test('a fast double-click sends exactly one request while the first is in flight', async ({ page }) => {
     const posts = recordDispatchPosts(page)
-    const held = await holdRoute(page, `**/handover/${HOT_SLUG}`)
+    const held = await holdRoute(page, `**/pipelinely-handover/${HOT_SLUG}`)
     await page.goto('/')
 
     const pill = hotCard(page).getByTestId('card-handover')
@@ -156,7 +156,7 @@ test.describe('task Handover pill — board card', () => {
 test.describe('task Handover pill — detail header', () => {
   test('clicking it stages into this task and leaves the detail view open', async ({ page }) => {
     const posts = recordDispatchPosts(page)
-    await stubRoute(page, `**/handover/${HOT_SLUG}`, 200)
+    await stubRoute(page, `**/pipelinely-handover/${HOT_SLUG}`, 200)
     await page.goto(`/task/${HOT_SLUG}`)
     const detail = page.getByTestId('task-detail')
     await expect(detail).toBeVisible()
@@ -180,7 +180,7 @@ test.describe('task Handover pill — detail header', () => {
   // handler makes, in between.
   test('a detail re-render landing mid-click does not swallow the request', async ({ page }) => {
     const posts = recordDispatchPosts(page)
-    await stubRoute(page, `**/handover/${HOT_SLUG}`, 200)
+    await stubRoute(page, `**/pipelinely-handover/${HOT_SLUG}`, 200)
     await page.goto(`/task/${HOT_SLUG}`)
     const detail = page.getByTestId('task-detail')
     await expect(detail).toBeVisible()
@@ -214,9 +214,9 @@ test.describe('orchestrator Handover segment — top bar', () => {
     await expect(segment).not.toHaveAttribute('data-slug', /.*/)
   })
 
-  test('clicking it stages into the orchestrator only — one POST /orchestrator/handover, never a task route', async ({ page }) => {
+  test('clicking it stages into the orchestrator only — one POST /orchestrator/pipelinely-handover, never a task route', async ({ page }) => {
     const posts = recordDispatchPosts(page)
-    await stubRoute(page, '**/orchestrator/handover', 200)
+    await stubRoute(page, '**/orchestrator/pipelinely-handover', 200)
     await page.goto('/')
 
     const segment = page.getByTestId('header-handover')
@@ -229,7 +229,7 @@ test.describe('orchestrator Handover segment — top bar', () => {
   })
 
   test('a 503 (orchestrator not running) shows the error state and leaves it usable', async ({ page }) => {
-    await stubRoute(page, '**/orchestrator/handover', 503, { error: 'Orchestrator not running — no ORCHESTRATOR_SESSION found' })
+    await stubRoute(page, '**/orchestrator/pipelinely-handover', 503, { error: 'Orchestrator not running — no ORCHESTRATOR_SESSION found' })
     await page.goto('/')
 
     const segment = page.getByTestId('header-handover')
@@ -239,7 +239,7 @@ test.describe('orchestrator Handover segment — top bar', () => {
   })
 
   test('a server that is down shows the error state rather than nothing', async ({ page }) => {
-    await page.route('**/orchestrator/handover', (route) => route.abort('connectionrefused'))
+    await page.route('**/orchestrator/pipelinely-handover', (route) => route.abort('connectionrefused'))
     await page.goto('/')
 
     const segment = page.getByTestId('header-handover')
@@ -256,7 +256,7 @@ test.describe('orchestrator Handover segment — top bar', () => {
   // exact render call the SSE handler makes, in between.
   test('a header re-render landing mid-click does not swallow the request', async ({ page }) => {
     const posts = recordDispatchPosts(page)
-    await stubRoute(page, '**/orchestrator/handover', 200)
+    await stubRoute(page, '**/orchestrator/pipelinely-handover', 200)
     await page.goto('/')
 
     const segment = page.getByTestId('header-handover')

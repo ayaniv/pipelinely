@@ -1,6 +1,6 @@
 ---
-name: handover
-description: End-of-session transfer — writes a continuation context, updates STATUS, and opens a new iTerm2 tab that auto-loads the new session. Use when context is getting long or the session is ending. /handoff is for mid-session copy-paste resets; /handover is for full automated tab transfer.
+name: pipelinely-handover
+description: End-of-session transfer — writes a continuation context, updates STATUS, and opens a new iTerm2 tab that auto-loads the new session. Use when context is getting long or the session is ending. /handoff is for mid-session copy-paste resets; /pipelinely-handover is for full automated tab transfer.
 allowed-tools: ["Bash", "Write", "Read"]
 ---
 
@@ -10,11 +10,11 @@ Transfer this session to a fresh Claude tab. Do this yourself — do NOT delegat
 
 ## Paths
 
-Task state lives under the **tasks directory**, which must match what the Cockpit AI server watches: the `TASKS_DIR` env var, defaulting to `~/Dev/pipelinely/tasks`. The shell snippets below write it as `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}`. Set `TASKS_DIR` in your shell profile if you keep tasks elsewhere.
+Task state lives under the **tasks directory**, which must match what the Pipelinely server watches: the `TASKS_DIR` env var, defaulting to `~/Dev/pipelinely/tasks`. The shell snippets below write it as `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}`. Set `TASKS_DIR` in your shell profile if you keep tasks elsewhere.
 
 ## Proactive reminder
 
-When this skill is loaded: monitor this conversation going forward. Proactively suggest `/handover` before context degrades. Watch for: repeated re-reading of the same files, long tool output chains, user re-explaining context already covered.
+When this skill is loaded: monitor this conversation going forward. Proactively suggest `/pipelinely-handover` before context degrades. Watch for: repeated re-reading of the same files, long tool output chains, user re-explaining context already covered.
 
 ## Steps
 
@@ -74,7 +74,7 @@ ${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>/HANDOVER-N.md
 echo "handover: session #N — continuing in new tab" > "${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>/STATUS"
 ```
 
-### 5.5. Snapshot session metrics (for Cockpit AI cost tracking)
+### 5.5. Snapshot session metrics (for Pipelinely cost tracking)
 
 If `$COCKPIT_TASK_SLUG` is set in the environment and `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>/METRICS` exists, copy it to a numbered snapshot before the tab closes:
 
