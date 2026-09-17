@@ -517,6 +517,16 @@
       flex-shrink: 0;
     }
 
+    /* ── Read-only banner (non-canonical dashboard instance) ─────────────── */
+    .read-only-banner {
+      padding: 10px 28px;
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in srgb, var(--rd) 12%, transparent);
+      color: var(--rd);
+      font-size: 12.5px;
+      font-weight: 600;
+    }
+
     /* ── Focus hero (dashboard) ──────────────────────────────────────────────
        The design's own hero is a single day's focus; this repo's real,
        working feature is WEEKLY (persisted server-side) — kept as the same
@@ -2251,6 +2261,9 @@
           <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch theme"></button>
         </div>
       </header>
+      <div class="read-only-banner" id="read-only-banner" data-testid="read-only-banner" hidden>
+        ⚠ Read-only — this is not the canonical dashboard instance, so dispatch actions are disabled here.
+      </div>
       <div class="global-progress" id="global-progress"></div>
 
       <div id="board" class="board page-column" data-testid="board-column">
@@ -2455,19 +2468,25 @@
     // compatibility, but no current skill writes it — the 'dev' stage's own
     // TIMELINE note (documented in pipelinely-dev's SKILL.md as "<PR note>",
     // e.g. "PR #42 open" or a full .../pull/42 URL) is the actual source
-    // for a task using the modern TIMELINE-driven pipeline.
+    // for a task using the modern TIMELINE-driven pipeline. Scans 'dev'
+    // entries newest to oldest and returns the first PR reference found,
+    // rather than only ever checking the single latest note — a follow-up
+    // dev note that's just more work on the same PR (a rebase, a conflict
+    // fix) and mentions no PR of its own no longer nulls out the reference
+    // an earlier note in the same run already established.
     function findPrNumber(task) {
       const fromReviewRef = prNumberFromReviewRef(task.reviewRef)
       if (fromReviewRef) return fromReviewRef
 
       const devEvents = task.stageHistory.filter(e => e.stage === 'dev' && e.note)
-      const note = devEvents[devEvents.length - 1]?.note
-      if (!note) return null
-
-      const urlMatch = note.match(/\/pull\/(\d+)/)
-      if (urlMatch) return urlMatch[1]
-      const hashMatch = note.match(/#(\d+)/)
-      return hashMatch ? hashMatch[1] : null
+      for (let i = devEvents.length - 1; i >= 0; i--) {
+        const note = devEvents[i].note
+        const urlMatch = note.match(/\/pull\/(\d+)/)
+        if (urlMatch) return urlMatch[1]
+        const hashMatch = note.match(/#(\d+)/)
+        if (hashMatch) return hashMatch[1]
+      }
+      return null
     }
 
     function formatCost(inp, out, model) {
@@ -2762,8 +2781,13 @@
                   // branch for work that already exists over there — and
                   // the batch bar's "Run selected" fires exactly that per
                   // item, which is why a shelved row offers Resume instead.
+                  // Resume itself never touches the orchestrator session
+                  // (POST /backlog/resume just rewrites STATUS), so it is
+                  // not canonical-gated the way Run is.
                   ? `<button type="button" class="backlog-row-run" data-testid="backlog-resume-btn" data-action="resume-backlog" data-index="${i}">${PLAY_ICON}<span>resume</span></button>`
-                  : `<button type="button" class="backlog-row-run" data-testid="backlog-play-btn" data-action="dispatch-backlog" data-index="${i}">${PLAY_ICON}<span>run</span></button>`
+                  : `<button type="button" class="backlog-row-run" data-testid="backlog-play-btn" data-action="dispatch-backlog" data-index="${i}"
+                            ${currentIsCanonical ? '' : 'disabled'}
+                            title="${currentIsCanonical ? '' : 'Read-only — this is not the canonical dashboard instance'}">${PLAY_ICON}<span>run</span></button>`
                 ) : ''}
               </div>
               `}
@@ -2795,6 +2819,9 @@
       document.getElementById('backlog-selected-count-num').textContent = String(selectedCount)
       document.getElementById('backlog-run-selected-count').textContent = String(selectedCount)
       document.getElementById('backlog-delete-selected-count').textContent = String(selectedCount)
+      const runSelectedBtn = document.getElementById('backlog-run-selected-btn')
+      runSelectedBtn.disabled = !currentIsCanonical
+      runSelectedBtn.title = currentIsCanonical ? '' : 'Read-only — this is not the canonical dashboard instance'
     }
 
     function renderBacklogEditForm(item, i) {
@@ -2955,6 +2982,13 @@
         } else if (res.status === 503) {
           btn.disabled = false
           flashBtn(btn, orig, 'btn-err', 'no orchestrator', 5000)
+        } else if (res.status === 403) {
+          // The disabled attribute already keeps this button unclickable on
+          // a non-canonical instance (see renderBacklog) — this only fires
+          // if that state was somehow stale, so it must still report the
+          // rejection rather than a generic "failed".
+          btn.disabled = false
+          flashBtn(btn, orig, 'btn-err', 'read-only instance', 5000)
         } else {
           btn.disabled = false
           flashBtn(btn, orig, 'btn-err', 'failed', 5000)
@@ -3638,6 +3672,32 @@
     // ── Render ────────────────────────────────────────────────────────────────
     let currentTasks = []
     let currentDoneGroups = []
+
+    // Whether THIS instance of the dashboard is the one real orchestrator
+    // dashboard (see isCanonicalDispatchInstance in server.ts) — a worktree's
+    // own local preview or an e2e webServer both report false. Starts false
+    // (read-only) rather than true: the very first render, before either
+    // /api/tasks or the SSE stream has confirmed which this is, must not
+    // show dispatch-triggering CTAs as live on the (rare) chance a click
+    // lands before that confirmation arrives.
+    let currentIsCanonical = false
+
+    function updateReadOnlyBanner() {
+      document.getElementById('read-only-banner').hidden = currentIsCanonical
+      // "Bring back the orchestrator tab" can forcibly reattach or
+      // foreground the developer's real, live orchestrator session (POST
+      // /orchestrator/tab) — same canonical-only posture as the backlog/wave
+      // "Run" CTAs, since a non-canonical instance now 403s it server-side
+      // regardless.
+      orchestratorTabBtn.disabled = !currentIsCanonical
+      orchestratorTabBtn.title = currentIsCanonical ? '' : 'Read-only — this is not the canonical dashboard instance'
+    }
+
+    // The slug whose card has the quick-reply text form open (⌨ Send input
+    // clicked), or null. Module scope, same shape as editingBacklogIndex —
+    // survives the SSE-driven renderDashboard call without surviving a move
+    // to a different task. Only one card's form is ever open at a time.
+    let replyFormSlug = null
 
     // Guards an innerHTML rebuild against replacing a container with markup
     // that's byte-identical to what's already there. The SSE '/events'
@@ -6031,12 +6091,14 @@
               <span class="wave-rule">${esc(waveRule(inWave))}</span>
               <button class="btn wave-batch-btn" data-testid="wave-batch-btn"
                       data-action="wave-batch" data-slug="${esc(task.slug)}" data-wave="${w}"
-                      ${eligible.length && !running ? '' : 'disabled'}
-                      title="${running
-                        ? `Staging wave ${w}…`
-                        : eligible.length
-                          ? `Stages one command for wave ${w}'s queued, unblocked milestones — unsent, for you to review`
-                          : 'Nothing queued and unblocked in this wave yet'}">
+                      ${eligible.length && !running && currentIsCanonical ? '' : 'disabled'}
+                      title="${!currentIsCanonical
+                        ? 'Read-only — this is not the canonical dashboard instance'
+                        : running
+                          ? `Staging wave ${w}…`
+                          : eligible.length
+                            ? `Stages one command for wave ${w}'s queued, unblocked milestones — unsent, for you to review`
+                            : 'Nothing queued and unblocked in this wave yet'}">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M7 5l12 7-12 7V5z"></path></svg>
                 <span>Run wave (<span data-testid="wave-batch-count">${eligible.length}</span>)</span>
               </button>
@@ -6162,14 +6224,17 @@
       const btn = document.querySelector(
         `[data-testid="wave"][data-wave="${wave}"] [data-testid="wave-batch-btn"][data-slug="${parentSlug}"]`,
       )
-      if (btn) btn.disabled = runningWaveBatches.has(`${parentSlug}:${wave}`)
+      if (btn) btn.disabled = runningWaveBatches.has(`${parentSlug}:${wave}`) || !currentIsCanonical
     }
 
     // One postBatchDispatch({ kind: 'wave', slugs }) call for the whole
     // wave — the wave half of requirement 1's shared path (see
     // runSelectedBacklogItems for the backlog half). Unlike the deleted
     // per-milestone auto-submit loop this replaces, every eligible
-    // milestone shares one outcome: the batch stages, or it doesn't.
+    // milestone shares one outcome: the batch stages, or it doesn't. Like
+    // every other caller of writeToOrchestrator (via POST /batch-dispatch),
+    // this already inherits the canonical-instance gate — a non-canonical
+    // dashboard's postBatchDispatch call gets a 403, never a real paste.
     async function runWaveBatch(parentSlug, wave) {
       const key = `${parentSlug}:${wave}`
       if (runningWaveBatches.has(key)) return
@@ -6852,6 +6917,13 @@
           flashBtn(btn, orig, 'btn-err', 'no orchestrator', 5000)
           return false
         }
+        if (res.status === 403) {
+          // Only reachable via /focus/:slug's dead-session fallback (the
+          // task's own tab/tmux session is gone too) — a live focus/reattach
+          // never touches the orchestrator session, so it's never gated.
+          flashBtn(btn, orig, 'btn-err', 'read-only instance', 5000)
+          return false
+        }
         flashBtn(btn, orig, 'btn-err', res.status === 404 ? 'not found' : 'failed')
         return false
       } catch (_) {
@@ -6913,11 +6985,13 @@
           flashBtn(btn, orig, 'btn-err', 'reattached — click again', 5000)
           return false
         }
-        if (res.status === 503) {
+        if (res.status === 503 || res.status === 403) {
           // Surface the server's own message rather than a generic "not
           // found" — it already knows whether this was the orchestrator's
-          // tab or the task's own, and whether a session was ever recorded
-          // at all (see /stage-skill/:slug's 503 branch in server.ts).
+          // tab or the task's own, whether a session was ever recorded at
+          // all (see /stage-skill/:slug's 503 branch in server.ts), or
+          // whether this is a non-canonical instance whose dispatch routes
+          // are disabled outright (its 403 branch).
           const data = await res.json().catch(() => null)
           flashBtn(btn, orig, 'btn-err', data?.error || 'not found', 5000)
         } else {
@@ -7309,7 +7383,9 @@
       liveDotHalo.classList.remove('is-error')
     }
     es.onmessage = (e) => {
-      const { tasks, activeProject, weeklyFocus, backlog, doneGroups, settings, orchestratorContextPct } = JSON.parse(e.data)
+      const { tasks, activeProject, weeklyFocus, backlog, doneGroups, settings, orchestratorContextPct, isCanonical } = JSON.parse(e.data)
+      currentIsCanonical = isCanonical
+      updateReadOnlyBanner()
       renderAutoModeToggle(settings)
       renderFilteredBoard(tasks, doneGroups, backlog)
       renderGlobalProgress(activeProject)
@@ -7355,7 +7431,9 @@
     // ── Initial load from /api/tasks ──────────────────────────────────────────
     fetch('/api/tasks')
       .then(r => r.json())
-      .then(({ tasks, activeProject, weeklyFocus, backlog, doneGroups, settings, orchestratorContextPct }) => {
+      .then(({ tasks, activeProject, weeklyFocus, backlog, doneGroups, settings, orchestratorContextPct, isCanonical }) => {
+        currentIsCanonical = isCanonical
+        updateReadOnlyBanner()
         renderAutoModeToggle(settings)
         renderFilteredBoard(tasks, doneGroups, backlog)
         renderGlobalProgress(activeProject)

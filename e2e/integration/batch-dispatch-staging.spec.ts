@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { withOrchestratorSessionLock } from '../fixtures/orchestratorSessionLock.js'
 import { openScratchSession, closeScratchSession, readSessionContents } from '../fixtures/itermSessions.js'
+import { startCanonicalServer, stopCanonicalServer } from '../fixtures/canonicalServer.js'
 
 // The mechanism proof for "batch dispatch stages, never auto-submits" — the
 // half a route mock cannot give. e2e/batch-dispatch-staging.spec.ts (`ui`
@@ -51,14 +52,29 @@ async function postBatch(baseURL: string, body: unknown): Promise<number> {
   return res.status
 }
 
+// POST /batch-dispatch goes through the canonical-dispatch gate first (see
+// server.ts's writeToOrchestrator), and this suite's own shared webServer
+// (playwright.config.ts) deliberately never sets COCKPIT_DISPATCH_ENABLED —
+// see that config's own comment. So every test below runs its own
+// dedicated, canonical instance of src/server.ts (same fixture TASKS_DIR,
+// COCKPIT_DISPATCH_ENABLED=1) and targets it directly — same reasoning as
+// orchestrator-session-self-heal.spec.ts's own dedicated server.
+let canonicalUrl: string
+test.beforeAll(async () => {
+  canonicalUrl = await startCanonicalServer()
+})
+test.afterAll(async () => {
+  await stopCanonicalServer(canonicalUrl)
+})
+
 test.describe('batch dispatch stages one unsent command in a real session', () => {
-  test('a two-milestone wave batch leaves ONE combined command sitting unsent at the prompt', async ({ baseURL }) => {
+  test('a two-milestone wave batch leaves ONE combined command sitting unsent at the prompt', async () => {
     await withOrchestratorSessionLock(async () => {
       const sessionId = await openScratchSession()
       try {
         await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
 
-        const status = await postBatch(baseURL!, {
+        const status = await postBatch(canonicalUrl, {
           kind: 'wave',
           slugs: ['wave-batch-parent-m1', 'wave-batch-parent-m2'],
         })
@@ -82,7 +98,7 @@ test.describe('batch dispatch stages one unsent command in a real session', () =
     })
   })
 
-  test('a backlog batch whose item context spans a line break still stages a single unbroken line', async ({ baseURL }) => {
+  test('a backlog batch whose item context spans a line break still stages a single unbroken line', async () => {
     await withOrchestratorSessionLock(async () => {
       const sessionId = await openScratchSession()
       try {
@@ -93,7 +109,7 @@ test.describe('batch dispatch stages one unsent command in a real session', () =
         // maps \n through to the AppleScript literal), which IS a submit. A
         // BACKLOG.md entry's context legitimately sits on its own line, so
         // composeBatchMessage must collapse it before it ever gets here.
-        const status = await postBatch(baseURL!, {
+        const status = await postBatch(canonicalUrl, {
           kind: 'backlog',
           items: [
             { description: 'First integration item', context: 'context line one\nand line two' },
@@ -116,7 +132,7 @@ test.describe('batch dispatch stages one unsent command in a real session', () =
     })
   })
 
-  test('two batches staged back-to-back concatenate visibly but neither is ever submitted', async ({ baseURL }) => {
+  test('two batches staged back-to-back concatenate visibly but neither is ever submitted', async () => {
     await withOrchestratorSessionLock(async () => {
       const sessionId = await openScratchSession()
       try {
@@ -128,8 +144,8 @@ test.describe('batch dispatch stages one unsent command in a real session', () =
         // developer presses Return lands on the same prompt line. That is
         // accepted BECAUSE the result is benign: garbled, visible, and above
         // all UNSENT, so nothing runs and the developer clears the line.
-        expect(await postBatch(baseURL!, { kind: 'wave', slugs: ['wave-batch-parent-m1'] })).toBe(200)
-        expect(await postBatch(baseURL!, { kind: 'backlog', items: [{ description: 'Second batch item' }] })).toBe(200)
+        expect(await postBatch(canonicalUrl, { kind: 'wave', slugs: ['wave-batch-parent-m1'] })).toBe(200)
+        expect(await postBatch(canonicalUrl, { kind: 'backlog', items: [{ description: 'Second batch item' }] })).toBe(200)
 
         const contents = await readSessionContents(sessionId)
         expect(contents).toContain('/pipelinely-dev wave-batch-parent-m1')

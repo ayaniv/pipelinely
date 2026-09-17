@@ -39,8 +39,22 @@ describe('renderPipelineYaml', () => {
   test('renders a readable, minimal YAML — no library dependency needed for this shape', () => {
     const yaml = renderPipelineYaml({ stages: ['planning', 'dev', 'code-review', 'qa', 'merge'], test: 'vitest run', lint: null, typecheck: null })
     expect(yaml).toBe(
-      'stages:\n  - planning\n  - dev\n  - code-review\n  - qa\n  - merge\ncommands:\n  test: vitest run\n  lint: null\n  typecheck: null\n'
+      'stages:\n  - planning\n  - dev\n  - code-review\n  - qa\n  - merge\ncommands:\n  test: "vitest run"\n  lint: null\n  typecheck: null\n'
     )
+  })
+
+  test('failure path (QA-reported): a command value containing a YAML-significant "key: value"-shaped substring must not produce a broken mapping', () => {
+    const yaml = renderPipelineYaml({ stages: ['planning'], test: 'echo root test: value', lint: null, typecheck: null })
+    expect(yaml).toContain('test: "echo root test: value"')
+    // The unquoted bug produced a bare colon-space outside of any quotes on this
+    // line, which a real YAML parser reads as a second, invalid mapping key.
+    const testLine = yaml.split('\n').find((line) => line.startsWith('  test:'))
+    expect(testLine).toBe('  test: "echo root test: value"')
+  })
+
+  test('escapes an embedded double quote and backslash in a command value', () => {
+    const yaml = renderPipelineYaml({ stages: ['planning'], test: String.raw`echo "hi" \ done`, lint: null, typecheck: null })
+    expect(yaml).toContain(String.raw`test: "echo \"hi\" \\ done"`)
   })
 })
 

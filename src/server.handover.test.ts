@@ -55,7 +55,10 @@ let baseUrl: string
 let taskDir: string
 
 beforeAll(async () => {
-  handle = await startTestServer({ COCKPIT_SKIP_AUTO_OPEN: '1' }, async (tmpDir) => {
+  // POST /orchestrator/pipelinely-handover goes through writeToOrchestrator, so this
+  // suite runs as the canonical instance throughout — canonical-instance
+  // gating itself is server.canonicalGate.test.ts's job, not this file's.
+  handle = await startTestServer({ COCKPIT_SKIP_AUTO_OPEN: '1', COCKPIT_DISPATCH_ENABLED: '1' }, async (tmpDir) => {
     taskDir = path.join(tmpDir, SLUG)
     await fs.mkdir(taskDir, { recursive: true })
     await fs.writeFile(path.join(taskDir, 'TASK.md'), '# Handover test task\n')
@@ -69,7 +72,7 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  await stopTestServer(handle, ['COCKPIT_SKIP_AUTO_OPEN'])
+  await stopTestServer(handle, ['COCKPIT_SKIP_AUTO_OPEN', 'COCKPIT_DISPATCH_ENABLED'])
 })
 
 beforeEach(async () => {

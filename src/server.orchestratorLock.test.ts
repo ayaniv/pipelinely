@@ -96,6 +96,11 @@ let ORCHESTRATOR_TMUX_PATH: string
 beforeAll(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cockpit-orchestrator-race-test-'))
   process.env.TASKS_DIR = tmpDir
+  // This suite is about the pointer-file lock, not the canonical-instance
+  // gate (see server.canonicalGate.test.ts for that) — every dispatch here
+  // must reach writeToOrchestratorLocked for the race assertions to mean
+  // anything, so it opts into canonical mode for its own duration.
+  process.env.COCKPIT_DISPATCH_ENABLED = '1'
   ORCHESTRATOR_SESSION_PATH = path.join(tmpDir, 'ORCHESTRATOR_SESSION')
   ORCHESTRATOR_TMUX_PATH = path.join(tmpDir, 'ORCHESTRATOR_TMUX')
   const { app } = await import('./server.js')
@@ -112,6 +117,7 @@ afterAll(async () => {
     server.close((err) => (err ? reject(err) : resolve()))
   })
   await fs.rm(tmpDir, { recursive: true, force: true })
+  delete process.env.COCKPIT_DISPATCH_ENABLED
 })
 
 beforeEach(async () => {

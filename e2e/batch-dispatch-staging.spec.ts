@@ -1,5 +1,6 @@
 import { test, expect, type Page, type Request } from '@playwright/test'
 import { gotoBoardTab } from './fixtures/boardTabs.js'
+import { startCanonicalServer, stopCanonicalServer } from './fixtures/canonicalServer.js'
 
 // Covers the dashboard half of "batch dispatch stages, never auto-submits".
 //
@@ -29,8 +30,25 @@ const PARENT = 'wave-batch-parent'
 const WAVE = 2
 const WAVE_SLUGS = [`${PARENT}-m1`, `${PARENT}-m2`]
 
+// The wave-batch and backlog "Run selected" buttons this file clicks are
+// both canonical-dispatch-gate's proactively-disabled CTAs (see index.html's
+// renderMilestoneWaves/renderBacklog) — this suite's own shared webServer
+// (playwright.config.ts) deliberately never sets COCKPIT_DISPATCH_ENABLED,
+// so every test here runs its own dedicated, canonical instance of
+// src/server.ts to see those buttons enabled at all. Every dispatch route is
+// still stubbed via page.route below, so nothing real ever reaches
+// writeToOrchestrator — this only needs the canonical instance for the
+// client-side isCanonical read that drives the disabled attribute.
+let canonicalUrl: string
+test.beforeAll(async () => {
+  canonicalUrl = await startCanonicalServer()
+})
+test.afterAll(async () => {
+  await stopCanonicalServer(canonicalUrl)
+})
+
 async function openWaves(page: Page): Promise<void> {
-  await page.goto('/')
+  await page.goto(`${canonicalUrl}/`)
   await page.locator(`.card[data-slug="${PARENT}"] .card-title`).click()
   await expect(page.getByTestId('task-detail')).toBeVisible()
   await page.getByTestId('l1-tab-dev').click()
@@ -132,7 +150,7 @@ test.describe('backlog batch stages one combined command', () => {
   // The fixture BACKLOG.md holds exactly four not-done items, in file order.
   // Checked by data-testid + index, never by their copy.
   async function openBacklogAndSelectAll(page: Page): Promise<void> {
-    await gotoBoardTab(page, 'backlog')
+    await gotoBoardTab(page, 'backlog', canonicalUrl)
     const checkboxes = page.getByTestId('backlog-select-checkbox')
     await expect(checkboxes.first()).toBeVisible()
     const count = await checkboxes.count()
@@ -193,7 +211,7 @@ test.describe('the out-of-scope single-item path is untouched', () => {
   test('the single-item Play button still posts to /backlog/dispatch, not /batch-dispatch', async ({ page }) => {
     const posts = recordDispatchPosts(page)
     await page.route('**/backlog/dispatch', (route) => route.fulfill({ status: 200, body: '' }))
-    await gotoBoardTab(page, 'backlog')
+    await gotoBoardTab(page, 'backlog', canonicalUrl)
 
     const playBtn = page.getByTestId('backlog-play-btn').first()
     await expect(playBtn).toBeVisible()

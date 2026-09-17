@@ -1,4 +1,11 @@
 import { test, expect, type Page, type Locator } from '@playwright/test'
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const BACKLOG_PATH = path.join(__dirname, 'fixtures', 'tasks', 'BACKLOG.md')
+const FOCUS_DEAD_SESSION_STATUS_PATH = path.join(__dirname, 'fixtures', 'tasks', 'focus-dead-session', 'STATUS')
 
 // Retries, this file only (playwright.config.ts's own `retries` stays 0
 // locally / 2 in CI) — added 2026-09-13 alongside the es.onmessage fix
@@ -172,19 +179,48 @@ test('task-detail .detail-fanout: clicking the stage CTA survives a same-content
   expect(req).toBeTruthy()
 })
 
-test('backlog list: clicking Run survives a same-content renderBacklog re-render landing mid-click', async ({ page }) => {
+test('backlog list: clicking Waive survives a same-content renderBacklog re-render landing mid-click', async ({ page }) => {
   await page.goto('/')
   await page.getByTestId('tab-btn-backlog').click()
 
-  const row = page.locator('[data-testid="backlog-row"][data-index="0"]')
-  const btn = row.locator('[data-testid="backlog-play-btn"]')
-  await expect(btn).toBeVisible()
+  // Not the "▶ Run" button: this suite's own shared webServer never sets
+  // COCKPIT_DISPATCH_ENABLED (see playwright.config.ts's own comment), so it
+  // identifies as a non-canonical instance and that button renders disabled
+  // — see TASK.md: canonical-dispatch-gate. A disabled native button can't
+  // be mid-click-interrupted at all (mousedown/up on it never fires
+  // 'click'), so it can no longer stand in for this regression. Waive
+  // exercises the exact same renderBacklog/setHtmlIfChanged container and
+  // is unaffected by the canonical gate (it never touches the orchestrator
+  // session).
 
-  const [req] = await Promise.all([
-    page.waitForRequest((r) => r.url().includes('/backlog/dispatch') && r.method() === 'POST'),
-    clickSurvivingMidClickRerender(page, btn, 'renderBacklog'),
-  ])
-  expect(req.postDataJSON().description).toBe('First batch-dispatch fixture item')
+  // Waive genuinely removes the item from the shared fixture BACKLOG.md
+  // (backlog-batch-dispatch.spec.ts and others depend on its exact starting
+  // contents) — snapshot and restore it so this test leaves no trace.
+  const originalBacklog = await fs.readFile(BACKLOG_PATH, 'utf-8')
+  try {
+    const row = page.locator('[data-testid="backlog-row"][data-index="0"]')
+    const btn = row.locator('[data-testid="backlog-dismiss-btn"]')
+    await expect(btn).toBeVisible()
+
+    // Waive opens the shared confirm modal rather than firing the request
+    // directly — the request only fires once "Delete" is confirmed there.
+    await clickSurvivingMidClickRerender(page, btn, 'renderBacklog')
+    await expect(page.getByTestId('backlog-delete-modal')).toBeVisible()
+
+    const [req, res] = await Promise.all([
+      page.waitForRequest((r) => r.url().includes('/backlog/dismiss/') && r.method() === 'POST'),
+      // Waited for alongside the request, not after: the restore below must
+      // not run until the server's own write to BACKLOG.md has actually
+      // finished, or it can land before that write and be clobbered right
+      // back to the dismissed state.
+      page.waitForResponse((r) => r.url().includes('/backlog/dismiss/') && r.request().method() === 'POST'),
+      page.getByTestId('backlog-delete-confirm-btn').click(),
+    ])
+    expect(req.url()).toContain('/backlog/dismiss/0')
+    expect(res.ok()).toBe(true)
+  } finally {
+    await fs.writeFile(BACKLOG_PATH, originalBacklog)
+  }
 })
 
 // Direct coverage for refreshCardTimes/the emptied .card-time markup — the
@@ -205,7 +241,22 @@ test.describe('card-time freshness label', () => {
     const card = '.card[data-slug="focus-dead-session"]'
     const time = page.locator(`${card} [data-testid="card-time"]`)
     await expect(time).toHaveText(/ago$/)
+
+    // relTime buckets by order of magnitude (s/m/h/d), so "does the label
+    // change after a 1h fast-forward" only holds while the fixture's real
+    // age is still under a day — false once this checkout's own
+    // fixtures/tasks/focus-dead-session/STATUS mtime (relTime's source,
+    // via taskParser.ts's updatedAt) drifts past that, which it inevitably
+    // does the longer this worktree sits (git checkout sets mtime to
+    // checkout time, not any date in the fixture's own content). Pinning
+    // the fake clock to a small, controlled offset from that real mtime —
+    // rather than real Date.now() — decouples this test from however many
+    // days have actually passed since checkout.
+    const statusMtimeMs = (await fs.stat(FOCUS_DEAD_SESSION_STATUS_PATH)).mtimeMs
+    await page.clock.install({ time: statusMtimeMs + 5 * 60_000 }) // pinned "5m ago"
+    await page.evaluate(() => { renderDashboard(currentTasks) })
     const before = await time.textContent()
+    expect(before).toBe('5m ago')
 
     // Tag the actual button DOM node so a replacement (a fresh node from a
     // full innerHTML rewrite) would lose the tag, while an in-place text
@@ -214,8 +265,9 @@ test.describe('card-time freshness label', () => {
       document.querySelector(`${sel} [data-testid="focus-btn"]`).dataset.testStableMarker = '1'
     }, card)
 
-    await page.clock.install()
-    await page.clock.fastForward('01:00')
+    // +2h reliably crosses the m -> h bucket boundary from the pinned "5m
+    // ago" baseline above, regardless of the real calendar date.
+    await page.clock.fastForward('02:00')
     await page.evaluate(() => { renderDashboard(currentTasks) })
 
     const marker = await page.locator(`${card} [data-testid="focus-btn"]`).getAttribute('data-test-stable-marker')

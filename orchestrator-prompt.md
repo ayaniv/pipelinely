@@ -92,10 +92,13 @@ You are my workflow orchestrator. For every task I give you:
    ```bash
    #!/bin/bash
    cd "<resolved-tasks-dir>/<task-slug>"
+   unset REPOS_DIR TASKS_DIR WORKTREES_DIR BROWSER PLAYWRIGHT_TEST COCKPIT_TASK_SLUG COCKPIT_STAGE
    export COCKPIT_TASK_SLUG=<task-slug>
    export COCKPIT_STAGE=<stage>
    exec claude "Read TASK.md. BEFORE doing any task work: (1) rename this iTerm2 tab to '<task-slug>' using osascript; (2) for code tasks, create the worktree (repo at \${REPOS_DIR:-\$HOME/Dev}/<repo>, worktree at \${WORKTREES_DIR:-\$HOME/Dev/worktrees}/<task-slug>) — if branch is new: git -C \${REPOS_DIR:-\$HOME/Dev}/<repo> checkout main && git -C \${REPOS_DIR:-\$HOME/Dev}/<repo> pull && git -C \${REPOS_DIR:-\$HOME/Dev}/<repo> checkout -b <branch> && git -C \${REPOS_DIR:-\$HOME/Dev}/<repo> worktree add \${WORKTREES_DIR:-\$HOME/Dev/worktrees}/<task-slug> <branch> && git -C \${REPOS_DIR:-\$HOME/Dev}/<repo> checkout main; if branch is existing: git -C \${REPOS_DIR:-\$HOME/Dev}/<repo> worktree add \${WORKTREES_DIR:-\$HOME/Dev/worktrees}/<task-slug> <branch>; (3) copy TASK.md into the worktree root; (4) cd to the worktree and complete the task from there."
    ```
+   The `unset` line guards against **this exact tab**, not just some other one, having been used for something else first — an earlier dispatch's own `COCKPIT_TASK_SLUG`/`COCKPIT_STAGE`, a manual `export BROWSER=none`/`PLAYWRIGHT_TEST=1` typed by hand to silence Playwright's HTML-report auto-open, or a stale `REPOS_DIR`/`TASKS_DIR`/`WORKTREES_DIR` from an e2e run — all persist in a tab's shell indefinitely with nothing to ever clear them otherwise, and silently misdirect whatever runs there next (see `[[project_worktrees_dir_env_leak]]`). It must run before the two `export`s below, not after — clearing `COCKPIT_TASK_SLUG`/`COCKPIT_STAGE` after setting them would undo this dispatch's own values. Keep this list in sync with any new long-lived-process-only var this codebase introduces; it's a blocklist, not a general env sanitizer, so it only protects against variables already known to leak.
+
    `COCKPIT_STAGE` is the pipeline stage this session is running — `planning`,
    `plan-review`, `dev`, `code-review`, `comment-fix`, `qa`, `qa-fixes`. It is
    what labels this session's row in the dashboard's session breakdown, and it

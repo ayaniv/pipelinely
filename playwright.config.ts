@@ -75,6 +75,12 @@ export default defineConfig({
       // This webServer is a test fixture, not a developer sitting in front
       // of it — see server.ts's own comment on COCKPIT_SKIP_AUTO_OPEN.
       COCKPIT_SKIP_AUTO_OPEN: '1',
+      // Deliberately NOT setting COCKPIT_DISPATCH_ENABLED here — this
+      // e2e-launched server must identify as non-canonical, the same as any
+      // other process running src/server.ts outside the pipelinely
+      // skill's own launch step, so its dispatch routes correctly 403
+      // instead of being accidentally exempted from the canonical-dispatch
+      // gate (see isCanonicalDispatchInstance in server.ts).
     },
   },
   // `ui` is the local-safe subset (`npm run test:e2e`) — everything except
@@ -84,20 +90,6 @@ export default defineConfig({
   // only runs via `npm run test:e2e:integration`.
   projects: [
     { name: 'ui', testDir: './e2e', testIgnore: /integration\// },
-    // `workers: 1` — every spec here shares real, singleton, process-external
-    // resources: one real iTerm2 app, one real tmux server, and this
-    // webServer's own `.orchestrator-pointer.lock` file. Running them under
-    // the default multi-worker parallelism (5 workers on this machine) put
-    // concurrent tests in a real race for those shared resources — reproduced
-    // 2026-09-14 as a 14-test failure cascade: the shared orchestrator lock
-    // timing out under concurrent dispatches, a pid-scoped tmux session name
-    // colliding with a sibling worker's own run, and iTerm2's own AppleScript
-    // window/tab enumeration (itermSessions.ts) racing a concurrent worker's
-    // window create/close. `withOrchestratorSessionLock` (the test-side
-    // mutex every spec already wraps its body in) only serializes the tests'
-    // own access to the ORCHESTRATOR_SESSION fixture file — it does nothing
-    // to limit how many concurrent HTTP requests pile up against the
-    // server's own lock, so it could not have prevented this on its own.
-    { name: 'integration', testDir: './e2e/integration', workers: 1 },
+    { name: 'integration', testDir: './e2e/integration' },
   ],
 })

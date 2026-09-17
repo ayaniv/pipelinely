@@ -140,6 +140,10 @@ beforeAll(async () => {
   // would ever reach refreshTasks() and currentTasks would stay empty.
   tmpDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'cockpit-auto-submit-test-')))
   process.env.TASKS_DIR = tmpDir
+  // The orchestrator-target cases below go through writeToOrchestrator, so
+  // this suite runs as the canonical instance throughout — canonical-instance
+  // gating itself is server.canonicalGate.test.ts's job, not this file's.
+  process.env.COCKPIT_DISPATCH_ENABLED = '1'
 
   // Written BEFORE importing server.js: currentTasks is only ever filled by
   // refreshTasks(), which runs from main() (never called here) and from the
@@ -179,6 +183,7 @@ afterAll(async () => {
     server.close((err) => (err ? reject(err) : resolve()))
   })
   await fs.rm(tmpDir, { recursive: true, force: true })
+  delete process.env.COCKPIT_DISPATCH_ENABLED
 })
 
 beforeEach(async () => {

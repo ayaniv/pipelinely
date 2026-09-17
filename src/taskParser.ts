@@ -720,21 +720,28 @@ export function parsePrNumberFromReviewRef(ref: string | undefined): string | nu
 // STATUS straight to "waiting: PR open, ready for CR". That note is the
 // PR number's actual, currently-used source for any task using the modern
 // TIMELINE-driven pipeline — reviewRef is checked first only so a task dir
-// still on the old convention keeps working. Reads the LATEST 'dev' entry
-// (mirroring computeStage/computeNextStageCta's own "latest round wins"
-// precedent for plan-review), in case dev ran more than once.
+// still on the old convention keeps working. Scans 'dev' entries newest to
+// oldest and returns the first PR reference found, rather than only ever
+// checking the single latest note. This still mirrors computeStage/
+// computeNextStageCta's "latest round wins" precedent for the case that
+// matters — a genuinely new dev round that opens its own different PR has
+// its own note with its own PR reference, found first — but a follow-up
+// dev note that's just more work on the same PR (a rebase, a conflict fix)
+// and mentions no PR of its own no longer nulls out the reference an
+// earlier note in the same run already established.
 export function findPrNumber(task: Pick<Task, 'reviewRef' | 'stageHistory'>): string | null {
   const fromReviewRef = parsePrNumberFromReviewRef(task.reviewRef)
   if (fromReviewRef) return fromReviewRef
 
   const devEvents = task.stageHistory.filter((e) => e.stage === 'dev' && e.note)
-  const note = devEvents[devEvents.length - 1]?.note
-  if (!note) return null
-
-  const urlMatch = note.match(/\/pull\/(\d+)/)
-  if (urlMatch) return urlMatch[1]
-  const hashMatch = note.match(/#(\d+)/)
-  return hashMatch ? hashMatch[1] : null
+  for (let i = devEvents.length - 1; i >= 0; i--) {
+    const note = devEvents[i].note!
+    const urlMatch = note.match(/\/pull\/(\d+)/)
+    if (urlMatch) return urlMatch[1]
+    const hashMatch = note.match(/#(\d+)/)
+    if (hashMatch) return hashMatch[1]
+  }
+  return null
 }
 
 // QA_REPORT.md's headline result. Recognises "<n> of <m> cases failed" and the

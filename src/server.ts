@@ -58,14 +58,47 @@ import { fileURLToPath } from 'url'
 import { defaultPortForCwd } from './derivePort.js'
 import { resolveTasksDir } from './tasksDir.js'
 import { requestIsRemote } from './remoteAccess.js'
+import { sanitizeInheritedEnv, SERVER_STARTUP_LEAK_VARS } from './sanitizeInheritedEnv.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+// This server is long-lived and is routinely started (by hand, or via `npm
+// run dev`) in an iTerm2 tab that was previously used for something else —
+// a Playwright e2e run, a dispatched worker session — and none of these four
+// are ever cleared once set, so they'd otherwise silently ride along forever.
+// Deliberately excludes REPOS_DIR/TASKS_DIR/WORKTREES_DIR: those three ARE
+// legitimately set on this exact process by playwright.config.ts's
+// webServer.env to point an e2e run at fixture directories, so stripping
+// them here would break that sanctioned override rather than a leak. Must
+// run before the TASKS_DIR read below, and before anything else reads
+// process.env.
+sanitizeInheritedEnv(SERVER_STARTUP_LEAK_VARS)
 
 // Orchestrator/pipelinely-handover task state is the cockpit's own responsibility, so it
 // defaults under the cockpit-ai checkout (gitignored — ephemeral local state)
 // for the canonical checkout only — a worktree with no explicit TASKS_DIR
 // throws rather than silently binding the real one (see tasksDir.ts).
 const TASKS_DIR = resolveTasksDir(process.cwd(), process.env.TASKS_DIR)
+
+// Distinguishes "the one real dashboard" from any other process running this
+// same src/server.ts — a worktree's own local preview server, an e2e test's
+// webServer, etc. Those all default to the exact same real TASKS_DIR above
+// regardless of which worktree they physically run from, so nothing but an
+// explicit signal tells them apart — and every one of them was, until now,
+// equally able to paste real text into the developer's live orchestrator
+// terminal (see TASK.md). Only the pipelinely skill's own dev-server
+// launch step sets this; env-var gated, matching this file's existing
+// TASKS_DIR/REPOS_DIR/WORKTREES_DIR/PORT convention, rather than
+// __dirname-sniffing an assumed canonical checkout path — that would break
+// for anyone whose canonical checkout isn't at the exact expected path.
+// Read live (not cached at module load) so tests can flip it per-case
+// without re-importing the module.
+function isCanonicalDispatchInstance(): boolean {
+  return process.env.COCKPIT_DISPATCH_ENABLED === '1'
+}
+
+const NOT_CANONICAL_ERROR =
+  'This dashboard instance is not the canonical orchestrator dashboard, so dispatch actions are disabled here — only the instance started by the pipelinely skill can write into the orchestrator session.'
 
 // 3030 for the canonical checkout (unchanged, still bookmarkable); a port
 // stably derived from cwd for any worktree — several task dev servers can be
@@ -108,6 +141,7 @@ type OrchestratorWriteResult =
   | { status: 'stray-process' }
   | { status: 'no-session'; hadRecordedSession: boolean }
   | { status: 'locked' }
+  | { status: 'not-canonical' }
 
 // Writes `text` into the orchestrator's own iTerm2 session (registered via
 // ORCHESTRATOR_SESSION by /pipelinely), reattaching a
@@ -135,6 +169,10 @@ async function writeToOrchestrator(
   text: string,
   write: (sessionId: string, text: string) => Promise<boolean>,
 ): Promise<OrchestratorWriteResult> {
+  // Checked first, before ever touching the lock file or ORCHESTRATOR_SESSION
+  // — a non-canonical instance has no business reading or racing over those
+  // pointer files at all, only rejecting outright.
+  if (!isCanonicalDispatchInstance()) return { status: 'not-canonical' }
   try {
     return await withOrchestratorLock(TASKS_DIR, () => writeToOrchestratorLocked(text, write))
   } catch (error) {
@@ -399,6 +437,11 @@ function respondOrchestratorWriteFailure(
   logContext: string,
   retryHint: string,
 ): void {
+  if (result.status === 'not-canonical') {
+    res.status(403).json({ error: NOT_CANONICAL_ERROR })
+    return
+  }
+
   if (result.status === 'reattached-failed') {
     console.error(`${logContext}: reattached orchestrator but the retry write still failed`)
     res.status(409).json({
@@ -481,6 +524,11 @@ function buildSnapshot() {
     doneGroups: currentDoneGroups,
     settings: currentSettings,
     orchestratorContextPct: currentOrchestratorContextPct,
+    // Lets the client detect a non-canonical instance of itself (a
+    // worktree's own local preview, an e2e webServer) and mark itself
+    // read-only rather than letting a dispatch-triggering CTA silently 403 —
+    // see isCanonicalDispatchInstance's own comment.
+    isCanonical: isCanonicalDispatchInstance(),
   }
 }
 
@@ -701,6 +749,8 @@ app.post('/focus/:slug', async (req, res) => {
     const result = await writeToOrchestrator(message, pasteIntoSession)
     if (result.status === 'ok') return res.status(202).json({ fallback: true })
 
+    if (result.status === 'not-canonical') return res.status(403).json({ error: NOT_CANONICAL_ERROR })
+
     if (result.status === 'reattached-failed') {
       console.error(`Focus fallback for ${req.params.slug}: reattached orchestrator but the retry paste still failed`)
       return res.status(409).json({
@@ -740,8 +790,19 @@ app.post('/focus/:slug', async (req, res) => {
 // stray-shell gate (see that change's own scope note): refusing to even open
 // the tab because claude isn't running there would block exactly the moment
 // a developer wants to look at it, to restart claude themselves.
+//
+// Still canonical-gated, though, same as every other reader/writer of
+// ORCHESTRATOR_SESSION/ORCHESTRATOR_TMUX: this route reads and can rewrite
+// both pointer files directly (via reattachOrFocus's adopt/reattach heal),
+// and can forcibly reattach or foreground the developer's real, live
+// orchestrator tab — a non-canonical instance (a worktree's own local
+// preview, an e2e webServer) pointed at the real, shared TASKS_DIR has no
+// business doing either. Checked first, before the lock or either pointer
+// file, for the same reason writeToOrchestrator checks it first.
 app.post('/orchestrator/tab', async (req, res) => {
   try {
+    if (!isCanonicalDispatchInstance()) return res.status(403).json({ error: NOT_CANONICAL_ERROR })
+
     // Reads ORCHESTRATOR_SESSION/ORCHESTRATOR_TMUX and — via reattachOrFocus
     // — can rewrite ORCHESTRATOR_SESSION_PATH (the adopt/reattach heal
     // paths), exactly like writeToOrchestrator does. Sharing the same lock
@@ -1267,6 +1328,7 @@ app.post('/stage-skill/:slug', async (req, res) => {
       // reads ORCHESTRATOR_SESSION/ORCHESTRATOR_TMUX itself.
       const result = await writeToOrchestrator(text, write)
       if (result.status === 'ok') return res.json({ submitted: shouldAutoSubmit })
+      if (result.status === 'not-canonical') return res.status(403).json({ error: NOT_CANONICAL_ERROR })
       if (result.status === 'reattached-failed') {
         console.error(`Stage /pipelinely-${stage} for ${req.params.slug}: reattached the orchestrator but the retry stage still failed`)
         return res.status(409).json({

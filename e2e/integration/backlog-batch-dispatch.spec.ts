@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { withBacklogFileLock } from '../fixtures/backlogFile.js'
 import { withOrchestratorSessionLock } from '../fixtures/orchestratorSessionLock.js'
 import { gotoBoardTab } from '../fixtures/boardTabs.js'
+import { startCanonicalServer, stopCanonicalServer } from '../fixtures/canonicalServer.js'
 
 // Covers the batch backlog selection UI: checkboxes on backlog cards, and a
 // "Run selected (N)" toolbar that appears once ≥1 item is checked.
@@ -40,8 +41,8 @@ import { gotoBoardTab } from '../fixtures/boardTabs.js'
 // it back, so the backlog is a panel that has to be selected again. The
 // click itself lives in one place (e2e/fixtures/boardTabs.ts), shared with
 // board-redesign.spec.ts.
-async function goToBacklog(page: import('@playwright/test').Page): Promise<void> {
-  await gotoBoardTab(page, 'backlog')
+async function goToBacklog(page: import('@playwright/test').Page, origin = ''): Promise<void> {
+  await gotoBoardTab(page, 'backlog', origin)
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -73,19 +74,19 @@ test.describe('backlog selection UI — no orchestrator interaction', () => {
 
       await checkboxes.nth(0).check()
       await expect(bar).toBeVisible()
-      await expect(runBtn).toContainText('Run batch (1)')
+      await expect(runBtn).toContainText('Run selected (1)')
 
       await checkboxes.nth(1).check()
-      await expect(runBtn).toContainText('Run batch (2)')
+      await expect(runBtn).toContainText('Run selected (2)')
 
       await checkboxes.nth(2).check()
-      await expect(runBtn).toContainText('Run batch (3)')
+      await expect(runBtn).toContainText('Run selected (3)')
 
       await checkboxes.nth(3).check()
-      await expect(runBtn).toContainText('Run batch (4)')
+      await expect(runBtn).toContainText('Run selected (4)')
 
       await checkboxes.nth(1).uncheck()
-      await expect(runBtn).toContainText('Run batch (3)')
+      await expect(runBtn).toContainText('Run selected (3)')
 
       await checkboxes.nth(0).uncheck()
       await checkboxes.nth(2).uncheck()
@@ -99,12 +100,27 @@ test.describe('backlog selection UI — no orchestrator interaction', () => {
 // block, for the backlog "Run selected" button instead of the wave button:
 // the button must disable for the duration of its one in-flight
 // /batch-dispatch request, and a fast double-click must not fire it twice.
+//
+// "Run selected" is one of canonical-dispatch-gate's two proactively-
+// disabled CTAs (see index.html's renderBacklog/updateBacklogBatchBar), so —
+// same reasoning as orchestrator-session-self-heal.spec.ts's own dedicated
+// server — these tests need a canonical instance to see it enabled at all,
+// rather than the shared (deliberately non-canonical) webServer every other
+// describe block in this file uses.
 test.describe('backlog batch — anti-double-dispatch', () => {
+  let canonicalUrl: string
+  test.beforeAll(async () => {
+    canonicalUrl = await startCanonicalServer()
+  })
+  test.afterAll(async () => {
+    await stopCanonicalServer(canonicalUrl)
+  })
+
   test('the "Run selected" button disables for the duration of the in-flight batch request', async ({ page }) => {
     await withBacklogFileLock(async () => {
       await withOrchestratorSessionLock(async () => {
         await fs.rm(ORCHESTRATOR_SESSION_PATH, { force: true })
-        await goToBacklog(page)
+        await goToBacklog(page, canonicalUrl)
         const checkboxes = page.locator('[data-testid="backlog-select-checkbox"]')
         await checkboxes.nth(0).check()
         const runBtn = page.locator('[data-testid="backlog-run-selected-btn"]')
@@ -141,7 +157,7 @@ test.describe('backlog batch — anti-double-dispatch', () => {
     await withBacklogFileLock(async () => {
       await withOrchestratorSessionLock(async () => {
         await fs.rm(ORCHESTRATOR_SESSION_PATH, { force: true })
-        await goToBacklog(page)
+        await goToBacklog(page, canonicalUrl)
         const checkboxes = page.locator('[data-testid="backlog-select-checkbox"]')
         await checkboxes.nth(0).check()
         const requests = batchDispatchRequests(page)

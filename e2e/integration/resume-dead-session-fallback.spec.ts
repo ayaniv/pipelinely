@@ -3,11 +3,6 @@ import fs from 'fs/promises'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { withOrchestratorSessionLock } from '../fixtures/orchestratorSessionLock.js'
-import {
-  openScratchSession,
-  closeScratchSession,
-  readSessionContents,
-} from '../fixtures/itermSessions.js'
 
 // Covers the fix for: clicking Resume (or plain Terminal) on a task whose
 // iTerm tab AND tmux session are both gone — e.g. after a computer restart —
@@ -23,10 +18,20 @@ import {
 // 'focus-dead-session' (working, non-paused — the plain "Terminal" button)
 // both carry an ITERM_SESSION/TMUX_SESSION that never match a real session,
 // so decideReattachAction always returns 'none' for them here — the exact
-// state a restarted machine leaves behind. Real osascript/tmux automation is
-// used throughout (no route mocking), matching this suite's and
-// qa-case-list.spec.ts's precedent: this dashboard is inherently
-// macOS+iTerm2-only, so a real round trip is the honest verifier.
+// state a restarted machine leaves behind.
+//
+// This suite's own shared webServer (playwright.config.ts) never sets
+// COCKPIT_DISPATCH_ENABLED — deliberately, so it identifies as a
+// non-canonical instance of the dashboard, exactly like a worktree's own
+// local preview server would (see TASK.md: canonical-dispatch-gate). The
+// canonical-dispatch gate inside writeToOrchestrator (server.ts) is checked
+// before ORCHESTRATOR_SESSION is ever read, so every scenario below now
+// gets the same 403 regardless of whether a session was ever recorded — the
+// old distinct "missing" vs "recorded-but-dead" 503 messages this suite used
+// to distinguish are simply never reached here. Real pasting into a live
+// orchestrator session once canonical is covered instead by
+// src/server.canonicalGate.test.ts's vitest suite, which can flip
+// COCKPIT_DISPATCH_ENABLED per test against a mocked focusTab.
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const TASKS_DIR = path.join(__dirname, '..', 'fixtures', 'tasks')
@@ -40,8 +45,8 @@ const ORCHESTRATOR_SESSION_PATH = path.join(TASKS_DIR, 'ORCHESTRATOR_SESSION')
 // alone only orders tests within this file.
 test.describe.configure({ mode: 'serial' })
 
-test.describe('resume/focus fallback — both sessions dead, no orchestrator reachable', () => {
-  test('paused task: fails loudly (503) instead of the old silent 200 no-op', async ({ page }) => {
+test.describe('resume/focus fallback — non-canonical instance, dispatch always refused', () => {
+  test('paused task: fails loudly (403 read-only) instead of the old silent 200 no-op', async ({ page }) => {
     await withOrchestratorSessionLock(async () => {
       await fs.rm(ORCHESTRATOR_SESSION_PATH, { force: true })
       await page.goto('/')
@@ -53,7 +58,7 @@ test.describe('resume/focus fallback — both sessions dead, no orchestrator rea
         page.waitForResponse((r) => r.url().includes('/focus/resume-dead-session') && r.request().method() === 'POST'),
         btn.click(),
       ])
-      expect(res.status()).toBe(503)
+      expect(res.status()).toBe(403)
       await expect(btn).toHaveClass(/btn-err/)
       await expect(btn).not.toHaveClass(/btn-ok/)
     })
@@ -71,54 +76,26 @@ test.describe('resume/focus fallback — both sessions dead, no orchestrator rea
         page.waitForResponse((r) => r.url().includes('/focus/focus-dead-session') && r.request().method() === 'POST'),
         btn.click(),
       ])
-      expect(res.status()).toBe(503)
+      expect(res.status()).toBe(403)
       await expect(btn).toHaveClass(/btn-err/)
     })
   })
 
-  test('ORCHESTRATOR_SESSION missing entirely vs recorded-but-dead: distinct error messages, mirroring /backlog/dispatch', async ({ page }) => {
+  test('ORCHESTRATOR_SESSION missing entirely vs recorded-but-dead: the canonical gate rejects both identically, before either is ever read', async ({ page }) => {
     await withOrchestratorSessionLock(async () => {
       await fs.rm(ORCHESTRATOR_SESSION_PATH, { force: true })
       const missing = await page.request.post('/focus/resume-dead-session')
-      expect(missing.status()).toBe(503)
-      expect((await missing.json()).error).toMatch(/orchestrator not running/i)
+      expect(missing.status()).toBe(403)
+      expect((await missing.json()).error).toMatch(/not the canonical orchestrator dashboard/i)
 
       await fs.writeFile(ORCHESTRATOR_SESSION_PATH, 'fake-orchestrator-session-not-real')
       try {
         const recordedButDead = await page.request.post('/focus/resume-dead-session')
-        expect(recordedButDead.status()).toBe(503)
-        expect((await recordedButDead.json()).error).toMatch(/orchestrator tab not found/i)
+        expect(recordedButDead.status()).toBe(403)
+        expect((await recordedButDead.json()).error).toMatch(/not the canonical orchestrator dashboard/i)
       } finally {
         await fs.rm(ORCHESTRATOR_SESSION_PATH, { force: true })
       }
     })
-  })
-})
-
-test.describe('resume/focus fallback — orchestrator reachable', () => {
-  test('the resume message is actually pasted into the orchestrator session', async ({ page }) => {
-    const sessionId = await openScratchSession()
-    try {
-      await withOrchestratorSessionLock(async () => {
-        await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
-        try {
-          await page.goto('/')
-          const btn = page.locator('.card[data-slug="resume-dead-session"] [data-testid="resume-btn"]')
-
-          const [res] = await Promise.all([
-            page.waitForResponse((r) => r.url().includes('/focus/resume-dead-session') && r.request().method() === 'POST'),
-            btn.click(),
-          ])
-          expect(res.status()).toBe(202)
-          await expect(btn).toHaveClass(/btn-ok/)
-
-          await expect.poll(() => readSessionContents(sessionId)).toContain('resume-dead-session')
-        } finally {
-          await fs.rm(ORCHESTRATOR_SESSION_PATH, { force: true })
-        }
-      })
-    } finally {
-      await closeScratchSession(sessionId)
-    }
   })
 })

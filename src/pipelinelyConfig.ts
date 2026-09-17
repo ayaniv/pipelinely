@@ -20,7 +20,12 @@ export function buildPipelineConfig(detected: DetectedProject, includePlanReview
 
 export function renderPipelineYaml(config: PipelineConfig): string {
   const stageLines = config.stages.map((s) => `  - ${s}`).join('\n')
-  const fmt = (v: string | null) => (v === null ? 'null' : v)
+  // JSON.stringify's escaping (quotes, backslashes, control chars) is a valid
+  // YAML double-quoted scalar, so an arbitrary detected script value — e.g.
+  // one containing its own "key: value"-shaped substring — can never produce
+  // a second, invalid mapping key on the same line (see QA repro on
+  // pipelinely-alpha-product-m1).
+  const fmt = (v: string | null) => (v === null ? 'null' : JSON.stringify(v))
   return `stages:\n${stageLines}\ncommands:\n  test: ${fmt(config.test)}\n  lint: ${fmt(config.lint)}\n  typecheck: ${fmt(config.typecheck)}\n`
 }
 

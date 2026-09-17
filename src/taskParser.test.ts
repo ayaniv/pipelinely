@@ -312,6 +312,30 @@ describe('findPrNumber', () => {
     }
     expect(findPrNumber(task)).toBeNull()
   })
+
+  it('falls back to an earlier dev note\'s PR reference when a later dev note is just more work on the same PR', () => {
+    const task = {
+      reviewRef: undefined,
+      stageHistory: [
+        { stage: 'dev' as const, at: '2026-08-10T12:00:00Z', note: 'PR #42 open' },
+        { stage: 'qa' as const, at: '2026-08-10T13:00:00Z', note: '1 of 3 cases failed' },
+        { stage: 'dev' as const, at: '2026-08-10T14:00:00Z', note: 'rebased on master, pushed fixes' },
+      ],
+    }
+    expect(findPrNumber(task)).toBe('42')
+  })
+
+  it('prefers a later dev round\'s own PR reference when it opened a different PR', () => {
+    const task = {
+      reviewRef: undefined,
+      stageHistory: [
+        { stage: 'dev' as const, at: '2026-08-10T12:00:00Z', note: 'PR #42 open' },
+        { stage: 'qa' as const, at: '2026-08-10T13:00:00Z', note: '3 of 3 cases failed' },
+        { stage: 'dev' as const, at: '2026-08-10T14:00:00Z', note: 're-dispatched, opened PR #77' },
+      ],
+    }
+    expect(findPrNumber(task)).toBe('77')
+  })
 })
 
 describe('parseQaResult', () => {

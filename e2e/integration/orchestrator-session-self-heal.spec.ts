@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url'
 import { withOrchestratorSessionLock } from '../fixtures/orchestratorSessionLock.js'
 import {
   openScratchSession,
-  adoptScratchSession,
   closeScratchSession,
   closeScratchTab,
   readSessionContents,
@@ -17,6 +16,7 @@ import {
   attachSessionToTmux,
   countSessions,
 } from '../fixtures/itermSessions.js'
+import { startCanonicalServer, stopCanonicalServer } from '../fixtures/canonicalServer.js'
 
 // Covers two related gaps, both about the orchestrator's OWN tab dying while
 // its tmux session keeps running (a remote client reattaching from
@@ -80,8 +80,11 @@ async function clearPointers(): Promise<void> {
   await fs.rm(ORCHESTRATOR_TMUX_PATH, { force: true })
 }
 
-async function openTask(page: Page, slug: string): Promise<void> {
-  await page.goto('/')
+// `origin` is '' for the shared (non-canonical) webServer's own baseURL, or
+// a canonical test server's own absolute origin — see the first describe
+// block's own comment on why it needs one.
+async function openTask(page: Page, slug: string, origin = ''): Promise<void> {
+  await page.goto(`${origin}/`)
   await page.locator(`.card[data-slug="${slug}"] .card-title`).click()
   await expect(page.getByTestId('task-detail')).toBeVisible()
 }
@@ -168,7 +171,30 @@ async function withOrchestratorTmuxSession(fn: () => Promise<void>): Promise<voi
 // If a run shows either of those failing, tag that individual test @pending
 // with the defect named — the way orchestrator-pointer-race.spec.ts does —
 // rather than re-quarantining the whole file.
+//
+// Both describe blocks below need a canonical instance of src/server.ts
+// (same fixture TASKS_DIR, COCKPIT_DISPATCH_ENABLED=1) rather than the
+// shared webServer (playwright.config.ts deliberately never sets
+// COCKPIT_DISPATCH_ENABLED — see that config's own comment): "Start CTA"'s
+// POST /stage-skill/:slug orchestrator-target branch, and "bring back the
+// orchestrator tab"'s POST /orchestrator/tab, both go through the
+// canonical-dispatch gate now. One dedicated server for the whole file
+// (file-level `serial` above already orders every test here, so nothing is
+// gained by giving each describe block its own).
+let canonicalUrl: string
+test.beforeAll(async () => {
+  canonicalUrl = await startCanonicalServer()
+})
+test.afterAll(async () => {
+  await stopCanonicalServer(canonicalUrl)
+})
+
 test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
+  // This dashboard is inherently macOS+iTerm2-only, and every test in this
+  // block is specifically about real osascript/tmux integration behavior
+  // (reattach, adopt-instead-of-reattach, the stray-shell/"not running
+  // claude" gate) that a mock can't stand in for — that's the whole reason
+  // this file exists (see its own header).
   test('recorded tab is dead but ORCHESTRATOR_TMUX is alive: reattaches, rewrites the pointer, and stages the command anyway', async ({ page }) => {
     await withOrchestratorSessionLock(async () => {
       await withOrchestratorTmuxSession(async () => {
@@ -176,7 +202,7 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
         await fs.writeFile(ORCHESTRATOR_SESSION_PATH, DEAD_SESSION_ID + '\n')
         let healedSessionId = ''
         try {
-          await openTask(page, 'dev-ready')
+          await openTask(page, 'dev-ready', canonicalUrl)
           const cta = page.getByTestId('l2-cta')
           await expect(cta).toBeEnabled()
 
@@ -197,10 +223,6 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
           await expect.poll(readPointer).not.toBe(DEAD_SESSION_ID)
           healedSessionId = await readPointer()
           expect(healedSessionId).not.toBe('')
-          // The server opened this tab (reattachTmuxSession), not this
-          // test's own openScratchSession — adopt it so the finally block
-          // below can actually close it instead of leaking a real window.
-          adoptScratchSession(healedSessionId)
 
           // And the command genuinely landed in that reattached tab —
           // staged unsent, which is what stageInSession promises.
@@ -227,7 +249,7 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
           await fs.writeFile(ORCHESTRATOR_TMUX_PATH, TMUX_SESSION_NAME + '\n')
           await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
           try {
-            await openTask(page, 'dev-ready')
+            await openTask(page, 'dev-ready', canonicalUrl)
             const cta = page.getByTestId('l2-cta')
 
             const [res] = await Promise.all([
@@ -271,7 +293,7 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
           await fs.writeFile(ORCHESTRATOR_SESSION_PATH, DEAD_SESSION_ID + '\n')
           const tabsBefore = await countSessions()
           try {
-            await openTask(page, 'dev-ready')
+            await openTask(page, 'dev-ready', canonicalUrl)
             const cta = page.getByTestId('l2-cta')
 
             const [res] = await Promise.all([
@@ -316,7 +338,7 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
           await fs.writeFile(ORCHESTRATOR_TMUX_PATH, TMUX_SESSION_NAME + '\n')
           await fs.writeFile(ORCHESTRATOR_SESSION_PATH, liveTab + '\n')
           try {
-            const res = await page.request.post('/stage-skill/dev-ready', { data: { stage: 'dev' } })
+            const res = await page.request.post(`${canonicalUrl}/stage-skill/dev-ready`, { data: { stage: 'dev' } })
             expect(res.status()).toBe(503)
             expect((await res.json()).error).toMatch(/not running claude/i)
 
@@ -348,7 +370,7 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
         await fs.writeFile(ORCHESTRATOR_SESSION_PATH, DEAD_SESSION_ID + '\n')
         const tabsBefore = await countSessions()
         try {
-          const res = await page.request.post('/stage-skill/dev-ready', { data: { stage: 'dev' } })
+          const res = await page.request.post(`${canonicalUrl}/stage-skill/dev-ready`, { data: { stage: 'dev' } })
           expect(res.status()).toBe(503)
           const { error } = await res.json()
           // A distinct message from the generic "tab not found" — this is a
@@ -382,7 +404,7 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
           await fs.writeFile(ORCHESTRATOR_SESSION_PATH, DEAD_SESSION_ID + '\n')
           const tabsBefore = await countSessions()
           try {
-            const res = await page.request.post('/stage-skill/dev-ready', { data: { stage: 'dev' } })
+            const res = await page.request.post(`${canonicalUrl}/stage-skill/dev-ready`, { data: { stage: 'dev' } })
             expect(res.status()).toBe(503)
             expect((await res.json()).error).toMatch(/not running claude/i)
 
@@ -406,10 +428,10 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
       await clearPointers()
       await fs.writeFile(ORCHESTRATOR_SESSION_PATH, DEAD_SESSION_ID + '\n')
       try {
-        await openTask(page, 'dev-ready')
+        await openTask(page, 'dev-ready', canonicalUrl)
         const cta = page.getByTestId('l2-cta')
 
-        const res = await page.request.post('/stage-skill/dev-ready', { data: { stage: 'dev' } })
+        const res = await page.request.post(`${canonicalUrl}/stage-skill/dev-ready`, { data: { stage: 'dev' } })
         expect(res.status()).toBe(503)
         const { error } = await res.json()
         expect(error).toMatch(/orchestrator tab not found/i)
@@ -438,7 +460,7 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
       await fs.writeFile(ORCHESTRATOR_TMUX_PATH, goneSession + '\n')
       await fs.writeFile(ORCHESTRATOR_SESSION_PATH, DEAD_SESSION_ID + '\n')
       try {
-        const res = await page.request.post('/stage-skill/dev-ready', { data: { stage: 'dev' } })
+        const res = await page.request.post(`${canonicalUrl}/stage-skill/dev-ready`, { data: { stage: 'dev' } })
         expect(res.status()).toBe(503)
         expect((await res.json()).error).toMatch(/orchestrator tab not found/i)
         // Nothing was invented in place of the dead session.
@@ -452,7 +474,7 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
   test('no ORCHESTRATOR_SESSION at all: still the distinct "not running" message, not the dead-tab one', async ({ page }) => {
     await withOrchestratorSessionLock(async () => {
       await clearPointers()
-      const res = await page.request.post('/stage-skill/dev-ready', { data: { stage: 'dev' } })
+      const res = await page.request.post(`${canonicalUrl}/stage-skill/dev-ready`, { data: { stage: 'dev' } })
       expect(res.status()).toBe(503)
       expect((await res.json()).error).toMatch(/orchestrator not running/i)
     })
@@ -460,6 +482,14 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
 })
 
 // Un-quarantined 2026-09-07 alongside the block above — see its comment.
+// POST /orchestrator/tab can forcibly reattach or foreground the developer's
+// real, live orchestrator session, so it is now canonical-dispatch-gated too
+// (canonical-dispatch-gate CR fix) — every case below runs against the
+// shared file's own canonicalUrl instance for the same reason "Start CTA"
+// does, and the button itself renders disabled on a non-canonical instance
+// (see index.html's updateReadOnlyBanner), so a direct page.request.post is
+// used wherever a test needs to reach the route without going through a
+// (now conditionally disabled) button click.
 test.describe('"bring back the orchestrator tab" button', () => {
   test('recorded tab is live: focuses it, leaving the pointer alone', async ({ page }) => {
     await withOrchestratorSessionLock(async () => {
@@ -467,9 +497,10 @@ test.describe('"bring back the orchestrator tab" button', () => {
       try {
         await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
         try {
-          await page.goto('/')
+          await page.goto(`${canonicalUrl}/`)
           const btn = page.getByTestId('orchestrator-tab-btn')
           await expect(btn).toBeVisible()
+          await expect(btn).toBeEnabled()
 
           const [res] = await Promise.all([
             page.waitForResponse(
@@ -496,7 +527,7 @@ test.describe('"bring back the orchestrator tab" button', () => {
         await fs.writeFile(ORCHESTRATOR_SESSION_PATH, DEAD_SESSION_ID + '\n')
         let healedSessionId = ''
         try {
-          await page.goto('/')
+          await page.goto(`${canonicalUrl}/`)
           const btn = page.getByTestId('orchestrator-tab-btn')
 
           const [res] = await Promise.all([
@@ -511,9 +542,6 @@ test.describe('"bring back the orchestrator tab" button', () => {
           await expect.poll(readPointer).not.toBe(DEAD_SESSION_ID)
           healedSessionId = await readPointer()
           expect(healedSessionId).not.toBe('')
-          // Same reasoning as the test above: the server opened this tab,
-          // so it must be adopted before the finally block can close it.
-          adoptScratchSession(healedSessionId)
         } finally {
           if (healedSessionId) await closeScratchTab(healedSessionId)
           await clearPointers()
@@ -527,10 +555,10 @@ test.describe('"bring back the orchestrator tab" button', () => {
       await clearPointers()
       await fs.writeFile(ORCHESTRATOR_SESSION_PATH, DEAD_SESSION_ID + '\n')
       try {
-        await page.goto('/')
+        await page.goto(`${canonicalUrl}/`)
         const btn = page.getByTestId('orchestrator-tab-btn')
 
-        const res = await page.request.post('/orchestrator/tab')
+        const res = await page.request.post(`${canonicalUrl}/orchestrator/tab`)
         expect(res.status()).toBe(503)
         expect((await res.json()).error).toMatch(/orchestrator/i)
 
@@ -546,9 +574,33 @@ test.describe('"bring back the orchestrator tab" button', () => {
   test('nothing on record at all: 503 rather than opening a stray tab', async ({ page }) => {
     await withOrchestratorSessionLock(async () => {
       await clearPointers()
-      const res = await page.request.post('/orchestrator/tab')
+      const res = await page.request.post(`${canonicalUrl}/orchestrator/tab`)
       expect(res.status()).toBe(503)
       expect((await res.json()).error).toMatch(/orchestrator not running/i)
+    })
+  })
+
+  test('a non-canonical instance is rejected with 403, the button renders disabled, and nothing is ever touched', async ({ page }) => {
+    await withOrchestratorSessionLock(async () => {
+      const sessionId = await openScratchSession()
+      try {
+        await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
+        try {
+          await page.goto('/')
+          const btn = page.getByTestId('orchestrator-tab-btn')
+          await expect(btn).toBeVisible()
+          await expect(btn).toBeDisabled()
+
+          const res = await page.request.post('/orchestrator/tab')
+          expect(res.status()).toBe(403)
+          expect((await res.json()).error).toMatch(/not the canonical orchestrator dashboard/i)
+          expect(await readPointer()).toBe(sessionId)
+        } finally {
+          await clearPointers()
+        }
+      } finally {
+        await closeScratchSession(sessionId)
+      }
     })
   })
 })

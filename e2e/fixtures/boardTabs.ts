@@ -23,7 +23,13 @@ export async function selectBoardTab(page: Page, tab: BoardTab): Promise<void> {
 
 // Loads the board and lands on `tab` — the common case, since a spec that
 // wants a non-default panel almost always wants it straight off a fresh load.
-export async function gotoBoardTab(page: Page, tab: BoardTab): Promise<void> {
-  await page.goto('/')
+// `origin` is '' for the shared (non-canonical) webServer's own baseURL, or a
+// canonical test server's own absolute origin — see
+// orchestrator-session-self-heal.spec.ts's own openTask for the same
+// convention, needed by any spec whose backlog CTAs must render enabled
+// (canonical-dispatch-gate proactively disables them on a non-canonical
+// instance — see index.html's renderBacklog).
+export async function gotoBoardTab(page: Page, tab: BoardTab, origin = ''): Promise<void> {
+  await page.goto(`${origin}/`)
   await selectBoardTab(page, tab)
 }

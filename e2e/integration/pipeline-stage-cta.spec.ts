@@ -270,8 +270,16 @@ test.describe('failure path — no orchestrator session registered', () => {
       const cta = page.getByTestId('l2-cta')
       await expect(cta).toBeEnabled() // never proactively greyed out — see tech-design.md's Conventions note
 
+      // This suite's own shared webServer never sets COCKPIT_DISPATCH_ENABLED
+      // (see playwright.config.ts's own comment) — deliberately, so it
+      // identifies as non-canonical, exactly like a worktree's own local
+      // preview server would (see TASK.md: canonical-dispatch-gate). That
+      // gate now rejects every dispatch attempt before it ever reaches the
+      // "is a session recorded" check this test used to exercise, so the
+      // expected status is 403, not the old 503 — the assertions below (the
+      // CTA showing the server's own error text) are otherwise unchanged.
       const res = await page.request.post('/stage-skill/dev-ready', { data: { stage: 'dev' } })
-      expect(res.status()).toBe(503)
+      expect(res.status()).toBe(403)
       const { error } = await res.json()
 
       await cta.click()

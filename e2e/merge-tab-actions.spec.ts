@@ -47,6 +47,20 @@ test.describe('Open PR', () => {
     await btn.click()
     await expect(btn).toHaveClass(/btn-err/)
   })
+
+  test('still renders when the latest dev note is just a follow-up on the same PR', async ({ page }) => {
+    // merge-ready-followup-dev-note's TIMELINE has an earlier 'dev' note
+    // "PR #42 open" followed by a later 'dev' note "rebased on master,
+    // pushed fixes" with no PR reference of its own — regression coverage
+    // for findPrNumber's walk-backward fix (client-side copy in
+    // public/index.html; server-side is covered directly in
+    // src/taskParser.test.ts). Before the fix, the button would be absent
+    // because the client mirror only checked the single latest dev note.
+    await page.goto('/')
+    await openCardMenu(page, 'merge-ready-followup-dev-note')
+    const btn = card(page, 'merge-ready-followup-dev-note').getByTestId('open-pr-btn')
+    await expect(btn).toBeVisible()
+  })
 })
 
 test.describe('Merge', () => {

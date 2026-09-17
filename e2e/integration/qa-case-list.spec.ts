@@ -3,7 +3,6 @@ import fs from 'fs/promises'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { withOrchestratorSessionLock } from '../fixtures/orchestratorSessionLock.js'
-import { openScratchSession, closeScratchSession, readSessionContents } from '../fixtures/itermSessions.js'
 
 // Covers the QA card's full Playwright case list (pass + fail, not just
 // failures — see renderDetailQaCases / parseQaCases in taskParser.ts) and
@@ -13,17 +12,17 @@ import { openScratchSession, closeScratchSession, readSessionContents } from '..
 // e2e/fixtures/tasks/qa-all-pass and qa-with-failures (see
 // playwright.config.ts for the fixture TASKS_DIR).
 //
-// openScratchSession/closeScratchSession/readSessionContents used to be
-// private copies here — the same primitive pasteIntoSession/reattachOrFocus
-// already use in production (see src/focusTab.ts). A page.route() mock was
-// deliberately not used here: it would only prove the button's own click
-// handler fires a fetch, never touching the real endpoint,
-// pasteToOrchestrator, or pasteIntoSession — the actual mechanism this
-// button is meant to exercise. This dashboard is inherently macOS+iTerm2
-// only (every other dispatch/focus feature already shells out to real
-// AppleScript unconditionally), so a real round trip is the honest
-// verifier here. Now imported from fixtures/itermSessions.ts instead of
-// forking a second copy of the AppleScript.
+// This suite's own shared webServer (playwright.config.ts) never sets
+// COCKPIT_DISPATCH_ENABLED — deliberately, so it identifies as a
+// non-canonical instance of the dashboard, exactly like a worktree's own
+// local preview server would (see TASK.md: canonical-dispatch-gate). That
+// means POST /stage-skill/:slug's orchestrator-target branch (qa, like dev/
+// code-review/plan-review) always 403s here now, even with a real iTerm2
+// scratch session registered as ORCHESTRATOR_SESSION — the canonical gate
+// runs before writeToOrchestrator ever attempts to stage into it. Real
+// staging into a live orchestrator session once canonical is covered
+// instead by src/server.canonicalGate.test.ts's vitest suite, which can
+// flip COCKPIT_DISPATCH_ENABLED per test against a mocked focusTab.
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ORCHESTRATOR_SESSION_PATH = path.join(__dirname, '..', 'fixtures', 'tasks', 'ORCHESTRATOR_SESSION')
@@ -121,31 +120,32 @@ test.describe('QA case list', () => {
   })
 })
 
-test.describe('QA automation dispatch', () => {
-  test('"Start QA" stages the command into the orchestrator session, unsent', async ({ page }) => {
-    const sessionId = await openScratchSession()
-    try {
-      await withOrchestratorSessionLock(async () => {
-        await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
-        try {
-          // qa-all-pass's STATUS ("waiting: CR approved, ready for QA") is
-          // what makes computeNextStageCta report 'qa' as next, so stageCta
-          // renders this as the live button rather than the disabled
-          // placeholder.
-          await page.goto('/task/qa-all-pass')
-          await page.getByTestId('stage-chain-qa').click()
+test.describe('QA automation dispatch — read-only on a non-canonical instance', () => {
+  test('"Start QA" is refused with 403 rather than a false "✓ staged"', async ({ page }) => {
+    await withOrchestratorSessionLock(async () => {
+      await fs.writeFile(ORCHESTRATOR_SESSION_PATH, 'fake-orchestrator-session-not-real\n')
+      try {
+        // qa-all-pass's STATUS ("waiting: CR approved, ready for QA") is
+        // what makes computeNextStageCta report 'qa' as next, so stageCta
+        // renders this as the live button rather than the disabled
+        // placeholder — the canonical-dispatch gate is a separate, later
+        // check inside writeToOrchestrator, not a reason for the button
+        // itself to ever be proactively greyed out (see /stage-skill's CTA
+        // convention in pipeline-stage-cta.spec.ts).
+        await page.goto('/task/qa-all-pass')
+        await page.getByTestId('stage-chain-qa').click()
 
-          const btn = page.getByTestId('l2-cta')
-          await btn.click()
-          await expect(btn).toHaveClass(/btn-ok/)
-
-          await expect.poll(() => readSessionContents(sessionId)).toContain('/pipelinely-qa qa-all-pass')
-        } finally {
-          await fs.rm(ORCHESTRATOR_SESSION_PATH, { force: true })
-        }
-      })
-    } finally {
-      await closeScratchSession(sessionId)
-    }
+        const btn = page.getByTestId('l2-cta')
+        const [res] = await Promise.all([
+          page.waitForResponse((r) => r.url().includes('/stage-skill/qa-all-pass') && r.request().method() === 'POST'),
+          btn.click(),
+        ])
+        expect(res.status()).toBe(403)
+        await expect(btn).toHaveClass(/btn-err/)
+        await expect(btn).not.toHaveClass(/btn-ok/)
+      } finally {
+        await fs.rm(ORCHESTRATOR_SESSION_PATH, { force: true })
+      }
+    })
   })
 })

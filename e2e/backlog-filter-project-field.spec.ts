@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import fs from 'node:fs/promises'
 import { gotoBoardTab, selectBoardTab } from './fixtures/boardTabs.js'
 import { BACKLOG_PATH, withBacklogFileLock, withRestoredBacklog } from './fixtures/backlogFile.js'
+import { startCanonicalServer, stopCanonicalServer } from './fixtures/canonicalServer.js'
 
 // The dashboard's project filter used to narrow Active and Done only —
 // renderFilteredBoard re-rendered those two and never touched the Backlog
@@ -119,9 +120,13 @@ async function backlogTabCount(page: Page): Promise<number> {
 }
 
 // Lands on the Backlog panel with the filter bar open — the starting state
-// for nearly every case below.
-async function openBacklogWithFilters(page: Page): Promise<void> {
-  await gotoBoardTab(page, 'backlog')
+// for nearly every case below. `origin` is '' for the shared
+// (non-canonical) webServer's own baseURL, or a canonical test server's own
+// absolute origin — see the single case below that clicks backlog-play-btn,
+// one of canonical-dispatch-gate's proactively-disabled CTAs on a
+// non-canonical instance.
+async function openBacklogWithFilters(page: Page, origin = ''): Promise<void> {
+  await gotoBoardTab(page, 'backlog', origin)
   await expect(backlogRows(page).first()).toBeVisible()
   await openFilters(page)
 }
@@ -293,24 +298,36 @@ test.describe('filtering hides rows without renumbering them', () => {
   })
 
   test('the play button under a filter dispatches its own row, not the row at that position', async ({ page }) => {
-    const dispatched: { description: string; project: string | null }[] = []
-    await page.route('**/backlog/dispatch', async (route) => {
-      dispatched.push(route.request().postDataJSON())
-      await route.fulfill({ status: 200, body: '' })
-    })
+    // backlog-play-btn is one of canonical-dispatch-gate's proactively-
+    // disabled CTAs on a non-canonical instance (see index.html's
+    // renderBacklog) — this suite's own shared webServer deliberately never
+    // sets COCKPIT_DISPATCH_ENABLED, so this one test runs its own
+    // dedicated, canonical instance to see the button enabled at all. Every
+    // other case in this file never clicks it and stays on the shared
+    // server.
+    const canonicalUrl = await startCanonicalServer()
+    try {
+      const dispatched: { description: string; project: string | null }[] = []
+      await page.route('**/backlog/dispatch', async (route) => {
+        dispatched.push(route.request().postDataJSON())
+        await route.fulfill({ status: 200, body: '' })
+      })
 
-    await openBacklogWithFilters(page)
-    const expectedTitle = (await backlogRow(page, BACKLOG_ONLY_INDEX)
-      .getByTestId('backlog-row-title').innerText()).trim()
+      await openBacklogWithFilters(page, canonicalUrl)
+      const expectedTitle = (await backlogRow(page, BACKLOG_ONLY_INDEX)
+        .getByTestId('backlog-row-title').innerText()).trim()
 
-    await projectChip(page, BACKLOG_ONLY_PROJECT).click()
-    await backlogRow(page, BACKLOG_ONLY_INDEX).getByTestId('backlog-play-btn').click()
+      await projectChip(page, BACKLOG_ONLY_PROJECT).click()
+      await backlogRow(page, BACKLOG_ONLY_INDEX).getByTestId('backlog-play-btn').click()
 
-    await expect.poll(() => dispatched.length).toBe(1)
-    expect(dispatched[0].description).toBe(expectedTitle)
-    // The project travels with the dispatch so the orchestrator doesn't have
-    // to re-derive a repo the item already declares.
-    expect(dispatched[0].project).toBe(BACKLOG_ONLY_PROJECT)
+      await expect.poll(() => dispatched.length).toBe(1)
+      expect(dispatched[0].description).toBe(expectedTitle)
+      // The project travels with the dispatch so the orchestrator doesn't
+      // have to re-derive a repo the item already declares.
+      expect(dispatched[0].project).toBe(BACKLOG_ONLY_PROJECT)
+    } finally {
+      await stopCanonicalServer(canonicalUrl)
+    }
   })
 
   test('the batch bar counts only rows the filter leaves visible', async ({ page }) => {

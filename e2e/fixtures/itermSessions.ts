@@ -42,19 +42,6 @@ export function isTrackedScratchSession(sessionId: string): boolean {
   return trackedScratchSessionIds.has(sessionId)
 }
 
-// For the narrow legitimate case where the SUITE didn't open a session
-// itself but still owns cleaning it up — e.g. a self-heal test that
-// deliberately provokes the SERVER (via src/focusTab.ts) into reattaching or
-// opening a real tab on its behalf. That tab is exactly as much this test's
-// responsibility to close as one it opened directly; without a way to say
-// so, assertOwnsScratchSession's guard (correctly, by design) refuses to
-// close it, leaking a real iTerm2 window on every run. Adopting is still an
-// explicit, one-at-a-time opt-in per id — never a bulk escape hatch — so the
-// guard still catches a genuinely wrong/stale id everywhere else.
-export function adoptScratchSession(sessionId: string): void {
-  trackedScratchSessionIds.add(sessionId)
-}
-
 // Runs before any osascript/execa call in the destructive helpers below —
 // a loud, immediate failure for an untracked id, never a silent no-op, so a
 // spec that hits this fails obviously instead of passing vacuously.

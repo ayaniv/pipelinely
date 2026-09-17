@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { withOrchestratorSessionLock } from '../fixtures/orchestratorSessionLock.js'
+import { startCanonicalServer, stopCanonicalServer } from '../fixtures/canonicalServer.js'
 
 // Covers the wave-level batch button: one button on each wave header that
 // stages ONE combined, unsent command for every currently queued-and-
@@ -28,6 +29,21 @@ import { withOrchestratorSessionLock } from '../fixtures/orchestratorSessionLock
 // visibility (unaffected by the staging change) and anti-double-dispatch
 // (now guarding the one in-flight /batch-dispatch request, not N sequential
 // /pipelinely-dev/:slug ones).
+//
+// The wave-batch button itself is one of canonical-dispatch-gate's two
+// proactively-disabled CTAs (see index.html's renderMilestoneWaves), so
+// every test here — including the plain eligibility/visibility ones that
+// never touch ORCHESTRATOR_SESSION — needs a canonical instance of
+// src/server.ts to see it enabled at all, the same reason
+// orchestrator-session-self-heal.spec.ts runs its own dedicated one instead
+// of the shared (deliberately non-canonical) webServer.
+let canonicalUrl: string
+test.beforeAll(async () => {
+  canonicalUrl = await startCanonicalServer()
+})
+test.afterAll(async () => {
+  await stopCanonicalServer(canonicalUrl)
+})
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const TASKS_DIR = path.join(__dirname, '..', 'fixtures', 'tasks')
@@ -37,7 +53,7 @@ const PARENT = 'wave-batch-parent'
 
 // Opens the parent's Dev tab, which is where the wave sections live.
 async function openWaves(page: Page, slug = PARENT) {
-  await page.goto('/')
+  await page.goto(`${canonicalUrl}/`)
   await page.locator(`.card[data-slug="${slug}"] .card-title`).click()
   await expect(page.getByTestId('task-detail')).toBeVisible()
   await page.getByTestId('l1-tab-dev').click()
