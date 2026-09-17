@@ -105,3 +105,15 @@ from a blank slate.
 - Scaffolded the project: task types and a parser, pricing/cost
   utilities, an Express server with SSE live updates, and the first
   dashboard UI.
+
+## 2026-05
+
+- Built the first Command Center: one dashboard to see what every agent
+  was doing, instead of tracking state across a growing pile of terminal
+  tabs. This is what eventually became Pipelinely.
+
+## 2026-03
+
+- Built the first orchestrator skill: a repeatable process for planning,
+  developing, reviewing, and merging work through Claude Code agents,
+  plus a handover mechanism to keep context fresh across long sessions.
