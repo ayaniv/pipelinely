@@ -94,7 +94,7 @@ curl -fsSL https://pipelinely.cc/install.sh | sh
 latest checkout. Or do it by hand:
 
 ```bash
-git clone git@github.com:ayaniv/pipelinely.git ~/Dev/pipelinely
+git clone https://github.com/ayaniv/pipelinely.git ~/Dev/pipelinely
 cd ~/Dev/pipelinely
 npm install
 npm start          # dashboard at http://localhost:3030 (npm run dev for watch mode)

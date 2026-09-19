@@ -1,14 +1,35 @@
 #!/usr/bin/env bash
 # install.sh — one command to set up pipelinely: clones the repo (skipped if
-# already checked out), installs dependencies, symlinks the pipeline skills
-# into ~/.claude/skills, and runs every optional dotfiles installer whose
-# required binary is already on PATH. Safe to re-run.
+# already checked out, in which case it fast-forwards it), installs
+# dependencies, symlinks the pipeline skills into ~/.claude/skills, and runs
+# every optional dotfiles installer whose required binary is already on PATH.
+# Safe to re-run — re-running is how an existing install picks up updates.
 # Usage: curl -fsSL https://pipelinely.cc/install.sh | sh
 #    or: bash install.sh   (from an existing clone)
 set -euo pipefail
 
 DEST="${PIPELINELY_DIR:-$HOME/Dev/pipelinely}"
-REMOTE="${PIPELINELY_REMOTE:-git@github.com:ayaniv/pipelinely.git}"
+# HTTPS, not SSH: a first-time `curl | sh` user usually has no GitHub SSH key.
+REMOTE="${PIPELINELY_REMOTE:-https://github.com/ayaniv/pipelinely.git}"
+UPDATE_BRANCH=main
+
+# Fast-forwards an existing checkout so re-running the installer updates it.
+# Never touches a checkout with local changes or on another branch, and
+# --ff-only refuses rather than merges on divergence — a failed or skipped
+# update must not abort the rest of the install.
+update_existing_checkout() {
+  local current_branch
+  current_branch="$(git -C "$DEST" symbolic-ref -q --short HEAD || true)"
+  if [[ "$current_branch" != "$UPDATE_BRANCH" ]]; then
+    echo "Found existing checkout at $DEST — skipping update (not on ${UPDATE_BRANCH})."
+  elif [[ -n "$(git -C "$DEST" status --porcelain)" ]]; then
+    echo "Found existing checkout at $DEST — skipping update (local changes)."
+  elif git -C "$DEST" pull --ff-only; then
+    echo "Updated existing checkout at $DEST."
+  else
+    echo "Found existing checkout at $DEST — update failed (see above); continuing with what's there." >&2
+  fi
+}
 
 # git/node/npm are checked inline — dotfiles/lib/install-helpers.sh's own
 # require_command isn't reachable yet until the clone below exists.
@@ -26,7 +47,7 @@ elif ! git -C "$DEST" rev-parse --git-dir >/dev/null 2>&1; then
   echo "install.sh: $DEST exists and is not a git repository" >&2
   exit 1
 else
-  echo "Found existing checkout at $DEST — skipping clone."
+  update_existing_checkout
 fi
 
 # shellcheck source=dotfiles/lib/install-helpers.sh

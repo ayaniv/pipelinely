@@ -29,8 +29,10 @@ const OPTIONAL_INSTALLER_BINARY = 'widgetcli'
 
 // A fake `git` that only understands `clone <remote> <dir>` (creates a
 // minimal checkout: dotfiles/, .claude/skills/, so the rest of install.sh has
-// something real to symlink/source) and `-C <dir> rev-parse --git-dir` (used
-// to confirm an existing DEST really is a git repo).
+// something real to symlink/source) and the `-C <dir>` subcommands install.sh
+// uses on an existing checkout: `rev-parse --git-dir` (is DEST a git repo),
+// `symbolic-ref` / `status --porcelain` / `pull` (can it be fast-forwarded).
+// Their answers come from STUB_GIT_* env vars so each test picks its scenario.
 async function stubGit() {
   await writeFiles(stubBin, {
     git: `#!/bin/sh
@@ -51,7 +53,12 @@ INNER
   exit 0
 fi
 if [ "$1" = "-C" ]; then
-  [ -d "$2/.git" ] && exit 0 || exit 1
+  case "$3" in
+    rev-parse) [ -d "$2/.git" ] && exit 0 || exit 1 ;;
+    symbolic-ref) echo "\${STUB_GIT_BRANCH:-main}"; exit 0 ;;
+    status) echo "\${STUB_GIT_STATUS:-}"; exit 0 ;;
+    pull) exit "\${STUB_GIT_PULL_EXIT:-0}" ;;
+  esac
 fi
 echo "fake git: unsupported command: $*" >&2
 exit 1
@@ -72,7 +79,7 @@ async function stubNpm() {
   await fs.chmod(path.join(stubBin, 'node'), 0o755)
 }
 
-function runInstaller({ withStubBin }: { withStubBin: boolean }) {
+function runInstaller({ withStubBin, gitEnv = {} }: { withStubBin: boolean; gitEnv?: Record<string, string> }) {
   // Real macOS ships a real `git` under /usr/bin (Xcode command line tools),
   // so proving the "git missing" failure path needs a PATH with no lookup
   // dirs at all, not just the stub bin left off.
@@ -81,7 +88,7 @@ function runInstaller({ withStubBin }: { withStubBin: boolean }) {
     reject: false,
     all: true,
     timeout: 30_000,
-    env: { HOME: home, PIPELINELY_DIR: dest, PATH: runtimePath },
+    env: { HOME: home, PIPELINELY_DIR: dest, PATH: runtimePath, ...gitEnv },
     extendEnv: false,
   })
 }
@@ -105,7 +112,7 @@ test.describe('install.sh', () => {
     expect(result.exitCode, result.all).toBe(0)
 
     const calls = await fs.readFile(callLog, 'utf-8')
-    expect(calls).toContain(`git clone git@github.com:ayaniv/pipelinely.git ${dest}`)
+    expect(calls).toContain(`git clone https://github.com/ayaniv/pipelinely.git ${dest}`)
     expect(calls).toContain(`npm --prefix ${dest} install`)
 
     const linked = path.join(home, '.claude/skills/pipelinely')
@@ -113,18 +120,54 @@ test.describe('install.sh', () => {
     expect(await fs.realpath(linked)).toBe(await fs.realpath(path.join(dest, '.claude/skills/pipelinely')))
   })
 
-  test('skips cloning when PIPELINELY_DIR already exists as a git checkout', async () => {
+  async function seedExistingCheckout() {
     await execa('git', ['init', '-q', dest]) // real git — only to create a .git dir the fake `git -C ... rev-parse` can see
     await writeFiles(dest, {
       '.claude/skills/pipelinely/SKILL.md': '---\nname: pipelinely\n---\n',
       'dotfiles/lib/install-helpers.sh': await fs.readFile(path.join(REPO_ROOT, 'dotfiles/lib/install-helpers.sh'), 'utf-8'),
     })
+  }
+
+  test('an existing clean checkout on main is fast-forwarded, not re-cloned', async () => {
+    await seedExistingCheckout()
 
     const result = await runInstaller({ withStubBin: true })
     expect(result.exitCode, result.all).toBe(0)
 
-    const calls = await fs.readFile(callLog, 'utf-8').catch(() => '')
+    const calls = await fs.readFile(callLog, 'utf-8')
     expect(calls).not.toContain('git clone')
+    expect(calls).toContain(`git -C ${dest} pull --ff-only`)
+    expect(result.all).toContain('Updated existing checkout')
+  })
+
+  test('an existing checkout with local changes is left alone', async () => {
+    await seedExistingCheckout()
+
+    const result = await runInstaller({ withStubBin: true, gitEnv: { STUB_GIT_STATUS: ' M src/server.ts' } })
+    expect(result.exitCode, result.all).toBe(0)
+
+    expect(await fs.readFile(callLog, 'utf-8')).not.toContain('pull')
+    expect(result.all).toContain('skipping update (local changes)')
+  })
+
+  test('an existing checkout on another branch is left alone', async () => {
+    await seedExistingCheckout()
+
+    const result = await runInstaller({ withStubBin: true, gitEnv: { STUB_GIT_BRANCH: 'my-feature' } })
+    expect(result.exitCode, result.all).toBe(0)
+
+    expect(await fs.readFile(callLog, 'utf-8')).not.toContain('pull')
+    expect(result.all).toContain('skipping update (not on main)')
+  })
+
+  test('failure path: a failed fast-forward is reported but does not abort the install', async () => {
+    await seedExistingCheckout()
+
+    const result = await runInstaller({ withStubBin: true, gitEnv: { STUB_GIT_PULL_EXIT: '1' } })
+    expect(result.exitCode, result.all).toBe(0)
+
+    expect(result.all).toContain('update failed')
+    expect(await fs.readFile(callLog, 'utf-8')).toContain(`npm --prefix ${dest} install`)
   })
 
   test('backs up a differing existing skill instead of silently overwriting it', async () => {
