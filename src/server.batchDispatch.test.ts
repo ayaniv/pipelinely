@@ -38,6 +38,7 @@ vi.mock('./focusTab.js', () => ({
   openBrowserUrl: vi.fn(async () => undefined),
   openAnnotationSession: vi.fn(async () => ({ status: 'error' as const, error: 'not exercised in this suite' })),
   pasteIntoTrackedSession: vi.fn(async () => ({ status: 'no-session' as const, hadRecordedSession: false })),
+  normalizeWhitespace: (value: string) => value.replace(/\s+/g, ' ').trim(),
 }))
 
 let tmpDir: string

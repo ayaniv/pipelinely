@@ -52,6 +52,20 @@ test.describe('orchestrator context pill', () => {
     expect(await cssOf(meter, 'height')).toBe('6px')
   })
 
+  // Pixel-level spacing of the design's ctx pill body (Pipelinely Dashboard
+  // v2.dc.html line 126): `gap:11px; padding:0 14px 0 13px`, meter
+  // `min-width:60px`. The header reuses the card's ctx row, whose own
+  // gap/min-width differ, so these are asserted on the header specifically.
+  test('the ctx body uses the design\'s gap, padding and meter min-width', async ({ page }) => {
+    await page.goto('/')
+
+    const body = page.getByTestId('header-ctx-body')
+    expect(await cssOf(body, 'column-gap')).toBe('11px')
+    expect(await cssOf(body, 'padding-left')).toBe('13px')
+    expect(await cssOf(body, 'padding-right')).toBe('14px')
+    expect(await cssOf(page.getByTestId('header-ctx-meter'), 'min-width')).toBe('60px')
+  })
+
   test('the fill width tracks the reported percentage', async ({ page }) => {
     await page.goto('/')
 

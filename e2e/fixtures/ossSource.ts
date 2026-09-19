@@ -83,6 +83,26 @@ export async function createFakeOssSource(root: string, extraFiles: Record<strin
   await commitAll(root, 'fake private source')
 }
 
+// A stand-in for the public pipelinely repo as the developer actually has it:
+// a bare repo playing GitHub (one commit on main, seeded with <files>) plus a
+// local clone of it with `origin` pointing there. publish.sh branches off
+// origin/main, so a checkout with no origin no longer models reality.
+export async function createFakePublicCheckout(
+  work: string,
+  files: Record<string, string> = {}
+): Promise<{ remote: string; checkout: string }> {
+  const seed = path.join(work, 'pipelinely-seed')
+  await initGitRepo(seed)
+  await writeFiles(seed, files)
+  await commitAll(seed, 'public repo initial commit')
+  const remote = path.join(work, 'pipelinely.git')
+  await execa('git', ['clone', '-q', '--bare', seed, remote])
+  await fs.rm(seed, { recursive: true, force: true })
+  const checkout = path.join(work, 'pipelinely')
+  await execa('git', ['clone', '-q', remote, checkout])
+  return { remote, checkout }
+}
+
 export function runScript(scriptPath: string, args: string[] = [], env: Record<string, string> = {}) {
   return execa('bash', [scriptPath, ...args], {
     reject: false,

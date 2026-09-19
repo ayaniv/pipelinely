@@ -22,6 +22,28 @@ export async function openPrInBrowser(repoPath: string, prNumber: string): Promi
   }
 }
 
+// Asks GitHub which open PR has `branch` as its head. This is the source of
+// truth findPrNumber falls back to when a task's TIMELINE never recorded a PR
+// number (a `dev PR opened: <title>` note carries none). Returns null both
+// for "no open PR" and for a gh failure — the failure is logged, and the
+// caller treats either as "nothing to link" rather than breaking the board.
+export async function findOpenPrNumberByBranch(repoPath: string, branch: string): Promise<string | null> {
+  try {
+    const { stdout } = await execa(
+      'gh',
+      ['pr', 'list', '--head', branch, '--state', 'open', '--json', 'number', '--limit', '1'],
+      { cwd: repoPath },
+    )
+    const prs: unknown = JSON.parse(stdout)
+    if (!Array.isArray(prs) || prs.length === 0) return null
+    const number: unknown = prs[0]?.number
+    return typeof number === 'number' ? String(number) : null
+  } catch (err) {
+    console.error(`Failed to look up the open PR for branch ${branch} in ${repoPath}:`, err)
+    return null
+  }
+}
+
 // Merges an already-open PR via `gh`, using the same merge-commit strategy
 // (never squash/rebase) every PR in this repo's own history has been merged
 // with — `git log --merges` is all "Merge pull request #N from ...".

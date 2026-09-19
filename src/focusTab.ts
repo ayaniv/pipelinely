@@ -190,7 +190,10 @@ async function writeToSession(sessionId: string, text: string, options: SessionW
 // check would permanently report a perfectly-landed write as failed for any
 // sufficiently long message (reproduced against /focus/:slug's ~300-char
 // fallback message).
-function normalizeWhitespace(value: string): string {
+// Also the collapse POST /help/pipelinely-feedback applies to a staged message before
+// it can become a literal Return keystroke in the pane — see
+// tech-design-help-feedback-tab.md's "newline decision".
+export function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
 }
 

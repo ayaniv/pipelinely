@@ -164,10 +164,17 @@ test.describe('720px caps are gone', () => {
     expect(await cssOf(page.getByTestId('backlog-batch-bar'), 'max-width')).toBe('none')
   })
 
-  test('done groups and the work-density card fill the column', async ({ page }) => {
+  test('done groups fill the column', async ({ page }) => {
     await gotoBoardTab(page, 'done')
 
     expect(await cssOf(page.getByTestId('done-date-group').first(), 'max-width')).toBe('none')
+  })
+
+  // Split out of the case above when the heatmap moved to the You tab (see
+  // e2e/you-tab.spec.ts) — same uncapped-width rule, different panel.
+  test('the work-density card fills the column on the You tab', async ({ page }) => {
+    await gotoBoardTab(page, 'you')
+
     expect(await cssOf(page.locator('.work-density'), 'max-width')).toBe('none')
   })
 
@@ -198,14 +205,17 @@ test.describe('sidebar app mark', () => {
   // The design wires the mark itself to the collapse toggle
   // (`onClick="{{ toggleNav }}"` on the mark element, Dashboard v2 line 44),
   // which is a second affordance for the same state the existing
-  // sidebar-collapse-toggle button already owns.
-  test('clicking the app mark collapses and re-expands the sidebar', async ({ page }) => {
+  // sidebar-collapse-toggle button already owns. Only one direction is
+  // reachable through the collapse-toggle button, though: once collapsed
+  // the button itself hides (see the "collapse-toggle hides" test below),
+  // so re-expanding has to go through the app mark instead.
+  test('clicking the collapse-toggle button collapses the sidebar, and the app mark expands it back', async ({ page }) => {
     await page.goto('/')
 
     const sidebar = page.getByTestId('app-sidebar')
     await expect(sidebar).not.toHaveClass(/is-collapsed/)
 
-    await page.getByTestId('sidebar-mark').click()
+    await page.getByTestId('sidebar-collapse-toggle').click()
     await expect(sidebar).toHaveClass(/is-collapsed/)
 
     await page.getByTestId('sidebar-mark').click()
@@ -223,6 +233,102 @@ test.describe('sidebar app mark', () => {
     await page.getByTestId('sidebar-collapse-toggle').click()
     await expect(page.getByTestId('app-sidebar')).toHaveClass(/is-collapsed/)
     expect(await cssOf(logoRow, 'padding-left')).toBe('14px')
+  })
+
+  // Collapsed, only the app mark should remain as the visible affordance —
+  // the collapse-toggle button (which also doubles as a click target, see
+  // the test above) must not double up with it side by side.
+  test('the collapse-toggle button hides once the sidebar is collapsed, and the app mark stays visible', async ({ page }) => {
+    await page.goto('/')
+
+    const mark = page.getByTestId('sidebar-mark')
+    const collapseBtn = page.getByTestId('sidebar-collapse-toggle')
+    await expect(mark).toBeVisible()
+    await expect(collapseBtn).toBeVisible()
+
+    await page.getByTestId('sidebar-collapse-toggle').click()
+    await expect(page.getByTestId('app-sidebar')).toHaveClass(/is-collapsed/)
+    await expect(mark).toBeVisible()
+    await expect(collapseBtn).toBeHidden()
+  })
+
+  // Once collapsed, the mark is the only reachable toggle — it must keep an
+  // accurate aria-label (the same Expand/Collapse-sidebar swap the button
+  // already got) rather than the static "Toggle sidebar" it starts with.
+  test('the app mark\'s aria-label tracks the collapsed state', async ({ page }) => {
+    await page.goto('/')
+
+    const mark = page.getByTestId('sidebar-mark')
+    await expect(mark).toHaveAttribute('aria-label', 'Collapse sidebar')
+
+    await page.getByTestId('sidebar-collapse-toggle').click()
+    await expect(page.getByTestId('app-sidebar')).toHaveClass(/is-collapsed/)
+    await expect(mark).toHaveAttribute('aria-label', 'Expand sidebar')
+  })
+})
+
+// The header used to be `position: sticky; top: 0`, pinning the spend/live/
+// home/theme pills (and, on a task-detail view, the Back pill) across the
+// top independent of scroll — a floating strip rather than part of the
+// page's own layout. It should now scroll away with the rest of the page,
+// and line up with the same 1180px column the board's own content uses.
+test.describe('header is not pinned', () => {
+  test('the header is not sticky-positioned', async ({ page }) => {
+    await page.goto('/')
+
+    const header = page.getByTestId('app-header')
+    expect(await cssOf(header, 'position')).toBe('static')
+  })
+
+  // Behavioural, not just a computed-style check: with 72 fixture tasks the
+  // board is tall enough to scroll, so a still-sticky header would keep its
+  // bounding box pinned at the viewport top regardless of what `position`
+  // resolves to.
+  test('the header scrolls away with the page instead of staying pinned', async ({ page }) => {
+    await page.goto('/')
+
+    const header = page.getByTestId('app-header')
+    const startBox = await header.boundingBox()
+    expect(startBox).not.toBeNull()
+
+    await page.mouse.wheel(0, 2000)
+    await expect(async () => {
+      const box = await header.boundingBox()
+      expect(box).not.toBeNull()
+      expect(box!.y).toBeLessThan(startBox!.y)
+    }).toPass()
+  })
+
+  // Matching padding alone isn't enough to align two elements once one of
+  // them (the board column) is capped at 1180px and centred — at WIDE the
+  // column stops growing and centres itself, so the header needs the same
+  // max-width + margin:auto, not just the same horizontal padding, to land
+  // on the same left/right edges.
+  test('the header lines up with the board column\'s left/right edges', async ({ page }) => {
+    await page.setViewportSize(WIDE)
+    await page.goto('/')
+
+    const header = await page.getByTestId('app-header').boundingBox()
+    const column = await page.getByTestId('board-column').boundingBox()
+    expect(header).not.toBeNull()
+    expect(column).not.toBeNull()
+    expect(Math.abs(header!.x - column!.x)).toBeLessThanOrEqual(1)
+    expect(Math.abs((header!.x + header!.width) - (column!.x + column!.width))).toBeLessThanOrEqual(1)
+  })
+
+  // Same alignment check on the task-detail view, where the header's
+  // left-most slot holds the Back pill instead of being empty.
+  test('the header lines up with the task-detail column on the detail view', async ({ page }) => {
+    await page.setViewportSize(WIDE)
+    await page.goto('/task/dev-ready')
+    await expect(page.getByTestId('task-detail')).toBeVisible()
+
+    const header = await page.getByTestId('app-header').boundingBox()
+    const detail = await page.getByTestId('task-detail').boundingBox()
+    expect(header).not.toBeNull()
+    expect(detail).not.toBeNull()
+    expect(Math.abs(header!.x - detail!.x)).toBeLessThanOrEqual(1)
+    expect(Math.abs((header!.x + header!.width) - (detail!.x + detail!.width))).toBeLessThanOrEqual(1)
   })
 })
 

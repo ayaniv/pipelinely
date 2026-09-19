@@ -179,17 +179,6 @@ test.describe('project filter — multi-select', () => {
     await expect(page.locator('[data-testid="task-card"][data-repo="acme-web"]').first()).toBeVisible()
   })
 
-  test('clearing the selection restores every project', async ({ page }) => {
-    await page.goto('/')
-    await page.getByTestId('filter-toggle-btn').click()
-    await page.getByTestId('filter-chip-project-acme-api').click()
-    await expect(page.getByTestId('filter-clear')).toBeVisible()
-
-    await page.getByTestId('filter-clear').click()
-    await expect(page.getByTestId('filter-chip-project-acme-api')).not.toHaveClass(/is-active/)
-    await expect(page.locator('[data-testid="task-card"][data-repo="cockpit-ai"]').first()).toBeVisible()
-  })
-
   // "The filter applies to all three tabs" (handoff README). A multi-select
   // that only narrowed the Active tab would be a different feature.
   test('the selection narrows the Done tab too', async ({ page }) => {

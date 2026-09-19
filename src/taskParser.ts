@@ -729,7 +729,7 @@ export function parsePrNumberFromReviewRef(ref: string | undefined): string | nu
 // dev note that's just more work on the same PR (a rebase, a conflict fix)
 // and mentions no PR of its own no longer nulls out the reference an
 // earlier note in the same run already established.
-export function findPrNumber(task: Pick<Task, 'reviewRef' | 'stageHistory'>): string | null {
+export function findPrNumber(task: Pick<Task, 'reviewRef' | 'stageHistory' | 'prNumber'>): string | null {
   const fromReviewRef = parsePrNumberFromReviewRef(task.reviewRef)
   if (fromReviewRef) return fromReviewRef
 
@@ -741,7 +741,9 @@ export function findPrNumber(task: Pick<Task, 'reviewRef' | 'stageHistory'>): st
     const hashMatch = note.match(/#(\d+)/)
     if (hashMatch) return hashMatch[1]
   }
-  return null
+  // Last resort: the dev note named no PR (e.g. "PR opened: <title>"), so
+  // the server asked GitHub by branch — see attachResolvedPrNumbers.
+  return task.prNumber ?? null
 }
 
 // QA_REPORT.md's headline result. Recognises "<n> of <m> cases failed" and the
@@ -1033,16 +1035,30 @@ export interface StageInput {
 // The pipeline runs CR before QA (Dev → CR → CR fixes → QA → QA fixes →
 // Merge), so a CR approval hands off to QA rather than being terminal, and a
 // clean QA result is what's terminal (→ merge) rather than handing to CR.
+//
+// One carve-out to "TIMELINE always wins": pipelinely-qa writes its `qa`
+// TIMELINE entry, QA_REPORT.md and STATUS in the same breath, so by the time
+// a QA result exists the last entry is always 'qa'. QA's recorded result is
+// a later fact about that same stage, not a contradiction of TIMELINE, so it
+// refines the `qa` entry (clean → merge, failed → qa-fixes) while every
+// other stage still wins from TIMELINE unconditionally.
+function stageFromQaResult(qaResult: { failed: number }): Stage {
+  return qaResult.failed > 0 ? 'qa-fixes' : 'merge'
+}
+
 export function computeStage(input: StageInput): Stage | null {
   if (input.status === 'done') return null
 
   const last = input.stageHistory[input.stageHistory.length - 1]
-  if (last) return last.stage
+  if (last) {
+    if (last.stage === 'qa' && input.qaResult) return stageFromQaResult(input.qaResult)
+    return last.stage
+  }
 
   if (input.reviewVerdict === 'changes-required') return 'comment-fix'
   if (input.reviewVerdict === 'approved') return 'qa'
 
-  if (input.qaResult) return input.qaResult.failed > 0 ? 'qa-fixes' : 'merge'
+  if (input.qaResult) return stageFromQaResult(input.qaResult)
 
   if (input.status === 'review') return 'code-review'
 

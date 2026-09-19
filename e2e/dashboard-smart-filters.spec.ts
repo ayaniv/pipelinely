@@ -164,6 +164,17 @@ test.describe('project filter', () => {
     await expect(page.locator(`[data-testid="task-card"][data-slug="${ACME_PAUSED_SLUG}"]`)).toBeVisible()
   })
 
+  // Each chip toggles its own selection independently, so there is no
+  // separate "clear all" control to render or reveal.
+  test('there is no dedicated Clear button', async ({ page }) => {
+    await page.goto('/')
+    await waitForBoard(page)
+    await expect(page.getByTestId('filter-clear')).toHaveCount(0)
+
+    await projectChip(page, ACME_REPO).click()
+    await expect(page.getByTestId('filter-clear')).toHaveCount(0)
+  })
+
   test('selecting a project narrows the Done section too', async ({ page }) => {
     await page.goto('/')
     await waitForBoard(page)
@@ -230,22 +241,6 @@ test.describe('project filter', () => {
   // the filtered-empty state; that path is exercised structurally, not
   // covered by an integration case here.
 
-  test('Clear resets the chip row and restores every card', async ({ page }) => {
-    await page.goto('/')
-    await waitForBoard(page)
-    const totalBefore = await activeCards(page).count()
-    const doneBefore = await doneRows(page).count()
-
-    await projectChip(page, ACME_REPO).click()
-    expect(await activeCards(page).count()).toBeLessThan(totalBefore)
-
-    await page.getByTestId('filter-clear').click()
-
-    await expect.poll(() => noProjectSelected(chipRow(page))).toBe(true)
-    await expect(activeCards(page)).toHaveCount(totalBefore)
-    await expect(doneRows(page)).toHaveCount(doneBefore)
-    await expect(page.getByTestId('board-empty-state')).toHaveCount(0)
-  })
 })
 
 // --- live task list changes ------------------------------------------------

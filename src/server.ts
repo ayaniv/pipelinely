@@ -42,9 +42,11 @@ import {
   sessionIsClientOf,
   openAnnotationSession,
   pasteIntoTrackedSession,
+  normalizeWhitespace,
   type TrackedSessionPasteResult,
 } from './focusTab.js'
-import { commitAndRemoveWorktree, openPrInBrowser } from './gitOps.js'
+import { commitAndRemoveWorktree, findOpenPrNumberByBranch, openPrInBrowser } from './gitOps.js'
+import { attachResolvedPrNumbers, createPrNumberCache, repoPrNumberLookup } from './prLookup.js'
 import { markTaskDone, mergeTask } from './taskCompletion.js'
 import { formatMergeBlockers } from './mergeGate.js'
 import { withOrchestratorLock, OrchestratorLockTimeoutError } from './orchestratorLock.js'
@@ -134,6 +136,13 @@ const SETTINGS_PATH = path.join(TASKS_DIR, 'SETTINGS.json')
 // The literal slash-command text both Handover routes stage. /pipelinely-handover is a
 // Claude Code skill the receiving session runs itself, not a dashboard route.
 const HANDOVER_COMMAND = '/pipelinely-handover'
+
+// The literal slash-command text POST /help/pipelinely-feedback stages. Spelled with
+// cockpit-ai's own skill name, exactly like HANDOVER_COMMAND above —
+// oss/lib.sh rewrites /pipelinely-feedback to /pipelinely-feedback at publish time, so
+// the published build stages the right name without a second spelling
+// living here.
+const HELP_FEEDBACK_COMMAND = '/pipelinely-feedback'
 
 type OrchestratorWriteResult =
   | { status: 'ok' }
@@ -539,8 +548,12 @@ function broadcastTasks(): void {
   }
 }
 
+const prNumberCache = createPrNumberCache()
+const lookUpPrNumber = repoPrNumberLookup(findOpenPrNumberByBranch)
+
 async function refreshTasks(): Promise<void> {
-  currentTasks = await parseAllTasks(TASKS_DIR, currentSettings)
+  const parsedTasks = await parseAllTasks(TASKS_DIR, currentSettings)
+  currentTasks = await attachResolvedPrNumbers(parsedTasks, lookUpPrNumber, prNumberCache)
   currentActiveProject = computeActiveProject(currentTasks)
   currentDoneGroups = groupDoneTasksByDate(currentTasks)
   await runAutoAdvancePass()
@@ -606,14 +619,23 @@ app.get('/settings', (_, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'))
 })
 
-// GET /backlog, GET /done — same dashboard shell, opened straight into that
-// board tab. '/' itself is the third tab (In Progress) — see the client's
-// own DEFAULT_TAB/tabUrl, which is why it doesn't need a route of its own
-// here.
+// GET /help — same dashboard shell, opened straight into the help page
+// (mirrors GET /settings' own reasoning).
+app.get('/help', (_, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'))
+})
+
+// GET /backlog, GET /done, GET /you — same dashboard shell, opened straight
+// into that board tab. '/' itself is the fourth board tab (In Progress) —
+// see the client's own DEFAULT_TAB/tabUrl, which is why it doesn't need a
+// route of its own here.
 app.get('/backlog', (_, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'))
 })
 app.get('/done', (_, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'))
+})
+app.get('/you', (_, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'))
 })
 
@@ -851,6 +873,29 @@ app.post('/orchestrator/pipelinely-handover', async (_req, res) => {
     return respondOrchestratorWriteFailure(res, result, 'Orchestrator handover', 'Click Handover again.')
   } catch (err) {
     console.error('Failed to stage /pipelinely-handover into the orchestrator:', err)
+    res.sendStatus(500)
+  }
+})
+
+// POST /help/pipelinely-feedback — stage `/pipelinely-feedback <message>` into the orchestrator's
+// own session, unsent. Same shape as /orchestrator/pipelinely-handover, but with a
+// free-text message instead of a constant, so it validates the body the way
+// /backlog/dispatch does first. normalizeWhitespace collapses any newline
+// before it can become a literal Return keystroke in the pane — see
+// tech-design-help-feedback-tab.md's newline decision.
+app.post('/help/pipelinely-feedback', async (req, res) => {
+  try {
+    const { message } = req.body ?? {}
+    if (typeof message !== 'string' || !message.trim()) return res.sendStatus(400)
+
+    const result = await writeToOrchestrator(
+      `${HELP_FEEDBACK_COMMAND} ${normalizeWhitespace(message)}`,
+      stageInSession,
+    )
+    if (result.status === 'ok') return res.sendStatus(200)
+    return respondOrchestratorWriteFailure(res, result, 'Help feedback', 'Click Send again.')
+  } catch (err) {
+    console.error('Failed to stage /pipelinely-feedback into the orchestrator:', err)
     res.sendStatus(500)
   }
 })
@@ -1353,25 +1398,49 @@ app.post('/stage-skill/:slug', async (req, res) => {
 
     const task = currentTasks.find(t => t.slug === req.params.slug)
     if (!task) return res.sendStatus(404)
-    const sessionId = task.itermSessionId ?? ''
 
     // TODO: this branch has no stray-shell gate. The orchestrator branch above
     // gets one from writeToOrchestrator (tmuxPaneIsStrayShell before every
-    // write); this one writes to task.itermSessionId directly, with no lock and
-    // no pane inspection — true today for staging, and auto-submit raises the
-    // stakes: submitting into a task tab that has fallen back to a shell runs
-    // `/pipelinely-qa-fixes` as a shell command and gets `command not found`. That
-    // is a visible annoyance in the task's own scratch tab, not the class of
-    // incident the peer-address gate exists to prevent, so it is accepted for
-    // now — see tech-design.md's "Known, accepted gap". Closing it means
-    // plumbing task.tmuxSession through a new gate: a separate change.
-    const ok = sessionId ? await write(sessionId, text) : false
-    if (ok) return res.json({ submitted: shouldAutoSubmit })
+    // write); this one writes to the task's own session directly, with no
+    // lock and no pane inspection — true today for staging, and auto-submit
+    // raises the stakes: submitting into a task tab that has fallen back to a
+    // shell runs `/pipelinely-qa-fixes` as a shell command and gets `command not
+    // found`. That is a visible annoyance in the task's own scratch tab, not
+    // the class of incident the peer-address gate exists to prevent, so it is
+    // accepted for now — see tech-design.md's "Known, accepted gap". Closing
+    // it means plumbing task.tmuxSession through a new gate: a separate
+    // change.
+    //
+    // pasteIntoTrackedSession, not a flat write to task.itermSessionId: gives
+    // this branch the same reattach-and-retry resilience the orchestrator
+    // branch above already has via writeToOrchestrator, and /pipelinely-handover/:slug
+    // already has via this same helper — a closed tab whose tmux session is
+    // still alive gets reattached into a fresh tab and re-recorded, rather
+    // than a flat 503 the moment the tab that started this task's dev/CR/QA
+    // stage happens to have closed since.
+    const result = await pasteIntoTrackedSession(
+      {
+        sessionId: task.itermSessionId,
+        tmuxSession: task.tmuxSession,
+        sessionFilePath: path.join(TASKS_DIR, req.params.slug, 'ITERM_SESSION'),
+      },
+      text,
+      { submit: shouldAutoSubmit, focus: !shouldAutoSubmit },
+    )
 
-    return res.status(503).json({
-      error: sessionId
-        ? "This task's own tab not found — it may have closed"
-        : 'This task has no recorded session to stage into',
+    if (result.status === 'ok') {
+      // Mirrors /pipelinely-handover/:slug: a reattach rewrites ITERM_SESSION on disk,
+      // and without this currentTasks keeps the dead id until the next
+      // 5-minute refresh, so a second click before then would reattach again
+      // and open a duplicate tab.
+      if (result.reattached) await refreshTasks()
+      return res.json({ submitted: shouldAutoSubmit })
+    }
+
+    return respondTrackedSessionWriteFailure(res, result, {
+      logContext: `Stage /pipelinely-${stage} for ${req.params.slug}`,
+      failedRetry: 'the command still failed to stage',
+      noSessionVerb: 'stage into',
     })
   } catch (err) {
     console.error(`Failed to stage /pipelinely-${req.body?.stage} for ${req.params.slug}:`, err)
@@ -1718,11 +1787,13 @@ export async function main(): Promise<Server> {
     const server = app.listen(PORT, '0.0.0.0', () => {
       const boundPort = resolveBoundPort(server.address(), PORT)
       console.log(`Pipelinely running at http://localhost:${boundPort}`)
-      // Playwright's own webServer (see playwright.config.ts) starts this
-      // same server as a test fixture, not something a developer is sitting
-      // in front of — COCKPIT_SKIP_AUTO_OPEN keeps an e2e run from popping a
-      // real browser tab.
-      if (!process.env.COCKPIT_SKIP_AUTO_OPEN) {
+      // Opt-in, not opt-out: most callers of main() are not a developer
+      // sitting in front of the dashboard (playwright's webServer, every
+      // dispatched task's own "start the dev server for QA" step, etc.), so
+      // popping a real browser tab must be something a caller explicitly
+      // asks for via COCKPIT_AUTO_OPEN_BROWSER rather than something every
+      // new spawn site has to remember to opt out of.
+      if (process.env.COCKPIT_AUTO_OPEN_BROWSER) {
         open(`http://localhost:${boundPort}`).catch(console.error)
       }
       resolve(server)

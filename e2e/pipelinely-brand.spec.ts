@@ -66,7 +66,7 @@ test.describe('pipelinely rebrand', () => {
   // Requesting the font isn't the same as using it — this closes that gap.
   // Every metric, label, slug, pill and timestamp is specified to use
   // JetBrains Mono (tech-design.md's Typography section).
-  test('slug, pill and metric text actually render in JetBrains Mono, not just request it', async ({ page }) => {
+  test('slug, timestamp and metric text actually render in JetBrains Mono, not just request it', async ({ page }) => {
     await page.goto('/')
 
     // Superseded: the card no longer shows the git branch (see
@@ -76,9 +76,14 @@ test.describe('pipelinely rebrand', () => {
       .evaluate((el) => getComputedStyle(el).fontFamily)
     expect(slugFont).toContain('JetBrains Mono')
 
-    const pillFont = await page.locator('.card[data-slug="dev-ready"] .pill').first()
+    // Superseded: the design-v2 follow-up round removed the card's secondary
+    // pill row outright (see design-v2-card-followup.spec.ts) — the board
+    // card has no .pill left, and the design's own status pill is Figtree,
+    // not mono. The card's timestamp is the mono-specified header element
+    // that remains, and it is on this same test's own list.
+    const timeFont = await page.locator('.card[data-slug="dev-ready"]').getByTestId('card-time')
       .evaluate((el) => getComputedStyle(el).fontFamily)
-    expect(pillFont).toContain('JetBrains Mono')
+    expect(timeFont).toContain('JetBrains Mono')
 
     // Superseded: M2 of the Claude Design v2 alignment removed the card's
     // inline TOK/COST metrics (see design-v2-active-board.spec.ts) — the
