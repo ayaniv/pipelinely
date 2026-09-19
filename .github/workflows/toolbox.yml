@@ -1,0 +1,61 @@
+name: Toolbox
+
+# `validate` runs on PRs (pull_request, not pull_request_target, so fork PRs
+# never see secrets — and it needs none). `deploy` re-validates on main, then
+# pings the Vercel Deploy Hook so pipelinely-marketing rebuilds /toolbox with
+# the new registry.
+on:
+  pull_request:
+    paths:
+      - 'toolbox/**'
+      - 'scripts/validateToolbox*.ts'
+      - '.github/workflows/toolbox.yml'
+      - 'package.json'
+      - 'package-lock.json'
+  push:
+    branches: [main]
+    paths:
+      - 'toolbox/registry.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run validate:toolbox
+      - run: npx vitest run scripts/validateToolbox.test.ts
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: toolbox-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run validate:toolbox
+
+      - name: Trigger pipelinely-marketing rebuild
+        env:
+          VERCEL_DEPLOY_HOOK_URL: ${{ secrets.VERCEL_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$VERCEL_DEPLOY_HOOK_URL" ]; then
+            echo "::error::VERCEL_DEPLOY_HOOK_URL not configured (see PR description)"; exit 1
+          fi
+          # The hook URL is itself the credential; drop the response body so nothing lands in logs.
+          curl -fsS -X POST "$VERCEL_DEPLOY_HOOK_URL" > /dev/null

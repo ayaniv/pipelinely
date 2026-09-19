@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=./schema.json
+# One entry per tool; order here is display order on pipelinely.cc/toolbox.
+# See CONTRIBUTING.md#add-to-the-toolbox
+tools:
+  - id: plannotator
+    name: Plannotator
+    description: Review and annotate implementation plans before development starts.
+    url: https://github.com/backnotprop/plannotator
+    stage: planning
+    type: tool
+    author: backnotprop
+  - id: grill-me
+    name: Grill Me
+    description: Pressure-test a plan with questions before handing it off to development.
+    url: https://github.com/mattpocock/skills/tree/main/skills/productivity/grill-me
+    stage: planning
+    type: skill
+    author: mattpocock
+  - id: t2a-review
+    name: T2A Review
+    description: A fresh-eyes code review skill built around real-world engineering review practices.
+    url: https://github.com/ayaniv/t2a-review-template
+    stage: code-review
+    type: skill
+    author: ayaniv
