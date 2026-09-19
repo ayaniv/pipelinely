@@ -15,6 +15,7 @@ from a blank slate.
 
 ## 2026-09-19
 
+- [#4](https://github.com/ayaniv/pipelinely/pull/4) install.sh: update an existing checkout on re-run, clone over HTTPS
 - [#3](https://github.com/ayaniv/pipelinely/pull/3) Add dispatch-tab.sh, card Merge CTA, You tab and /help feedback page
 
 ## 2026-09-16
