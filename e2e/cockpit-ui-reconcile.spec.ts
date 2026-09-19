@@ -72,18 +72,18 @@ test.describe('active sessions card — reconciled against the design reference'
     await expect(card(page, NEEDS_YOU_SLUG).locator('.card-status-dot')).toHaveCount(1)
   })
 
-  // Superseded: the design's card shows project + slug (not the git branch)
-  // next to a copy button, in its own row below the title — separate from
-  // the secondary pills row (stage/no-verifier/mode/repo), which is what
-  // `card-meta-row` now names. The git branch itself is still shown inside
-  // the task-detail view, just not repeated on the board card.
-  test('project and slug render in their own row, separate from the secondary pills', async ({ page }) => {
+  // Superseded twice over: the design's card shows project + slug (not the
+  // git branch) next to a copy button, in its own row below the title — and
+  // the design-v2 follow-up round then removed the secondary pills row that
+  // used to sit beneath it (see design-v2-card-followup.spec.ts, which owns
+  // that claim). The slug row itself is what survives here.
+  test('project and slug render in their own row below the title', async ({ page }) => {
     await page.goto('/')
     const c = card(page, NEEDS_YOU_SLUG)
     await expect(c).toBeVisible()
 
     await expect(c.locator('.card-slug-row')).toContainText('dev-ready')
-    await expect(c.getByTestId('card-meta-row').getByTestId('stage-pill')).toHaveCount(1)
+    await expect(c.locator('.card-slug-row')).toContainText('cockpit-ai')
   })
 
   // Superseded: M2 of the Claude Design v2 alignment removed the card's
@@ -108,12 +108,15 @@ test.describe('active sessions card — reconciled against the design reference'
     await expect(footer).not.toContainText('NaN')
   })
 
-  test('the header chevron opens the task detail overlay', async ({ page }) => {
+  // Superseded: the design-v2 follow-up round put the design's terminal
+  // button where the header's open-detail arrow used to be, which leaves the
+  // card title as the board's open-detail affordance.
+  test('the card title opens the task detail overlay', async ({ page }) => {
     await page.goto('/')
-    const chevron = card(page, NEEDS_YOU_SLUG).getByTestId('card-open-detail')
-    await expect(chevron).toBeVisible()
+    const title = card(page, NEEDS_YOU_SLUG).locator('.card-title')
+    await expect(title).toBeVisible()
 
-    await chevron.click()
+    await title.click()
     await expect(page.getByTestId('task-detail')).toBeVisible()
     await expect(page.locator('#detail-title')).toHaveText(/\S/)
   })
@@ -218,7 +221,7 @@ test.describe('three-tab board', () => {
   // case checks now.
   test('the sidebar tab bar stays visible while a task detail is open, and the board panel swaps out', async ({ page }) => {
     await page.goto('/')
-    await card(page, NEEDS_YOU_SLUG).getByTestId('card-open-detail').click()
+    await card(page, NEEDS_YOU_SLUG).locator('.card-title').click()
 
     await expect(page.getByTestId('task-detail')).toBeVisible()
     await expect(page.getByTestId('tab-bar')).toBeVisible()

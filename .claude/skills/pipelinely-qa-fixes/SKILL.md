@@ -7,6 +7,11 @@ description: Fixes the QA failures the developer checked off in QA_TRIAGE.json, 
 
 Unlike every other `cockpit-*` skill, this one is **not** dispatched from the orchestrator into a new tab — it's invoked by the developer directly inside the task's own long-lived dev tab (reachable via the dashboard's → Terminal button, which `pipelinely-qa` deliberately never repointed away from it). There is no `TASK.md`-writing or worktree/tab-creation step here; this skill's body runs in place.
 
+## Step 0 — Mark this session as working
+
+Before any other step, write `STATUS` so the dashboard doesn't keep showing the prior stage's stale `waiting: ...` text (from `pipelinely-qa`) while this fix session is actively running:
+`echo "working" > ${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<this-task-slug>/STATUS`
+
 ## Step 1 — Read the triage selection
 
 Read `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<this-task-slug>/QA_TRIAGE.json` and `QA_REPORT.md` to find which failing cases the developer checked. **This is `QA_TRIAGE.json`, not `TRIAGE.json`** — that file holds code-review findings for `pipelinely-cr-fixes` instead; the two are deliberately separate sidecars since one task can carry both at once.

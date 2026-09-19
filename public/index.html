@@ -265,10 +265,9 @@
          pre-hydration equivalent below — one value to keep in sync instead
          of two independent 72px literals. */
       --sidebar-collapsed-width: 72px;
-      /* Above header's z-index (90): on desktop the two never overlap (side
-         by side), but the mobile drawer below is position:fixed and must
-         draw its own top row (logo/wordmark) over the page header's sticky
-         bar, not underneath it. */
+      /* Above .sidebar-scrim's z-index (92): the mobile drawer below is
+         position:fixed and must draw above the scrim that dims the rest of
+         the page while it's open. */
       z-index: 95;
     }
     .app-sidebar.is-collapsed { flex-basis: var(--sidebar-collapsed-width); width: var(--sidebar-collapsed-width); }
@@ -297,13 +296,18 @@
     }
     .sidebar-wordmark span { color: var(--bl); }
     .app-sidebar.is-collapsed .sidebar-wordmark { display: none; }
+    /* Collapsed, only .sidebar-mark (the app logo) should remain as the
+       visible toggle — without this the collapse-toggle button (also a
+       click target, see .sidebar-collapse-btn below) stayed on screen right
+       next to it. */
+    .app-sidebar.is-collapsed .sidebar-mark { margin: 0 auto; }
     .sidebar-collapse-btn {
       display: grid; place-items: center; width: 28px; height: 28px; flex: none;
       margin-left: auto; border-radius: 9px; cursor: pointer;
       color: var(--text3); border: 1px solid var(--border); background: none;
     }
     .sidebar-collapse-btn:hover { border-color: var(--bl); color: var(--bl); }
-    .app-sidebar.is-collapsed .sidebar-collapse-btn { margin: 0 auto; }
+    .app-sidebar.is-collapsed .sidebar-collapse-btn { display: none; }
 
     .sidebar-spacer { flex: 1 1 auto; }
 
@@ -316,24 +320,47 @@
     .sidebar-foot-icon { display: grid; place-items: center; flex: none; color: inherit; }
     .app-sidebar.is-collapsed .sidebar-foot-item { justify-content: center; padding: 9px 0; }
     .app-sidebar.is-collapsed .sidebar-foot-label { display: none; }
-    /* Settings is the one sidebar-foot-item that's a real <button> (navigates
-       to /settings) rather than the decorative div Help still is — reset the
-       browser's default button chrome so it reads identically. */
+    /* Settings and Help are both real <button>s (navigate to /settings and
+       /help respectively) — reset the browser's default button chrome so
+       they read identically to every other sidebar-foot-item. */
     button.sidebar-foot-item { width: 100%; border: none; background: none; font: inherit; text-align: left; cursor: pointer; }
 
-    /* ── Settings page — deliberately NOT .detail-overlay (that class's
-       1180px max-width matches task-detail's reading-width prose; this page
-       is a single full-width control row, not a page of text). ─────────── */
-    #settings-page { padding: 14px clamp(16px, 2.6vw, 32px) 64px; }
-    #settings-page[hidden] { display: none; }
-    #settings-page .detail-title { margin-bottom: 18px; }
-    .settings-row {
+    /* ── Full pages (Settings, Help) — deliberately NOT .detail-overlay
+       (that class's 1180px max-width matches task-detail's reading-width
+       prose; these pages are single full-width control rows, not pages of
+       text). ─────────────────────────────────────────────────────────── */
+    #settings-page, #help-page { padding: 14px clamp(16px, 2.6vw, 32px) 64px; }
+    #settings-page[hidden], #help-page[hidden] { display: none; }
+    #settings-page .detail-title, #help-page .detail-title { margin-bottom: 18px; }
+    .page-row {
       display: flex; align-items: flex-start; gap: 18px; width: 100%; box-sizing: border-box;
       padding: 18px 20px; border-radius: 14px; background: var(--surface); border: 1px solid var(--border);
     }
-    .settings-row-text { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
-    .settings-row-label { font-size: 14.5px; font-weight: 700; color: var(--text); }
-    .settings-row-desc { font-size: 12.5px; line-height: 1.5; color: var(--text3); max-width: 46ch; }
+    .page-row-text { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+    .page-row-label { font-size: 14.5px; font-weight: 700; color: var(--text); }
+    .page-row-desc { font-size: 12.5px; line-height: 1.5; color: var(--text3); max-width: 46ch; }
+
+    /* Chat-style composer: textarea + Send on one row, explanation below —
+       so the mechanism is visible right where it's used, not read
+       separately beforehand. Not a .page-row: that class's row layout puts
+       explanation text beside the control, not after it. */
+    .help-feedback-panel {
+      display: flex; flex-direction: column; gap: 10px; width: 100%; box-sizing: border-box;
+      padding: 18px 20px; border-radius: 14px; background: var(--surface); border: 1px solid var(--border);
+    }
+    .help-feedback-composer { display: flex; align-items: flex-end; gap: 12px; width: 100%; }
+
+    /* A <textarea>, not a single-line <input> — a typed newline used to be
+       blocked at this layer (see tech-design-help-feedback-tab.md's newline
+       decision), but the server's normalizeWhitespace already collapses any
+       newline before it can reach the orchestrator's session, so the client
+       no longer needs to be the one preventing it. */
+    .help-feedback-input {
+      flex: 1 1 260px; min-width: 0; box-sizing: border-box; resize: vertical;
+      padding: 9px 12px; border-radius: 10px; border: 1px solid var(--border);
+      background: var(--bg); color: var(--text); font: inherit; font-size: 13.5px;
+    }
+    .help-feedback-input:focus-visible { outline: 2px solid var(--bl); outline-offset: 1px; }
 
     /* A plain accessible checkbox visually restyled as a track + thumb —
        same on/off semantics as a native checkbox (keyboard, screen reader),
@@ -357,6 +384,17 @@
       padding: 12px 14px; border-top: 1px solid var(--border); cursor: pointer;
     }
     .sidebar-account:hover { background: var(--surface2); }
+    /* .sidebar-account is a real <button> now (the You tab's trigger), same
+       reset the Settings row already needed — but restating its own border-top,
+       which this rule's element+class specificity would otherwise beat the
+       .sidebar-account rule and take away with it, and clearing the UA's own
+       button background, which would otherwise paint over the rail. */
+    button.sidebar-account {
+      width: 100%; background: none; font: inherit; text-align: left;
+      border: none; border-top: 1px solid var(--border);
+    }
+    .sidebar-account.is-active { background: var(--surface2); }
+    .sidebar-account.is-active .sidebar-account-name { color: var(--ink); }
     .sidebar-avatar {
       display: grid; place-items: center; width: 32px; height: 32px; flex: none;
       border-radius: 999px; background: var(--accentSoft); color: var(--accentInk);
@@ -395,17 +433,22 @@
     .app-main { flex: 1 1 auto; min-width: 0; }
 
     /* ── Header ──────────────────────────────────────────────────────────── */
+    /* Same max-width/margin/padding as .page-column (below), so the pill row
+       lines up with the board's own content grid instead of reading as a
+       separate right-justified strip — matching the horizontal padding
+       formula alone isn't enough once the column caps at 1180px and centres
+       itself. Not `.page-column` itself: that class also carries a bottom
+       padding this row doesn't want. */
     header {
       display: flex;
       align-items: center;
       justify-content: flex-end;
       flex-wrap: wrap;
       gap: 10px;
+      max-width: 1180px;
+      margin: 0 auto;
       padding: 14px clamp(16px, 2.6vw, 32px) 0;
       background: transparent;
-      position: sticky;
-      top: 0;
-      z-index: 90;
     }
 
     .hamburger-btn {
@@ -417,14 +460,17 @@
     @media (max-width: 860px) { .hamburger-btn { display: grid; } }
 
     /* On desktop the back pill (inner view only) and the chrome group render
-       inline, one row. On mobile the design gives Back `order:2` so it drops
-       to its own second row while the chrome group (spend/live/theme) stays
-       on the first — achieved by making .header-chrome a plain contents
-       wrapper on desktop and a real flex group only on mobile. */
+       inline, one row, with Back leftmost (the design's `order:0` plus
+       `margin-right:auto`, Pipelinely Pipeline.dc.html line 91). On mobile
+       the design gives Back `order:2` so it drops to its own second row while
+       the chrome group (spend/live/theme) stays on the first — achieved by
+       making .header-chrome a plain contents wrapper on desktop and a real
+       flex group only on mobile. */
     .header-back-slot:empty { display: none; }
-    .header-back-slot { order: 2; flex: none; }
+    .header-back-slot { order: 0; flex: none; margin-right: auto; }
     .header-chrome { display: contents; }
     @media (max-width: 860px) {
+      .header-back-slot { order: 2; margin-right: 0; }
       .header-chrome { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; flex: 1 1 auto; justify-content: flex-end; order: 1; }
     }
 
@@ -434,8 +480,17 @@
       background: var(--surface); border: 1px solid var(--border);
       font-size: 12.5px; font-weight: 600; color: var(--text2); white-space: nowrap;
     }
-    .back-pill { cursor: pointer; }
+    /* The inner view's Back control (Pipelinely Pipeline.dc.html lines
+       91-93). A .header-pill like the spend/live/ctx capsules beside it, but
+       32px tall and box-sized so its border sits on the same line as theirs,
+       with the design's own asymmetric padding — tighter on the chevron side
+       than the label side. */
+    .back-pill {
+      height: 32px; box-sizing: border-box; padding: 0 15px 0 12px; gap: 8px;
+      justify-content: center; cursor: pointer; font-family: inherit;
+    }
     .back-pill:hover { border-color: var(--accent); color: var(--accent); }
+    .back-pill:focus-visible { outline: 2px solid var(--bl); outline-offset: 2px; }
 
     .header-spend-value { font-family: 'JetBrains Mono', monospace; font-weight: 500; color: var(--ink); }
     .header-spend-label { display: inline; }
@@ -461,17 +516,23 @@
        own rule (it's what lets the Handover child, below, fill the pill's
        full height), so the centering for everything else lives one level
        in rather than fighting that rule on the pill itself. */
-    .header-ctx-body { display: flex; align-items: center; gap: 8px; padding: 0 14px; }
-    .header-ctx .card-ctx-track { flex: none; width: 76px; }
+    .header-ctx-body { display: flex; align-items: center; gap: 11px; padding: 0 14px 0 13px; }
+    /* min-width 60px, not the card row's 30px: the design's header meter
+       (Pipelinely Dashboard v2.dc.html line 128) keeps a wider floor. */
+    .header-ctx .card-ctx-track { flex: none; width: 76px; min-width: 60px; }
     @media (max-width: 860px) { .header-ctx .card-ctx-track { display: none; } }
     /* Fused flush into the pill's right edge: nested inside .header-ctx
        (not a sibling), with its top/right margins pulled negative so its own
        1px border overlaps the parent pill's, making the two right edges
        coincide (the card's own Handover pill is free-standing — no such
-       override there). Needs .header-ctx's own padding to be 0 (above) —
+       margin there). Needs .header-ctx's own padding to be 0 (above) —
        against a padded parent the margin only reaches the padding edge, not
-       the pill's actual border. */
-    .header-ctx .card-handover-pill { margin: -1px -1px 0 0; border-radius: 0 999px 999px 0; }
+       the pill's actual border.
+       MARGIN ONLY. The design keeps the full 999px capsule here (line 134);
+       squaring the left edge off to read as a "segment" was this repo's own
+       invention and is what made the header copy look like a different
+       button from the card's. */
+    .header-ctx .card-handover-pill { margin: -1px -1px 0 0; }
     .live-dot-wrap { position: relative; width: 7px; height: 7px; flex: none; }
     .live-dot, .live-dot-halo { position: absolute; inset: 0; border-radius: 999px; background: var(--muted); }
     .live-dot.is-live, .live-dot-halo.is-live { background: var(--sage); }
@@ -633,8 +694,25 @@
        usable from inside a detail view. */
     body.detail-open #board { display: none; }
     body.detail-open #weekly-focus { display: none; }
-    body.settings-open #board { display: none; }
-    body.settings-open #weekly-focus { display: none; }
+    body.full-page-open #board { display: none; }
+    body.full-page-open #weekly-focus { display: none; }
+
+    /* You is meant to show just the chart, not the rest of the board's
+       chrome (QA caught this live — see the comments on #weekly-focus and
+       #board-filters above). [data-active-tab] is set by switchTab, not a
+       body-level class like detail-open/settings-open above, because it has
+       to coexist with those on every other tab. Higher specificity than
+       each element's own base rule (an id/attribute selector beats a bare
+       class), same reason button.sidebar-account has to restate its own
+       border-top elsewhere on this page — so no !important needed. Each
+       element's own hidden/open state (board-filters' `hidden` attribute in
+       particular) is left untouched, so leaving You restores exactly
+       whatever was showing before. */
+    #board[data-active-tab="you"] #weekly-focus,
+    #board[data-active-tab="you"] .board-toolbar,
+    #board[data-active-tab="you"] #board-filters {
+      display: none;
+    }
 
     /* ── Pulse chips (toolbar, left side) ───────────────────────────────────
        Supersedes the pre-redesign 4-tile summary strip — matches the
@@ -968,7 +1046,6 @@
     }
     .card-parent-chip:hover { border-color: var(--accent); color: var(--accent); }
     .card-parent-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .card-secondary-pills { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-top: 9px; }
 
     .card-rail-row { display: flex; align-items: center; padding: 16px 18px 0; }
 
@@ -977,24 +1054,65 @@
     .card-ctx-track { flex: 1 1 auto; height: 6px; border-radius: 999px; overflow: hidden; min-width: 30px; }
     .card-ctx-fill { height: 100%; border-radius: 999px; transition: width 0.3s ease; }
     .card-ctx-pct { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; font-weight: 600; white-space: nowrap; flex: none; }
+    /* The design's Handover button — ONE definition for both surfaces it
+       appears on: a card's ctx row and the header meter's own right edge
+       (Pipelinely Dashboard v2.dc.html lines 338 and 134 are the same
+       declaration twice). Nothing here is scoped to either surface, and
+       nothing below re-opens it per surface — the two drifting apart was the
+       whole finding. */
     .card-handover-pill {
       display: flex; align-items: center; flex: none; height: 30px; padding: 0 15px; border-radius: 999px;
       border: 1px solid var(--amber); cursor: pointer; background: var(--amberSoft); color: var(--amberInk);
       font-size: 11.5px; font-weight: 700; letter-spacing: -0.01em; white-space: nowrap; font-family: inherit;
+      outline: none; transition: background 0.18s ease;
     }
     .card-handover-pill:hover { background: var(--amber); color: var(--surface); }
+    .card-handover-pill:active { opacity: 0.9; }
+    /* The design's focus treatment is an INSET ring (`box-shadow:inset 0 0 0
+       2px var(--amber)`), not an outline — an outline would paint outside the
+       header copy's own border, which deliberately overlaps the meter pill's. */
+    .card-handover-pill:focus-visible { box-shadow: inset 0 0 0 2px var(--amber); }
     .card-handover-pill:disabled { cursor: default; }
 
     .session-card .card-footer {
       display: flex; align-items: center; gap: 8px; margin-top: 16px; padding: 14px 18px;
       border-top: 1px solid var(--border); background: var(--surface2); border-radius: 0 0 17px 17px;
     }
-    .session-card .card-footer .btn-primary {
-      flex: 1 1 auto; min-width: 0; justify-content: center; display: flex; align-items: center; gap: 8px;
+    /* Shared box model for EVERY footer button, primary or not. Two fixes
+       met on this rule and both are kept:
+
+       - The selector is `.card-footer .btn`, not `.btn-primary`. Scoping the
+         geometry to the primary left a non-primary CTA falling back to the
+         base .btn's own `display:inline-block`, so it shrank to fit and
+         hugged the footer's left edge — reachable by any card whose
+         attentionStatus is neither needs-you nor paused (an idle task, a
+         working fanout parent). The design varies only `ctaBg`/`ctaFg`/
+         `ctaBorder` between the two states (Pipelinely Dashboard v2.dc.html
+         lines 649-651) and gives both the same full-width geometry (line
+         345). This selector subsumes the `.card-footer.card-footer-merge
+         .btn` arm that fix (#104) added — a merge footer IS a card footer —
+         so Open PR still picks the box model up here, it just no longer
+         needs naming separately.
+       - The basis is 0, not auto (#104): with two buttons of differing
+         label/icon content (Merge's arrow icon vs. Open PR's plain label),
+         an auto basis lets each item's own content width survive the split,
+         so equal flex-grow alone doesn't equalize the final widths. A lone
+         CTA still fills its footer either way — one growing item takes all
+         the free space whatever its basis — so this costs the single-button
+         case nothing. */
+    .session-card .card-footer .btn {
+      flex: 1 1 0%; min-width: 0; justify-content: center; display: flex; align-items: center; gap: 8px;
       padding: 10px 14px; border-radius: 10px; font-size: 13px;
+    }
+    .session-card .card-footer .btn-primary {
       background: var(--ink); border-color: var(--ink); color: var(--bg);
     }
     .session-card .card-footer .btn-primary:hover { background: var(--accent); border-color: var(--accent); }
+    /* The base row above is a single non-wrapping flex row, so the merge
+       banner would otherwise sit inline beside the buttons — this modifier
+       lets it wrap onto its own line above them instead. */
+    .session-card .card-footer.card-footer-merge { flex-wrap: wrap; }
+    .session-card .card-footer.card-footer-merge .merge-banner { flex: 1 1 100%; }
 
     /* ── Card header (legacy — still used by renderPlanCard/backlog card) ──── */
     /* flex-start, not center: a title long enough to wrap should leave the
@@ -1031,41 +1149,6 @@
       white-space: nowrap;
       flex-shrink: 0;
       padding-top: 3px;
-    }
-
-    /* The explicit open-detail affordance (reference line 112). Clicking the
-       card anywhere already opens the overlay; this makes that discoverable.
-       Not a <button> — handleCardClick ignores clicks inside one, so a
-       button here would do nothing. See its data-action branch. */
-    .card-open-detail {
-      width: 24px;
-      height: 24px;
-      flex: none;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 6px;
-      border: 1px solid var(--border);
-      color: var(--muted);
-      cursor: pointer;
-    }
-    .card-open-detail:hover { border-color: var(--sel-border); color: var(--text); }
-
-    /* ── Card meta row ───────────────────────────────────────────────────── */
-    /* Branch and every pill share ONE wrapped row (reference lines 114–122),
-       rather than the branch line + pills line this used to stack. */
-    .card-meta-row {
-      display: flex;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 7px;
-    }
-    .card-meta-div {
-      width: 1px;
-      height: 11px;
-      background: var(--sel);
-      flex: none;
     }
 
     /* ── Branch ──────────────────────────────────────────────────────────── */
@@ -1114,33 +1197,7 @@
     .pill-working  { background: color-mix(in srgb, var(--bl) 10%, transparent);   color: var(--bl);   border: 1px solid color-mix(in srgb, var(--bl) 25%, transparent); }
     .pill-done     { background: color-mix(in srgb, var(--sg) 10%, transparent);   color: var(--sg);  border: 1px solid color-mix(in srgb, var(--sg) 25%, transparent); }
     .pill-handover { background: rgba(176,170,161,0.25); color: var(--text3); border: 1px solid rgba(176,170,161,0.4); }
-    .pill-mode     { background: color-mix(in srgb, var(--text) 4%, transparent);    color: var(--text3); border: 1px solid color-mix(in srgb, var(--text) 8%, transparent); }
-    .pill-repo     { background: color-mix(in srgb, var(--text) 4%, transparent);    color: var(--text3); border: 1px solid color-mix(in srgb, var(--text) 8%, transparent); }
     .pill-idle { color: var(--muted); }
-
-    /* Pipeline stage — computed, so it renders dashed to read as inferred
-       rather than as a state the worker declared. */
-    .stage-pill {
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.07em;
-      text-transform: uppercase;
-      padding: 3px 8px;
-      border-radius: 4px;
-      border: 1px dashed var(--border);
-      color: var(--text3);
-    }
-
-    .no-verifier-pill {
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.07em;
-      text-transform: uppercase;
-      padding: 3px 8px;
-      border-radius: 4px;
-      border: 1px solid var(--rd);
-      color: var(--rd);
-    }
 
     .status-dot {
       width: 6px;
@@ -1366,7 +1423,7 @@
 
     /* ── Warning ─────────────────────────────────────────────────────────── */
     /* margin-top, not -bottom: everything below the header row now spaces
-       itself off the element above it (see .card-meta-row, .card-note). */
+       itself off the element above it (see .card-note). */
     .ctx-warning {
       font-size: 12px;
       color: var(--am);
@@ -1597,7 +1654,9 @@
     }
     .backlog-row-date { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text3); white-space: nowrap; flex: none; width: 64px; }
     .backlog-row-main { flex: 1 1 240px; min-width: 0; }
-    .backlog-row-title { font-size: 14.5px; font-weight: 600; line-height: 1.35; color: var(--ink); }
+    .backlog-row-title-line { display: flex; align-items: baseline; gap: 8px; }
+    .backlog-row-title { flex: 1 1 auto; min-width: 0; font-size: 14.5px; font-weight: 600; line-height: 1.35; color: var(--ink); }
+    .backlog-row-project { flex: none; }
     .backlog-row-context { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text3); margin-top: 3px; }
     .backlog-row-actions { display: flex; align-items: center; gap: 8px; flex: none; margin-left: auto; }
     .backlog-icon-btn { width: 32px; height: 32px; }
@@ -1730,10 +1789,6 @@
     }
     .detail-head-text { min-width: 0; flex: 1 1 380px; }
     .detail-title-row { display: flex; align-items: center; gap: 8px; }
-    /* .detail-back is reused (unstyled) inside the status line here. Its
-       other use — the L2 drill-down's own back chevron — is gone as of M5:
-       renderMilestoneDetail opens on .milestone-parent-link instead. */
-    .detail-title-row .detail-back { position: static; }
     .detail-status-line { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
     .detail-status-dot { width: 7px; height: 7px; border-radius: 999px; flex: none; }
     .detail-status-dot.is-live { animation: pulseDot 2.6s ease-in-out infinite; }
@@ -1778,9 +1833,6 @@
     }
     .detail-actions .btn:hover { border-color: var(--accent); color: var(--accent); }
     .detail-actions .card-menu-wrap .card-icon-btn { width: 38px; height: 38px; border-radius: 10px; }
-    .detail-back { background: none; border: none; color: var(--text3); font-size: 26px; font-weight: 300; line-height: 1; cursor: pointer; padding: 0; position: relative; top: -2px; }
-    .detail-back:hover { color: var(--text); }
-    .detail-back:focus-visible { outline: 2px solid var(--bl); outline-offset: 2px; border-radius: 4px; }
 
     /* .l2-head/.l2-title (the one-line back-chevron strip the milestone
        drill-down used to open on) are gone — M5 replaced them with a real
@@ -2228,21 +2280,21 @@
           <span class="sidebar-foot-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"></circle><path d="M12 3v2.4M12 18.6V21M3 12h2.4M18.6 12H21M5.6 5.6l1.7 1.7M16.7 16.7l1.7 1.7M18.4 5.6l-1.7 1.7M7.3 16.7l-1.7 1.7"></path></svg></span>
           <span class="sidebar-foot-label">Settings</span>
         </button>
-        <div class="sidebar-foot-item">
+        <button type="button" class="sidebar-foot-item" id="sidebar-help-btn" data-testid="sidebar-help-btn" aria-label="Open help">
           <span class="sidebar-foot-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.3c-.7.3-1 .8-1 1.6"></path><path d="M12 16.6h.01"></path></svg></span>
           <span class="sidebar-foot-label">Help</span>
-        </div>
+        </button>
       </div>
 
-      <div class="sidebar-account" data-testid="sidebar-account">
+      <button type="button" class="sidebar-account" data-tab="you" data-testid="sidebar-account" aria-label="You">
         <div class="sidebar-avatar" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"></circle><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"></path></svg></div>
         <span class="sidebar-account-name">You</span>
         <svg class="sidebar-account-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 10l5 5 5-5"></path></svg>
-      </div>
+      </button>
     </aside>
 
     <div class="app-main">
-      <header>
+      <header data-testid="app-header">
         <button class="hamburger-btn" id="sidebar-open-toggle" type="button" data-testid="sidebar-open-toggle" aria-label="Open menu">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>
         </button>
@@ -2272,10 +2324,11 @@
              POST /weekly-focus) — kept as-is (click-to-edit, multi-line
              textarea) rather than replaced with a new daily concept, inside
              the hero card's exact visual treatment (20px radius, rise
-             entrance, decorative gradient overlay, eyebrow row). Whole-board
-             (visible on Active/Backlog/Done alike), same as the filter
-             control below it — the developer's own call, after trying an
-             Active-only placement first. -->
+             entrance, decorative gradient overlay, eyebrow row). Visible on
+             Active/Backlog/Done, hidden on You along with .board-toolbar and
+             #board-filters (see switchTab's [data-active-tab] and the CSS
+             below) — QA caught this live: You is meant to show just the
+             chart, not the rest of the board's chrome. -->
         <div class="focus-hero" id="weekly-focus">
           <div class="focus-hero-overlay" aria-hidden="true"></div>
           <div class="focus-hero-body">
@@ -2306,10 +2359,15 @@
         <!-- Filters are board-wide (they narrow the Active, Backlog, and
              Done panels — see matchesFilters/renderFilteredBoard), so they
              sit above the tabbed panels rather than inside any one of
-             them. -->
+             them. Hidden on You, along with the rest of the toolbar chrome
+             — see switchTab's [data-active-tab] and the CSS below — rather
+             than left visible as an opt-out control with nothing to opt out
+             of once its own toggle button is gone too. renderYou still gets
+             the UNFILTERED doneGroups regardless (You is a whole-history
+             view), so a filter set from another tab and left on has no
+             effect if the user comes back here. -->
         <div class="board-filters" id="board-filters" data-testid="board-filters" hidden>
           <div class="filter-chips" id="filter-project-chips" data-testid="filter-project-chips"></div>
-          <button class="btn" id="filter-clear" type="button" data-testid="filter-clear" hidden>Clear</button>
         </div>
 
         <main class="tab-panel is-active" id="dashboard" data-tab-panel="inprogress" data-testid="active-sessions">
@@ -2344,8 +2402,11 @@
       <div id="done-groups">
         <!-- per-date done groups rendered here by JS -->
       </div>
+    </section>
+
+    <section class="tab-panel you-section" id="you-section" data-tab-panel="you" data-testid="you-section">
       <div id="work-density" data-testid="work-density">
-        <!-- session-density calendar rendered here by JS -->
+        <!-- work-density calendar rendered here by JS -->
       </div>
     </section>
   </div>
@@ -2369,7 +2430,6 @@
       <div class="detail-head">
         <div class="detail-head-text">
           <div class="detail-title-row">
-            <button class="detail-back" type="button" data-testid="detail-close" aria-label="Back">‹</button>
             <div class="detail-status-line" data-testid="detail-status-line"></div>
           </div>
           <h2 id="detail-title" class="detail-title"></h2>
@@ -2386,23 +2446,42 @@
     </div>
   </div>
 
-  <!-- A real page (own /settings URL, board hidden behind it — body.settings-
-       open mirrors body.detail-open), not a popup: the only place auto
-       mode's state can be changed, so it needs to read as a destination, not
-       a transient overlay. Leaving it via the sidebar's own nav (Active/
-       Backlog/Done, or Settings again) rather than a dedicated back button —
-       see switchTab's own closeSettingsPage() call. -->
+  <!-- A real page (own /settings URL, board hidden behind it —
+       body.full-page-open mirrors body.detail-open), not a popup: the only
+       place auto mode's state can be changed, so it needs to read as a
+       destination, not a transient overlay. Leaving it via the sidebar's
+       own nav (Active/Backlog/Done, or Settings again) rather than a
+       dedicated back button — see switchTab's own closeFullPage() call. -->
   <div id="settings-page" hidden data-testid="settings-page">
     <h2 class="detail-title">Settings</h2>
-    <div class="settings-row">
-      <div class="settings-row-text">
-        <span class="settings-row-label">Auto mode</span>
-        <span class="settings-row-desc">Automatically advance mechanical pipeline handoffs — dev → CR → QA — without a manual click. Triage decisions and merge always wait for you.</span>
+    <div class="page-row">
+      <div class="page-row-text">
+        <span class="page-row-label">Auto mode</span>
+        <span class="page-row-desc">Automatically advance mechanical pipeline handoffs — dev → CR → QA — without a manual click. Triage decisions and merge always wait for you.</span>
       </div>
       <label class="switch">
         <input type="checkbox" id="settings-auto-mode-switch" data-testid="settings-auto-mode-switch" aria-label="Toggle auto mode">
         <span class="switch-track"><span class="switch-thumb"></span></span>
       </label>
+    </div>
+  </div>
+
+  <!-- The second full page with the same mechanics as #settings-page above
+       — see openFullPage/closeFullPage. Stages, never sends: the developer
+       still has to press Return in the orchestrator's own session, and the
+       description below is the only place that says so. -->
+  <div id="help-page" hidden data-testid="help-page">
+    <h2 class="detail-title">Help</h2>
+    <div class="help-feedback-panel" data-testid="help-feedback-panel">
+      <span class="page-row-label">Send feedback</span>
+      <div class="help-feedback-composer">
+        <textarea id="help-feedback-input" data-testid="help-feedback-input"
+                  class="help-feedback-input" aria-label="Feedback message" rows="3"
+                  placeholder="What's working, what isn't…"></textarea>
+        <button type="button" class="btn" id="help-feedback-send"
+                data-testid="help-feedback-send" disabled>Send</button>
+      </div>
+      <span class="page-row-desc">Stages /pipelinely-feedback into the orchestrator's session, unsent — press Return there to file the GitHub issue. Line breaks are collapsed to a single space.</span>
     </div>
   </div>
     </div>
@@ -2428,10 +2507,12 @@
     // (13px, stroke-width 2.2) when M3 gave that row a real chevron.
     const DESIGN_BRANCH_ICON = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="5" r="2.2"></circle><circle cx="7" cy="19" r="2.2"></circle><circle cx="17" cy="9" r="2.2"></circle><path d="M7 7.2v9.6"></path><path d="M17 11.2c0 3.4-3 4.3-6.6 5.2"></path></svg>`
     const TERMINAL_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 8l4 4-4 4"></path><path d="M12 16h7"></path></svg>`
-    const OPEN_ARROW_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h13M12.5 6l6 6-6 6"></path></svg>`
-    // The milestone drill-down's own back link (renderMilestoneDetail) —
-    // OPEN_ARROW_ICON pointed the other way.
-    const BACK_ARROW_ICON = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H6M11.5 6l-6 6 6 6"></path></svg>`
+    // Back — the header's own Back pill (renderHeaderBack) and the milestone
+    // drill-down's parent link (renderMilestoneDetail). The design draws the
+    // identical SVG in both places (Pipelinely Pipeline.dc.html line 92,
+    // Pipelinely Milestone.dc.html's own back link), so this is one constant,
+    // not two. CTA_ARROW_ICON below points the other way.
+    const BACK_ARROW_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H6M11.5 18l-6-6 6-6"></path></svg>`
     const CTA_ARROW_ICON = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h13M12.5 6l6 6-6 6"></path></svg>`
     const DOTS_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><circle cx="12" cy="5.5" r="1.7"></circle><circle cx="12" cy="12" r="1.7"></circle><circle cx="12" cy="18.5" r="1.7"></circle></svg>`
     const COPY_ICON = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2.5"></rect><path d="M15 5.5A2.5 2.5 0 0 0 12.5 3h-7A2.5 2.5 0 0 0 3 5.5v7A2.5 2.5 0 0 0 5.5 15"></path></svg>`
@@ -2486,7 +2567,8 @@
         const hashMatch = note.match(/#(\d+)/)
         if (hashMatch) return hashMatch[1]
       }
-      return null
+      // Server-resolved from GitHub by branch when the TIMELINE names no PR.
+      return task.prNumber || null
     }
 
     function formatCost(inp, out, model) {
@@ -2637,14 +2719,23 @@
       return match ? { stage: match.stage } : null
     }
 
-    // A task blocked on a decision only a human can make — as opposed to one
-    // merely parked at a pipeline handoff. Both are STATUS `waiting:`, but a
-    // handoff (`plan ready for review`, `PR open, ready for CR`, …) already
-    // has its own Start-<stage> CTA (computeNextStageCta above) — used by
-    // cardFooterHtml to fall back to a terminal-only footer for a genuine
-    // decision wait, since there's no stage command to stage for one.
-    function isDecisionWaiting(task) {
-      return task.status === 'waiting' && computeNextStageCta(task) === null
+    // A task that declares milestones — the design's own `isParent`
+    // (Pipelinely Dashboard v2.dc.html line 616). Its STATUS still names a
+    // stage the way a leaf's does ("plan reviewed, ready for dev"), but dev
+    // is dispatched per milestone from the Dev tab, so the parent itself has
+    // no single next action and its card must not offer one. One predicate,
+    // both call sites (cardFooterHtml and renderTaskDetail's stepper choice).
+    function isFanoutParent(task) {
+      return Array.isArray(task.milestones) && task.milestones.length > 0
+    }
+
+    // Stricter than the Merge tab's own gate, on purpose. That tab renders Merge
+    // as soon as a PR number resolves, with no stage check — fine for a surface
+    // you opened deliberately. A board card is a glance, so it must not offer
+    // merge-and-mark-done to a task still mid-pipeline; hence the extra
+    // task.stage === 'merge'. The shared half is findPrNumber, which both call.
+    function isCardMergeReady(task) {
+      return task.stage === 'merge' && !!findPrNumber(task)
     }
 
     function isMilestoneReadyForDev(m, byId, parentStageHistory) {
@@ -2768,7 +2859,10 @@
               ` : '')}
               <span class="backlog-row-date" data-testid="backlog-row-date">${item.date ? esc(item.date) : ''}</span>
               <div class="backlog-row-main">
-                <div class="backlog-row-title" data-testid="backlog-row-title">${esc(item.description)}</div>
+                <div class="backlog-row-title-line">
+                  ${item.project ? `<span class="card-slug-project backlog-row-project" data-testid="backlog-row-project">${esc(item.project)}</span>` : ''}
+                  <div class="backlog-row-title" data-testid="backlog-row-title">${esc(item.description)}</div>
+                </div>
                 ${item.context ? `<div class="backlog-row-context">${esc(item.context)}</div>` : ''}
               </div>
               <div class="backlog-row-actions">
@@ -3515,6 +3609,11 @@
       const label = collapsed ? 'Expand sidebar' : 'Collapse sidebar'
       sidebarCollapseBtn.setAttribute('aria-label', label)
       sidebarCollapseBtn.title = label
+      // The mark is the only reachable toggle once collapsed (the button
+      // hides — see its own CSS comment), so it needs the same accurate
+      // label the button gets rather than its static "Toggle sidebar".
+      sidebarMarkEl.setAttribute('aria-label', label)
+      sidebarMarkEl.title = label
     }
 
     applySidebarCollapsed(window.location.pathname.startsWith('/task/'))
@@ -3589,33 +3688,64 @@
       }
     })
 
-    // ── Settings page (own /settings URL — mirrors openTaskDetail/
-    // closeTaskDetail's push/popstate pattern below, at page rather than
-    // per-task granularity: no slug, so no detailSlug-shaped state to track,
-    // just whether the page is showing) ──────────────────────────────────────
-    let isSettingsPageOpen = false
+    // ── Full pages (Settings, Help — own /settings and /help URLs, mirrors
+    // openTaskDetail/closeTaskDetail's push/popstate pattern below, at page
+    // rather than per-task granularity: no slug, so no detailSlug-shaped
+    // state to track, just which page (if any) is showing). Adding a third
+    // full page means adding a row here and nothing else. ──────────────────
+    const FULL_PAGES = {
+      settings: { id: 'settings-page', path: '/settings' },
+      help:     { id: 'help-page',     path: '/help' },
+    }
+    let openFullPageKey = null
 
-    function openSettingsPage({ push = true } = {}) {
-      isSettingsPageOpen = true
-      if (push && location.pathname !== '/settings') history.pushState({}, '', '/settings')
-      document.body.classList.add('settings-open')
-      document.getElementById('settings-page').hidden = false
+    function openFullPage(key, { push = true } = {}) {
+      if (openFullPageKey && openFullPageKey !== key) closeFullPage({ push: false })
+      openFullPageKey = key
+      const { path: pagePath, id } = FULL_PAGES[key]
+      if (push && location.pathname !== pagePath) history.pushState({}, '', pagePath)
+      document.body.classList.add('full-page-open')
+      document.getElementById(id).hidden = false
     }
 
-    function closeSettingsPage({ push = true } = {}) {
-      isSettingsPageOpen = false
-      document.body.classList.remove('settings-open')
-      document.getElementById('settings-page').hidden = true
+    function closeFullPage({ push = true } = {}) {
+      if (!openFullPageKey) return
+      document.getElementById(FULL_PAGES[openFullPageKey].id).hidden = true
+      openFullPageKey = null
+      document.body.classList.remove('full-page-open')
       if (push && location.pathname !== '/') history.pushState({}, '', '/')
     }
 
-    document.getElementById('sidebar-settings-btn').addEventListener('click', () => openSettingsPage())
+    document.getElementById('sidebar-settings-btn').addEventListener('click', () => openFullPage('settings'))
+    document.getElementById('sidebar-help-btn').addEventListener('click', () => openFullPage('help'))
 
     // Unlike /task/<slug> (openTaskDetail needs a matching Task from
     // currentTasks, which arrives asynchronously — see syncFromLocationOnce
-    // below), /settings needs no task data, so a cold load resolves it
+    // below), a full page needs no task data, so a cold load resolves it
     // immediately rather than waiting on the first /api/tasks response.
-    if (location.pathname === '/settings') openSettingsPage({ push: false })
+    for (const [key, { path: pagePath }] of Object.entries(FULL_PAGES)) {
+      if (location.pathname === pagePath) openFullPage(key, { push: false })
+    }
+
+    // ── Help page — Send stages /pipelinely-feedback into the orchestrator's session ──
+    const helpFeedbackInput   = document.getElementById('help-feedback-input')
+    const helpFeedbackSendBtn = document.getElementById('help-feedback-send')
+
+    // Send is enabled only for a message the server would actually accept, so
+    // the disabled state and the route's own 400 agree on what "empty" means.
+    function syncHelpFeedbackSendEnabled() {
+      helpFeedbackSendBtn.disabled = !helpFeedbackInput.value.trim()
+    }
+
+    helpFeedbackInput.addEventListener('input', syncHelpFeedbackSendEnabled)
+    helpFeedbackSendBtn.addEventListener('click', async () => {
+      const message = helpFeedbackInput.value.trim()
+      if (!message) return
+      if (await postStagingRequest(helpFeedbackSendBtn, '/help/pipelinely-feedback', { message })) {
+        helpFeedbackInput.value = ''
+        syncHelpFeedbackSendEnabled()
+      }
+    })
 
     // ── Header context meter: Handover click ────────────────────────────────
     // Delegated (renderHeaderCtx replaces this slot's contents on every
@@ -3627,6 +3757,14 @@
     document.getElementById('header-ctx-slot').addEventListener('click', (e) => {
       const btn = e.target.closest('button[data-action="orchestrator-handover"]')
       if (btn) postStagingRequest(btn, '/orchestrator/pipelinely-handover')
+    })
+
+    // ── Header Back pill ──────────────────────────────────────────────────
+    // Delegated for the same reason as the meter above: renderHeaderBack
+    // replaces this slot's contents on every open/close, so a listener bound
+    // to the button itself would be torn out with it.
+    document.getElementById('header-back-slot').addEventListener('click', (e) => {
+      if (e.target.closest('.back-pill')) closeTaskDetail()
     })
 
     // ── Sort ──────────────────────────────────────────────────────────────────
@@ -3740,9 +3878,9 @@
     // survive the SSE re-render without surviving a reload.
     let filterProjects = new Set()   // empty = every project (D6: multi-select, no "All" chip)
 
-    // One named accessor rather than repeating `filterProjects` at the three
-    // places that ask "is the board currently narrowed?" — the Clear
-    // button's visibility, the filtered empty state, and the empty Done section.
+    // One named accessor rather than repeating `filterProjects` at the
+    // places that ask "is the board currently narrowed?" — the filtered
+    // empty state and the empty Done section.
     function hasActiveFilter() {
       return filterProjects.size > 0
     }
@@ -3804,8 +3942,6 @@
       }
 
       renderChipRow('filter-project-chips', 'filter-chip-project', projects, filterProjects, repo => repo)
-
-      document.getElementById('filter-clear').hidden = !hasActiveFilter()
     }
 
     // renderFilterBar must run first: it is what resets a selection whose
@@ -3819,6 +3955,7 @@
       renderFilterBar(tasks, doneGroups, backlog)
       renderDashboard(tasks)
       renderDoneGroups(doneGroups)
+      renderYou(doneGroups)
       renderBacklog(backlog)
     }
 
@@ -3838,12 +3975,6 @@
       if (filterProjects.has(value)) filterProjects.delete(value)
       else filterProjects.add(value)
     })
-    function clearFilters() {
-      filterProjects.clear()
-      renderFilteredBoard(currentTasks, currentDoneGroups, currentBacklog)
-    }
-    document.getElementById('filter-clear').addEventListener('click', clearFilters)
-
     // ── Filter reveal + standup copy ─────────────────────────────────────────
     const filterToggleBtn = document.getElementById('filter-toggle-btn')
     const boardFiltersEl = document.getElementById('board-filters')
@@ -4050,7 +4181,14 @@
       const today = new Date()
       today.setHours(0, 0, 0, 0)
       const start = new Date(today)
-      start.setDate(start.getDate() - (DENSITY_WEEKS * 7 - 1) - today.getDay())
+      // The last week (row index DENSITY_WEEKS - 1) is the current Sun–Sat
+      // week, so it has to start (DENSITY_WEEKS - 1) full weeks before this
+      // week's own Sunday (today minus its day-of-week) — not
+      // DENSITY_WEEKS * 7 - 1, which shifts every week 6 days too early and
+      // drops today (and the rest of its week) off the grid entirely. Bug
+      // caught by you-tab.spec.ts's exact-date assertions, which the Done
+      // tab's own title-string rendering never surfaced.
+      start.setDate(start.getDate() - today.getDay() - (DENSITY_WEEKS - 1) * 7)
 
       let max = 0
       for (const v of counts.values()) max = Math.max(max, v)
@@ -4063,11 +4201,12 @@
         for (let d = 0; d < 7; d++) {
           const dt = new Date(start)
           dt.setDate(dt.getDate() + w * 7 + d)
-          const count = counts.get(localDateKey(dt)) || 0
+          const key = localDateKey(dt)
+          const count = counts.get(key) || 0
           total += count
           const level = densityLevel(count, max)
           const label = esc(dt.toDateString().slice(4))
-          daysHtml.push(`<div title="${count} session${count === 1 ? '' : 's'} &middot; ${label}" style="width:100%;min-width:6px;aspect-ratio:1;border-radius:2px;background:${DENSITY_SHADES[level]};border:1px solid ${level === 0 ? 'var(--border)' : 'transparent'};box-sizing:border-box;"></div>`)
+          daysHtml.push(`<div data-testid="density-cell" data-date="${key}" data-count="${count}" data-level="${level}" title="${count} session${count === 1 ? '' : 's'} &middot; ${label}" style="width:100%;min-width:6px;aspect-ratio:1;border-radius:2px;background:${DENSITY_SHADES[level]};border:1px solid ${level === 0 ? 'var(--border)' : 'transparent'};box-sizing:border-box;"></div>`)
         }
         weeksHtml.push(`<div style="display:flex;flex-direction:column;gap:3px;flex:1 1 0;min-width:0;">${daysHtml.join('')}</div>`)
 
@@ -4088,7 +4227,7 @@
       return `
         <div class="work-density">
           <div class="work-density-head">
-            <span>${total.toLocaleString('en-US')} sessions in the last year</span>
+            <span data-testid="density-total" data-count="${total}">${total.toLocaleString('en-US')} sessions in the last year</span>
             <span class="work-density-label">work density</span>
           </div>
           <div class="work-density-card">
@@ -4110,13 +4249,20 @@
         </div>`
     }
 
+    // The whole content of the You panel, so it renders unconditionally — an
+    // empty grid is the honest answer for a calendar with no sessions in it,
+    // where a blank panel would just look broken. Gets the UNFILTERED
+    // doneGroups: You is a whole-history view (see tech-design.md's decision 2).
+    function renderYou(doneGroups) {
+      setHtmlIfChanged(document.getElementById('work-density'), renderWorkDensity(doneGroups))
+    }
+
     // Groups already arrive most-recent-date-first, tasks-within-group
     // most-recent-first (see groupDoneTasksByDate in taskParser.ts) — render
     // as-is rather than re-deriving order on the client.
     function renderDoneGroups(doneGroups) {
       currentDoneGroups = doneGroups
       const container = document.getElementById('done-groups')
-      setHtmlIfChanged(document.getElementById('work-density'), doneGroups.length ? renderWorkDensity(doneGroups) : '')
 
       // A date header with no rows under it would be a worse answer than no
       // header, so a group that drops to zero tasks under the project filter
@@ -4169,60 +4315,22 @@
         </div>`
     }
 
-    // Pills row — status/stage/verifier/mode/repo. Shared verbatim between
-    // renderCard and renderTaskDetail so the detail view's head reads as the
-    // same task, not a re-styled lookalike (returns the .card-pills innerHTML).
-    // "Does this need me right now" rather than the raw STATUS value — same
-    // computation everywhere a status dot/pill appears (renderPillsHtml,
-    // renderCard's header dot), so reading any one of them teaches you how
-    // to read all of them. Orphaned still overrides it, same as before:
-    // cockpit-ai can't know whether the work finished or was abandoned.
+    // "Does this need me right now" rather than the raw STATUS value — the
+    // same computation everywhere a status dot or pill appears (the Active
+    // tab's section grouping, CARD_STATUS_META below), so reading any one of
+    // them teaches you how to read all of them. Orphaned still overrides it,
+    // same as before: cockpit-ai can't know whether the work finished or was
+    // abandoned.
     function pillStatusFor(task) {
       const isDone = task.status === 'done'
       return isDone ? 'done' : (task.orphaned ? 'waiting' : task.attentionStatus)
     }
 
-    // Display order for the state filter, and the single source of truth for
-    // how an attentionStatus is worded anywhere on the board.
-    const ATTENTION_LABELS = {
-      'needs-you': 'Needs you',
-      working:     'Working',
-      paused:      'Paused',
-      idle:        'Idle',
-    }
-
-    // The stage/no-verifier/mode/repo pills — real information the design's
-    // own simpler mock never modeled, so it has no attention-pill equivalent
-    // to collide with. Factored out so renderCard (which renders the
-    // attention state as the design's own header status pill instead — see
-    // statusPillHtml below) and renderPillsHtml's other, not-yet-redesigned
-    // callers (a Done row's expanded detail, the milestone card, the
-    // task-detail header) can both reach these without a second copy.
-    function secondaryPillsHtml(task) {
-      return `
-        ${task.stage ? `<span class="stage-pill" data-testid="stage-pill">${esc(task.stage.replace(/-/g, ' '))}</span>` : ''}
-        ${!task.verifier && task.stage ? `<span class="no-verifier-pill" data-testid="no-verifier-pill">no verifier</span>` : ''}
-        ${task.mode ? `<span class="pill pill-mode">${esc(task.mode)}</span>` : ''}
-        ${task.repo ? `<span class="pill pill-repo">${esc(task.repo)}</span>` : ''}`
-    }
-
-    function renderPillsHtml(task) {
-      const isDone = task.status === 'done'
-      const pillStatus = pillStatusFor(task)
-      const pillLabel = isDone ? 'Done' : (task.orphaned ? 'Orphaned?' : ATTENTION_LABELS[task.attentionStatus])
-
-      // No dot inside the pill. The card header already carries one, and the
-      // reference's own detail title block (line 305) has none either — two
-      // dots for one status was the redesign saying the same thing twice.
-      return `<span class="pill pill-${pillStatus}">${pillLabel}</span>${secondaryPillsHtml(task)}`
-    }
-
     // The design's own header status pill (dot + label in a tinted
     // capsule), used by the session card, the dev/milestone card and the
-    // inner-view header alike. --card-accent/--card-fg/--card-bg-strong
-    // below are the same three values renderPillsHtml's plain pills read
-    // off ATTENTION_LABELS' sibling color scale, just named to match the
-    // design's own statusMeta table.
+    // inner-view header alike — and, since the card's secondary pill row
+    // came out, the only place an attentionStatus is worded at all outside
+    // the Active tab's section headers.
     const CARD_STATUS_META = {
       working:     { label: 'Working',   dot: 'var(--accent)', fg: 'var(--accentInk)', bg: 'var(--accentSoft)' },
       'needs-you': { label: 'Needs you', dot: 'var(--amber)',  fg: 'var(--amberInk)',  bg: 'var(--amberSoft)' },
@@ -4285,6 +4393,7 @@
         const isCurrent = !isFinished && i === curIdx
         return {
           label: id,
+          isDone,
           isCurrent,
           flex: i === 0 ? '0 0 auto' : '1 1 auto',
           hasConnector: i > 0,
@@ -4300,7 +4409,7 @@
       return miniStageNodes(task, stageIds).map(n => `
         <div style="display:flex;align-items:center;flex:${n.flex};min-width:0;">
           ${n.hasConnector ? `<div style="flex:1 1 auto;height:2px;min-width:8px;background:${n.connector};"></div>` : ''}
-          <div title="${esc(n.label)}" style="display:flex;align-items:center;flex:none;">
+          <div title="${esc(n.label)}" data-testid="mini-stage-node" data-stage="${esc(n.label)}" data-state="${n.isDone ? 'done' : n.isCurrent ? 'current' : 'todo'}" style="display:flex;align-items:center;flex:none;">
             <div style="position:relative;width:16px;height:16px;flex:none;">
               <div style="position:absolute;inset:0;border-radius:999px;border:${n.ring};background:${n.bg};"></div>
               ${n.isCurrent ? `<div style="position:absolute;inset:-3px;border-radius:999px;border:1.5px solid var(--accent);animation:breathe 2.8s ease-in-out infinite;"></div>` : ''}
@@ -4314,7 +4423,12 @@
     // task detail is open) that overlay — since a card's 3-dot menu, its
     // off-focus toggle, etc. can be triggered from either surface (the
     // session card lives on the board; the dev/milestone card lives inside
-    // an open task-detail's own Dev tab).
+    // an open task-detail's own Dev tab). mergePr is the same story: its
+    // Merge button now lives on both the board card and the Merge tab, and
+    // it needs a re-render at every one of its outcomes (confirm accepted,
+    // 200, 409/other, network error) — fired from a card, the old
+    // detail-only re-render would leave mergeInFlight's disabled state and
+    // the failure banner invisible, a silently swallowed error.
     function rerenderCurrentView() {
       if (detailSlug) {
         const task = currentTasks.find(t => t.slug === detailSlug)
@@ -4713,14 +4827,18 @@
       return `<button class="${cls}" data-action="focus" data-slug="${esc(task.slug)}" data-testid="${testid}" data-primary="${isPrimary}">${label}</button>`
     }
 
-    // The design's icon-only terminal button (30px in a card's ctx row,
-    // 38px in its footer) — same data-action/testid as focusButtonHtml's
-    // labeled form above, so it dispatches through the exact same
-    // POST /focus/:slug path, just a different rendering for a tight row.
-    function terminalIconButtonHtml(task, sizePx) {
-      const isPaused = task.status === 'paused'
-      const testid = isPaused ? 'resume-btn' : 'focus-btn'
-      return `<button type="button" class="card-icon-btn" style="width:${sizePx}px;height:${sizePx}px;border-radius:${sizePx >= 38 ? 10 : 9}px;" data-action="focus" data-slug="${esc(task.slug)}" data-testid="${testid}" title="Open terminal">${TERMINAL_ICON}</button>`
+    // The design's icon-only terminal button — same data-action as
+    // focusButtonHtml's labeled form above, so it dispatches through the
+    // exact same POST /focus/:slug path, just a different rendering for a
+    // tight row.
+    //
+    // The design also draws a second, larger copy inline in a WORKING card's
+    // ctx row (Pipelinely Dashboard v2.dc.html line 333); this board omits it
+    // as redundant with the header copy, which every card has whatever its
+    // state — so the header copy carries the canonical focus/resume testid.
+    function terminalIconButtonHtml(task) {
+      const id = task.status === 'paused' ? 'resume-btn' : 'focus-btn'
+      return `<button type="button" class="card-icon-btn" data-action="focus" data-slug="${esc(task.slug)}" data-testid="${id}" title="Open terminal">${TERMINAL_ICON}</button>`
     }
 
     // Shared between an active card's footer and a Done row's expanded
@@ -4784,11 +4902,25 @@
       const hot = ctxIsHot(ctx)
       setHtmlIfChanged(slot, `
         <div class="header-pill header-ctx" data-testid="header-ctx">
-          <div class="header-ctx-body">
+          <div class="header-ctx-body" data-testid="header-ctx-body">
             ${ctxMeterHtml(ctx, { track: 'header-ctx-meter', fill: 'header-ctx-fill', pct: 'header-ctx-value' })}
           </div>
           ${hot ? handoverPillHtml('header-handover', 'orchestrator-handover') : ''}
         </div>`)
+    }
+
+    // The inner view's Back control (Pipelinely Pipeline.dc.html lines
+    // 91-93). The design puts it in the app header beside the other pills,
+    // not inside the view it backs out of — so it renders into the header's
+    // own slot and empties again on close, rather than living in the detail
+    // panel's markup. Driven off the same open/closed transition
+    // openTaskDetail/closeTaskDetail already own, so there is no third
+    // source of truth for "is a task open".
+    function renderHeaderBack(isDetailOpen) {
+      const slot = document.getElementById('header-back-slot')
+      setHtmlIfChanged(slot, isDetailOpen
+        ? `<button type="button" class="header-pill back-pill" data-testid="detail-close" aria-label="Back">${BACK_ARROW_ICON}<span>Back</span></button>`
+        : '')
     }
 
     // The board card's own footer CTA — Pipelinely Dashboard v2.dc.html's
@@ -4805,35 +4937,60 @@
       'qa-fixes': 'Run QA fixes',
     }
 
-    // Primary action + a small terminal icon beside it, matching the
-    // design's own footer shape — plain text label (not an SVG) so
-    // flashBtn's textContent-based revert (see stageSkill/doAction) doesn't
-    // silently eat an icon on the way back from a "✓ staged" flash.
+    // What a card offers when it has no dispatchable next stage — a parent
+    // whose dev work is dispatched per milestone, or a leaf waiting on a
+    // decision only a human can make. The design calls this "Drill down";
+    // "See details" is the developer's own wording for the same slot, and
+    // naming it once is what keeps the two shapes below from drifting.
+    const SEE_DETAILS_LABEL = 'See details'
+
+    // The design's footer: ONE full-width CTA and nothing else (Pipelinely
+    // Dashboard v2.dc.html line 345). Every card that renders a footer
+    // renders a CTA in it — a footer with no call to action was the state
+    // this round set out to remove. The terminal button that used to sit
+    // beside the CTA now lives in the card's own header row, where the
+    // design puts it.
+    //
+    // Plain text labels (not SVGs) so flashBtn's textContent-based revert
+    // (see stageSkill/doAction) doesn't silently eat an icon on the way back
+    // from a "✓ staged" flash.
     function cardFooterHtml(task) {
       // Same "wants you" signal focusButtonHtml's own data-primary uses —
-      // one accent-tinted button per card, never two, whichever of the
-      // three shapes below actually renders.
+      // one accent-tinted button per card, never two, whichever of the two
+      // shapes below actually renders.
       const isPrimary = task.attentionStatus === 'needs-you' || task.attentionStatus === 'paused'
-      const cta = computeNextStageCta(task)
+      // A milestone-declaring parent gets neither of the two action
+      // branches below: dev is dispatched per milestone, and a parent's own
+      // PR is not the thing its milestones merge through. Both fall to
+      // "See details", which is the one honest answer for a card with no
+      // single next step.
+      const isParent = isFanoutParent(task)
+      const cta = isParent ? null : computeNextStageCta(task)
       if (cta) {
         return `
           <div class="card-footer">
             <button type="button" class="btn${isPrimary ? ' btn-primary' : ''}" data-action="stage-skill" data-slug="${esc(task.slug)}" data-stage="${esc(cta.stage)}" data-testid="card-cta-btn" data-primary="${isPrimary}">${esc(CARD_CTA_LABEL[cta.stage] || 'Continue')} &#8594;</button>
-            ${terminalIconButtonHtml(task, 38)}
           </div>`
       }
-      if (isDecisionWaiting(task)) {
-        // No second, vaguer CTA here: a decision only a human can make has
-        // no stage command to stage — reaching the terminal is the answer.
-        return `<div class="card-footer">${terminalIconButtonHtml(task, 38)}</div>`
+      // Placed after the CTA branch and before the "See details" fallback on
+      // purpose: waitingReason wins when both are satisfiable (a card can be
+      // task.stage === 'merge' while its STATUS still names a dispatchable
+      // next stage), and a merge-ready task otherwise falls straight through
+      // to "See details" — this branch has to come first to ever be reached.
+      // Its three controls ARE the CTA for this card; the terminal button
+      // that used to sit beside them is in the card's header row now, like
+      // every other footer shape's.
+      if (!isParent && isCardMergeReady(task)) {
+        return `
+          <div class="card-footer card-footer-merge">
+            ${mergeBannerHtml(task.slug)}
+            ${mergeButtonHtml(task.slug, { testid: 'card-merge-pr-btn', isPrimary })}
+            ${openPrButtonHtml(task.slug, 'card-open-pr-btn')}
+          </div>`
       }
-      // No dispatchable next stage and nothing to decide (e.g. a plain
-      // pause with no recorded reason) — open the detail view rather than
-      // guess at an action this task doesn't actually have.
       return `
         <div class="card-footer">
-          <button type="button" class="btn${isPrimary ? ' btn-primary' : ''}" data-action="open-detail" data-slug="${esc(task.slug)}" data-testid="card-cta-btn" data-primary="${isPrimary}">Review &#8594;</button>
-          ${terminalIconButtonHtml(task, 38)}
+          <button type="button" class="btn${isPrimary ? ' btn-primary' : ''}" data-action="open-detail" data-slug="${esc(task.slug)}" data-testid="card-cta-btn" data-primary="${isPrimary}">${esc(SEE_DETAILS_LABEL)} &#8594;</button>
         </div>`
     }
 
@@ -4851,8 +5008,22 @@
     function renderCard(task) {
       const ctx  = task.contextPct ?? null
       const high = ctx !== null && ctx >= CTX_WARN_THRESHOLD
-      const isWorking = task.status === 'working'
       const hot = ctxIsHot(ctx)
+
+      // The one question the design's `footerDisplay` and `ctxPadBottom`
+      // (Pipelinely Dashboard v2.dc.html lines 634-644) both turn on: a
+      // working LEAF is already doing the thing, so it gets no footer, and
+      // its ctx row absorbs the freed space instead. Deliberately NOT
+      // followed: the design's `showTermInline` — the header already carries
+      // the terminal button on every card, so a second one in the ctx row was
+      // pure duplication. A milestone-declaring PARENT keeps its footer even
+      // while working — its own session running says nothing about whether
+      // its milestones need attention.
+      const isWorkingLeaf = !isFanoutParent(task) && task.status === 'working'
+      // The design's `showHandover` (line 636): offered while a session is
+      // parked, never mid-turn. A handover is staged INTO that session's own
+      // tab, so it wants the session idle enough to receive it.
+      const showHandover = hot && task.status !== 'working'
 
       const orphanWarningHtml = task.orphaned
         ? `<div class="ctx-warning">⚠ Tab closed but STATUS still "working" — verify and mark done</div>` : ''
@@ -4869,16 +5040,14 @@
         ? `<div class="card-note" data-testid="card-note">${esc(reasonText)}</div>`
         : ''
 
-      const secondaryPills = secondaryPillsHtml(task)
-
       return `
-        <div class="card session-card card-${task.orphaned ? 'waiting' : task.status}${task.attentionStatus === 'needs-you' ? ' is-needs-you' : ''}" data-slug="${esc(task.slug)}" data-testid="task-card" data-status="${esc(task.attentionStatus)}" data-lifecycle-status="${esc(task.status)}" data-repo="${esc(task.repo)}">
+        <div class="card session-card card-${task.orphaned ? 'waiting' : task.status}${task.attentionStatus === 'needs-you' ? ' is-needs-you' : ''}" data-slug="${esc(task.slug)}" data-testid="task-card" data-status="${esc(task.attentionStatus)}" data-lifecycle-status="${esc(task.status)}" data-stage="${esc(task.stage || '')}" data-repo="${esc(task.repo)}">
           <div class="card-header-row">
             ${statusPillHtml(task)}
             ${isOffFocus(task.slug) ? `<span class="drift-pill">off focus</span>` : ''}
             <div class="card-header-right">
               <span class="card-time" data-testid="card-time" data-updated-at="${esc(task.updatedAt)}"${task.completedAtSource === 'status-mtime' ? ' title="Estimated from STATUS update time — no merge commit found"' : ''}></span>
-              <button type="button" class="card-icon-btn" data-action="open-detail" data-slug="${esc(task.slug)}" data-testid="card-open-detail" title="Open session">${OPEN_ARROW_ICON}</button>
+              ${terminalIconButtonHtml(task)}
               ${cardMenuHtml(task)}
             </div>
           </div>
@@ -4894,7 +5063,6 @@
               <span class="card-copied" data-testid="card-copied" hidden>copied</span>
             </div>
             ${parentLinkChipHtml(task, 'ms-parent-link')}
-            ${secondaryPills ? `<div class="card-secondary-pills" data-testid="card-meta-row">${secondaryPills}</div>` : ''}
           </div>
 
           <div class="card-rail-row">${miniStageRailHtml(task, ['planning', 'dev', 'cr', 'qa', 'merge'])}</div>
@@ -4903,14 +5071,12 @@
           ${warningHtml}
           ${noteHtml}
 
-          <div class="card-ctx-row" style="margin-top:auto${isWorking ? ';padding-bottom:18px' : ''}">
+          <div class="card-ctx-row" style="margin-top:auto${isWorkingLeaf ? ';padding-bottom:18px' : ''}">
             ${ctxMeterHtml(ctx, { track: 'ctx-meter', fill: 'ctx-meter-fill', pct: 'ctx-value' })}
-            ${isWorking
-              ? terminalIconButtonHtml(task, 30)
-              : (hot ? handoverPillHtml('card-handover', 'handover', task.slug) : '')}
+            ${showHandover ? handoverPillHtml('card-handover', 'handover', task.slug) : ''}
           </div>
 
-          ${!isWorking ? cardFooterHtml(task) : ''}
+          ${isWorkingLeaf ? '' : cardFooterHtml(task)}
         </div>`
     }
 
@@ -5036,7 +5202,7 @@
       // stepper renders into .detail-stepper there, it carries no rollup
       // meaning here.
       const scope = taskScope(task)
-      const isFanout = Array.isArray(task.milestones) && task.milestones.length > 0
+      const isFanout = isFanoutParent(task)
 
       // A dispatched milestone child (task.projectTitle is set only for
       // that shape — see its comment in types.ts) never goes through
@@ -5171,28 +5337,19 @@
       return `<div class="ctx-warning merge-banner" data-testid="merge-banner" data-tone="${esc(banner.tone)}"><ul>${lines}</ul></div>`
     }
 
-    // Re-renders the currently open task-detail overlay against its own
-    // latest currentTasks entry — same pattern loadTechDesign/loadQaSpec's
-    // own finally blocks already use for exactly this. mergePr needs it at
-    // every one of its outcomes (confirm accepted, 200, 409/other, network
-    // error), which is what earns this its own shared name here.
-    function rerenderOpenTaskDetail() {
-      const task = detailSlug && currentTasks.find(t => t.slug === detailSlug)
-      if (task) renderTaskDetail(task)
-    }
-
     // Which slugs have a merge POST in flight. Module-level, NOT on the
     // button — same reasoning as runWaveBatch's own runningWaveBatches:
-    // mergePr's own rerenderOpenTaskDetail() call (to clear the stale
-    // banner) replaces the merge button's DOM node *before* the fetch even
-    // goes out, so a `btn.disabled = true` on the original node the click
-    // handler captured would apply to an already-detached element — the
-    // live, freshly-rendered button would stay clickable for the whole
-    // request, open to a double-submit. The merge button's own template
-    // reads this set directly (renderL2Panel's merge tab), so every call to
-    // rerenderOpenTaskDetail() below — the only re-render mechanism this
-    // needs, unlike runWaveBatch's wave grid which has none of its own —
-    // already renders it correctly disabled.
+    // mergePr's own rerenderCurrentView() call (to clear the stale banner)
+    // replaces the merge button's DOM node *before* the fetch even goes
+    // out — wherever it's rendered, the board card or the Merge tab —  so a
+    // `btn.disabled = true` on the original node the click handler captured
+    // would apply to an already-detached element — the live, freshly-rendered
+    // button would stay clickable for the whole request, open to a
+    // double-submit. The merge button's own template reads this set directly
+    // (renderL2Panel's merge tab and cardFooterHtml's merge branch alike), so
+    // every call to rerenderCurrentView() below — the only re-render
+    // mechanism this needs, unlike runWaveBatch's wave grid which has none of
+    // its own — already renders it correctly disabled.
     const mergeInFlight = new Set()
 
     // tech-design.md is fetched lazily rather than shipped in the SSE
@@ -5794,6 +5951,24 @@
     // constant rather than a copy of the same SVG at each call site.
     const FOOTER_CTA_ARROW = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h13M12.5 6l6 6-6 6"></path></svg>`
 
+    // Shared by the Merge tab's own footer (renderL2Panel) and the board
+    // card's merge footer (cardFooterHtml) — the only two callers. The tab's
+    // own primacy comes from panelFooterHtml's slot, not a class, so it
+    // passes no `isPrimary` at all; the card computes its own "wants you"
+    // boolean and passes it, which is what controls both the btn-primary
+    // class and the data-primary attribute together. Getting this backwards
+    // (defaulting isPrimary to false rather than leaving it unset) would put
+    // a stray data-primary="false" on the tab's own button and break
+    // merge-tab-actions.spec.ts's byte-identical-markup assertion.
+    function mergeButtonHtml(slug, opts) {
+      const cls = `btn${opts.isPrimary ? ' btn-primary' : ''}`
+      const primaryAttr = opts.isPrimary === undefined ? '' : ` data-primary="${opts.isPrimary}"`
+      return `<button class="${cls}" data-action="merge-pr" data-slug="${esc(slug)}" data-testid="${esc(opts.testid)}"${primaryAttr} ${mergeInFlight.has(slug) ? 'disabled' : ''}><span>Merge</span>${FOOTER_CTA_ARROW}</button>`
+    }
+    function openPrButtonHtml(slug, testid) {
+      return `<button class="btn" data-action="open-pr" data-slug="${esc(slug)}" data-testid="${esc(testid)}">Open PR</button>`
+    }
+
     // Live when this stage is genuinely the next step (computeNextStageCta/
     // isMilestoneReadyForDev said so); otherwise disabled — a button that
     // looks live and does nothing is worse than one that says why. `testid`
@@ -5988,8 +6163,8 @@
       // constant.
       const markDoneLabel = prNumber ? 'Mark done' : `<span>Mark done</span>${FOOTER_CTA_ARROW}`
       const markDoneBtn = `<button class="btn" data-action="mark-done" data-slug="${esc(child.slug)}" data-testid="mark-done-btn">${markDoneLabel}</button>`
-      const mergeBtn = `<button class="btn" data-action="merge-pr" data-slug="${esc(child.slug)}" data-testid="merge-pr-btn" ${mergeInFlight.has(child.slug) ? 'disabled' : ''}><span>Merge</span>${FOOTER_CTA_ARROW}</button>`
-      const openPrBtn = prNumber ? `<button class="btn" data-action="open-pr" data-slug="${esc(child.slug)}" data-testid="open-pr-btn">Open PR</button>` : ''
+      const mergeBtn = mergeButtonHtml(child.slug, { testid: 'merge-pr-btn' })
+      const openPrBtn = prNumber ? openPrButtonHtml(child.slug, 'open-pr-btn') : ''
       // No TIMELINE entry for this stage yet — genuinely different from "not
       // dispatched" above (a real child exists, it just hasn't reached
       // Merge): the design's shared empty panel names that gap explicitly.
@@ -6141,12 +6316,15 @@
       return { label, dot: 'var(--accent)', fg: 'var(--accentInk)', bg: 'var(--accentSoft)' }
     }
 
-    // One card per declared milestone, carrying the SAME badge row and the
-    // same CTX/SESS/Model/Tokens/Cost grid as any other card, scoped to this
-    // milestone — this is deliberately the same rendering a dispatched
-    // milestone uses as its own top-level board card (Task 9), not a
-    // parallel one-off. A queued milestone has no child task yet, so it
-    // falls back to the plain Queued state chip with no badge row or stats.
+    // One card per declared milestone, carrying the same CTX/SESS/Model/
+    // Tokens/Cost grid as any other card, scoped to this milestone — this is
+    // deliberately the same rendering a dispatched milestone uses as its own
+    // top-level board card (Task 9), not a parallel one-off, which is why
+    // the design's own card changes land here too: no secondary pill row, a
+    // terminal button where the open-card arrow used to be, and a footer
+    // that always names an action. A queued milestone has no child task yet,
+    // so it falls back to the plain Queued state chip with no stats and its
+    // own gated Start dev button.
     // `task` is the parent — needed only to compute the child's real slug
     // and this milestone's Start Dev readiness (isMilestoneReadyForDev).
     function renderMilestoneCard(m, task) {
@@ -6159,7 +6337,6 @@
       const byId = new Map(task.milestones.map(x => [x.id, x]))
       const readyForDev = isMilestoneReadyForDev(m, byId, task.stageHistory)
 
-      const secondaryPills = child ? secondaryPillsHtml(child) : ''
       const ctx = child ? (child.contextPct ?? null) : null
       const hot = ctxIsHot(ctx)
 
@@ -6172,7 +6349,7 @@
             </div>
             <div class="card-header-right">
               <span class="ms-card-id" data-testid="milestone-id">${esc(m.id)}</span>
-              <span class="card-icon-btn" data-milestone-id="${esc(m.id)}" title="Open card">${OPEN_ARROW_ICON}</span>
+              ${child ? terminalIconButtonHtml(child) : ''}
               ${child ? cardMenuHtml(child) : ''}
               <span class="ms-dispatch-status" data-testid="ms-dispatch-status"></span>
             </div>
@@ -6191,7 +6368,6 @@
               <span>needs: ${m.needs.length ? esc(m.needs.join(', ')) : 'none'}</span>
               <span data-testid="milestone-est-actual">${est}${actual ? ` · took ${esc(actual)}` : ''}</span>
             </div>
-            ${secondaryPills ? `<div class="card-secondary-pills">${secondaryPills}</div>` : ''}
           </div>
 
           <div class="card-rail-row">${miniStageRailHtml({ status: isDone ? 'done' : 'working', stage: child?.stage, stageHistory: child?.stageHistory }, ['dev', 'cr', 'qa', 'merge'])}</div>
@@ -6203,12 +6379,15 @@
               ${hot && !isDone ? handoverPillHtml('ms-card-handover', 'handover', child.slug) : ''}
             </div>` : ''}
 
-          ${!isDone ? `
-            <div class="card-footer">
-              ${child
-                ? terminalIconButtonHtml(child, 38)
-                : `<button type="button" class="btn btn-primary" data-action="stage-skill" data-slug="${esc(childSlug)}" data-stage="dev" data-testid="milestone-start-dev-btn" ${readyForDev ? '' : 'disabled'}>Start dev</button>`}
-            </div>` : ''}
+          ${isDone ? '' : (child
+            // A dispatched milestone's card is a card: it gets the same
+            // always-a-CTA footer a board card does, naming the child's own
+            // next stage (or "See details" when it has none) rather than the
+            // bare terminal button it used to show.
+            ? cardFooterHtml(child)
+            : `<div class="card-footer">
+              <button type="button" class="btn btn-primary" data-action="stage-skill" data-slug="${esc(childSlug)}" data-stage="dev" data-testid="milestone-start-dev-btn" ${readyForDev ? '' : 'disabled'}>Start dev</button>
+            </div>`)}
         </div>`
     }
 
@@ -6582,12 +6761,14 @@
       // panels that need it) and fetched at most once per page load.
       loadStageScope()
       document.body.classList.add('detail-open')
+      renderHeaderBack(true)
       renderTaskDetail(task)
     }
 
     function closeTaskDetail({ push = true } = {}) {
       detailSlug = null
       document.body.classList.remove('detail-open')
+      renderHeaderBack(false)
       document.getElementById('task-detail').hidden = true
       if (push && location.pathname !== '/') history.pushState({}, '', '/')
     }
@@ -6642,27 +6823,32 @@
     // Reflects browser-driven navigation (back/forward) into the same
     // open/close functions a click uses — push: false since the URL already
     // changed on its own.
+    function matchFullPageKey(pathname) {
+      return Object.keys(FULL_PAGES).find((key) => FULL_PAGES[key].path === pathname) ?? null
+    }
+
     window.addEventListener('popstate', () => {
       const slug = matchTaskSlug(location.pathname)
       const tab = matchTabFromPath(location.pathname)
+      const fullPageKey = matchFullPageKey(location.pathname)
       if (slug) {
         openTaskDetail(slug, { push: false, stage: matchStageParam(location.search) })
-      } else if (location.pathname === '/settings') {
-        openSettingsPage({ push: false })
+      } else if (fullPageKey) {
+        openFullPage(fullPageKey, { push: false })
       } else if (tab) {
         closeTaskDetail({ push: false })
-        closeSettingsPage({ push: false })
+        closeFullPage({ push: false })
         switchTab(tab, { push: false })
       } else {
         closeTaskDetail({ push: false })
-        closeSettingsPage({ push: false })
+        closeFullPage({ push: false })
       }
     })
 
     document.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') return
       if (detailSlug) closeTaskDetail()
-      if (isSettingsPageOpen) closeSettingsPage()
+      if (openFullPageKey) closeFullPage()
     })
 
     // Milestone cards are role="button", so keyboard users must be able to
@@ -6786,20 +6972,22 @@
     // mergeTask in src/taskCompletion.ts) against a shared remote, so it
     // always confirms first — same plain confirm() pattern as markDone,
     // naming the PR and, when the task has a worktree, the branch it also
-    // deletes. Unlike every other action here, failures persist in the
-    // Merge tab's own banner (mergeBannerBySlug/mergeBannerHtml) rather than
+    // deletes. Unlike every other action here, failures persist in a banner
+    // (mergeBannerBySlug/mergeBannerHtml, rendered on whichever surface fired
+    // the merge — the Merge tab or the board card's own footer) rather than
     // a button flash: a multi-line blocker list doesn't fit in a label, and
     // a flash on a button an SSE re-render later replaces would be lost. No
     // success flash either, for the same reason on the other side of it: a
-    // clean merge closes the overlay immediately (the caller's own .then()),
-    // and a merge that lands with a cleanup warning re-renders the panel
-    // right here to show it — either way a flash would be racing a DOM
-    // replace it can't win, not a real success indicator. Takes just `slug`,
-    // not a button reference, for the same reason (see mergeInFlight below):
-    // this function's own rerender replaces whatever button called it, so
-    // holding one across the request is never safe. Returns
-    // { merged, cleanupError } so the task-detail overlay's own handler can
-    // decide whether to close itself without re-issuing the request.
+    // clean merge fired from the detail overlay closes it immediately (the
+    // caller's own .then()), and a merge that lands with a cleanup warning
+    // re-renders the current view right here to show it — either way a flash
+    // would be racing a DOM replace it can't win, not a real success
+    // indicator. Takes just `slug`, not a button reference, for the same
+    // reason (see mergeInFlight below): this function's own rerender
+    // replaces whatever button called it, so holding one across the request
+    // is never safe. Returns { merged, cleanupError } so the task-detail
+    // overlay's own handler can decide whether to close itself without
+    // re-issuing the request.
     async function mergePr(slug) {
       if (mergeInFlight.has(slug)) return { merged: false, cleanupError: null }
 
@@ -6814,13 +7002,13 @@
       // Marked in-flight, and the banner cleared, right before the request
       // goes out — a stale reason must never sit next to a new attempt. The
       // rerender this triggers replaces the button's own DOM node (the
-      // banner lives in the same panel), which is exactly why the disabled
+      // banner lives in the same view), which is exactly why the disabled
       // state lives in mergeInFlight and is read by the button's own
       // template, not set as a property on a button reference that's about
       // to go stale.
       mergeInFlight.add(slug)
       mergeBannerBySlug.delete(slug)
-      rerenderOpenTaskDetail()
+      rerenderCurrentView()
 
       try {
         const res = await fetch(`/merge-pr/${encodeURIComponent(slug)}`, { method: 'POST' })
@@ -6853,7 +7041,7 @@
         // strand the button disabled forever — same reasoning as
         // runWaveBatch's own finally.
         mergeInFlight.delete(slug)
-        rerenderOpenTaskDetail()
+        rerenderCurrentView()
       }
     }
 
@@ -7016,9 +7204,8 @@
     // Resolves a data-action button to its handler — handleCardClick's own
     // delegation target for the active-sessions board.
     function dispatchCardAction(btn) {
-      // The session card's own open-arrow icon button (design's 26px
-      // "Open session" square) is a real <button data-action="open-detail">
-      // for consistent icon-button styling — handled explicitly here rather
+      // The card's own "See details" footer CTA is a real
+      // <button data-action="open-detail"> — handled explicitly here rather
       // than relying on the non-button-only openDetail fallback in
       // handleCardClick below, which exists for the title <a> and the
       // legacy chevron <span>.
@@ -7030,7 +7217,7 @@
       if (btn.dataset.action === 'focus') {
         focusTask(btn, btn.dataset.slug)
       } else if (btn.dataset.action === 'stage-skill') {
-        // The card's own footer CTA (cardCtaHtml) — same dispatch as the
+        // The card's own footer CTA (cardFooterHtml) — same dispatch as the
         // task-detail L2 panel's stage buttons, just reachable straight from
         // the board. Routed explicitly rather than falling through to the
         // generic doAction below, which posts no body and would silently
@@ -7163,6 +7350,11 @@
           skipStage(btn, slug, btn.dataset.stage)
         } else if (action === 'stage-skill') {
           stageSkill(btn, slug, btn.dataset.stage)
+        } else if (action === 'open-detail') {
+          // A milestone card's "See details" CTA, for a child with no
+          // dispatchable next stage. Opens the CHILD's own detail view,
+          // which is the same place its board card would take you.
+          openTaskDetail(slug)
         } else if (action === 'focus') {
           focusTask(btn, slug)
         } else if (action === 'wave-batch') {
@@ -7195,16 +7387,13 @@
       // same handleParentLinkClick handleCardClick uses for the board's
       // ms-parent-link chip.
       if (handleParentLinkClick(e)) return
-      // Checked before .detail-back: the two share a class, and this one
-      // steps back to the milestone list rather than closing the view.
+      // Steps back to the milestone list rather than closing the view —
+      // a different destination from the header's own Back pill, which
+      // leaves the task entirely (see renderHeaderBack).
       if (e.target.closest('[data-l2-back]')) {
         detailMilestoneId = null
         const task = currentTasks.find(t => t.slug === detailSlug)
         if (task) renderTaskDetail(task)
-        return
-      }
-      if (e.target.closest('.detail-back')) {
-        closeTaskDetail()
         return
       }
       const l1 = e.target.closest('[data-l1-tab]')
@@ -7271,10 +7460,10 @@
       if (el) el.textContent = String(count)
     }
 
-    const TAB_NAMES = ['backlog', 'inprogress', 'done']
+    const TAB_NAMES = ['backlog', 'inprogress', 'done', 'you']
     const DEFAULT_TAB = 'inprogress'
 
-    // Each of the three board tabs is a real page now (own URL, back/forward,
+    // Each of the four board tabs is a real page now (own URL, back/forward,
     // bookmarkable/shareable), the same as /settings and /task/<slug> —
     // DEFAULT_TAB is the one that lives at bare '/' rather than its own
     // /inprogress, matching '/' already being the app's home route.
@@ -7282,7 +7471,7 @@
       return tab === DEFAULT_TAB ? '/' : `/${tab}`
     }
 
-    // The inverse of tabUrl — null for any path that isn't one of these three
+    // The inverse of tabUrl — null for any path that isn't one of these four
     // (e.g. /task/<slug>, /settings), so callers can tell "not a tab route"
     // apart from "the default tab's route".
     function matchTabFromPath(pathname) {
@@ -7291,20 +7480,29 @@
       return TAB_NAMES.includes(bare.slice(1)) ? bare.slice(1) : null
     }
 
-    // Underlying data for all three panels is kept current by the SSE handler
+    // Underlying data for all four panels is kept current by the SSE handler
     // regardless of which is showing — switching only toggles visibility.
     // push defaults to true for a click (a real navigation); popstate and the
     // initial URL sync below pass push: false since the browser already
     // navigated there on its own — same convention as openTaskDetail/
-    // openSettingsPage.
+    // openFullPage.
     function switchTab(tab, { push = true } = {}) {
       if (!TAB_NAMES.includes(tab)) return
-      document.querySelectorAll('.tab-btn').forEach(btn => {
+      // Every tab trigger carries data-tab — the three counted .tab-btn children
+      // of #tab-bar, plus the sidebar's own account row, which is the You tab's
+      // trigger (it has no count, so it was never a .tab-btn). Keyed on the
+      // attribute rather than the class so there is one is-active loop, not two.
+      document.querySelectorAll('[data-tab]').forEach(btn => {
         btn.classList.toggle('is-active', btn.dataset.tab === tab)
       })
       document.querySelectorAll('.tab-panel').forEach(panel => {
         panel.classList.toggle('is-active', panel.dataset.tabPanel === tab)
       })
+      // Drives the You-only chrome hiding in CSS ([data-active-tab="you"] on
+      // #weekly-focus/.board-toolbar/#board-filters) — set on #board itself,
+      // not read from a variable, so it can never drift from what's actually
+      // showing.
+      document.getElementById('board').dataset.activeTab = tab
       // The standup-copy button only makes sense on the Done tab (see the
       // design's own `showStandup: st.tab === "done"`).
       document.getElementById('standup-btn').hidden = tab !== 'done'
@@ -7317,23 +7515,34 @@
         // push: the initial URL sync and popstate replay below call
         // switchTab too, and both already own closing/opening the right
         // page for the URL they're resolving — a blanket close here would
-        // fight them (e.g. undo the openSettingsPage a cold /settings load
+        // fight them (e.g. undo the openFullPage a cold /settings load
         // just did).
-        closeSettingsPage({ push: false })
+        closeFullPage({ push: false })
       }
     }
 
-    document.getElementById('tab-bar').addEventListener('click', (e) => {
-      const btn = e.target.closest('.tab-btn')
-      if (!btn) return
+    // Shared by both of the board's own triggers (#tab-bar's three .tab-btns
+    // and the sidebar account row) so the navigation body — close the detail
+    // view if open, switch, close the mobile sidebar — is written once.
+    function navigateToTab(tab) {
       // #board (holding every .tab-panel) is hidden outright by
       // body.detail-open while a task's detail view is open — switchTab
       // alone only flips which panel *would* show once that class comes
       // off, so from the detail view a side-nav click looked like a dead
       // button. Closing the detail view first makes the switch visible.
       if (document.body.classList.contains('detail-open')) closeTaskDetail()
-      switchTab(btn.dataset.tab)
+      switchTab(tab)
       closeMobileSidebar()
+    }
+
+    document.getElementById('tab-bar').addEventListener('click', (e) => {
+      const btn = e.target.closest('.tab-btn')
+      if (!btn) return
+      navigateToTab(btn.dataset.tab)
+    })
+
+    document.querySelector('.sidebar-account').addEventListener('click', () => {
+      navigateToTab('you')
     })
 
     switchTab(matchTabFromPath(location.pathname) ?? DEFAULT_TAB, { push: false })

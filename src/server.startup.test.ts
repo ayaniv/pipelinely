@@ -18,11 +18,15 @@ let handle: TestServerHandle
 // watchers and setInterval with nothing to close them, leaking watchers
 // pointed at a tmpDir a later test has already removed.
 beforeAll(async () => {
-  handle = await startTestServer()
+  // This test's own concern is the bound-port value open() is called with,
+  // not whether it's called at all — opening is opt-in
+  // (COCKPIT_AUTO_OPEN_BROWSER, see server.autoOpenBrowser.test.ts), so this
+  // has to opt in explicitly to exercise the call.
+  handle = await startTestServer({ COCKPIT_AUTO_OPEN_BROWSER: '1' })
 })
 
 afterAll(async () => {
-  await stopTestServer(handle)
+  await stopTestServer(handle, ['COCKPIT_AUTO_OPEN_BROWSER'])
 })
 
 describe('resolveBoundPort', () => {

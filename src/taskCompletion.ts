@@ -5,7 +5,7 @@ import { deleteRemoteBranch, mergePullRequest, removeWorktreeAndBranch } from '.
 import { findPrNumber, reposDir } from './taskParser.js'
 import type { Task } from './types.js'
 
-type CompletionTask = Pick<Task, 'slug' | 'repo' | 'branch' | 'worktree' | 'reviewRef' | 'stageHistory'>
+type CompletionTask = Pick<Task, 'slug' | 'repo' | 'branch' | 'worktree' | 'reviewRef' | 'stageHistory' | 'prNumber'>
 
 // Extracted verbatim from POST /mark-done/:slug's own body — that route
 // calls this directly, and mergeTask below calls it as its own step 5. It

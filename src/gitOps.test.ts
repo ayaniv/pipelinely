@@ -3,7 +3,7 @@ import { execa } from 'execa'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { mergePullRequest, deleteRemoteBranch, removeWorktreeAndBranch, commitAndRemoveWorktree } from './gitOps.js'
+import { findOpenPrNumberByBranch, mergePullRequest, deleteRemoteBranch, removeWorktreeAndBranch, commitAndRemoveWorktree } from './gitOps.js'
 
 // Defaults to the REAL execa (every existing test above keeps shelling out
 // to real git, unaffected) — a test that needs a deterministic `gh` result
@@ -291,5 +291,39 @@ describe('commitAndRemoveWorktree', () => {
     } finally {
       await fs.rm(notARepo, { recursive: true, force: true })
     }
+  })
+})
+
+describe('findOpenPrNumberByBranch', () => {
+  it('asks GitHub for the open PR whose head is the branch and returns its number', async () => {
+    vi.mocked(execa).mockResolvedValueOnce({ stdout: '[{"number":108}]' } as never)
+    const result = await findOpenPrNumberByBranch('/repo', 'claude/fix-header-ctx-progress-bar')
+    expect(result).toBe('108')
+    expect(execa).toHaveBeenCalledWith(
+      'gh',
+      ['pr', 'list', '--head', 'claude/fix-header-ctx-progress-bar', '--state', 'open', '--json', 'number', '--limit', '1'],
+      { cwd: '/repo' },
+    )
+  })
+
+  it('is null when the branch has no open PR', async () => {
+    vi.mocked(execa).mockResolvedValueOnce({ stdout: '[]' } as never)
+    expect(await findOpenPrNumberByBranch('/repo', 'claude/nothing')).toBeNull()
+  })
+
+  it('is null, and logs, when gh fails', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(execa).mockRejectedValueOnce(new Error('gh: not authenticated'))
+    expect(await findOpenPrNumberByBranch('/repo', 'claude/x')).toBeNull()
+    expect(errorSpy).toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
+
+  it('is null, and logs, when gh returns something that is not the expected JSON', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(execa).mockResolvedValueOnce({ stdout: 'not json' } as never)
+    expect(await findOpenPrNumberByBranch('/repo', 'claude/x')).toBeNull()
+    expect(errorSpy).toHaveBeenCalled()
+    errorSpy.mockRestore()
   })
 })

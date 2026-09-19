@@ -7,6 +7,11 @@ description: Fixes the code-review comments the developer checked off in TRIAGE.
 
 Mirrors `pipelinely-qa-fixes`'s shape: invoked by the developer directly inside the task's own long-lived dev tab, not dispatched from the orchestrator. No `TASK.md`-writing or worktree/tab-creation here.
 
+## Step 0 — Mark this session as working
+
+Before any other step, write `STATUS` so the dashboard doesn't keep showing the prior stage's stale `waiting: ...` text (from `pipelinely-cr`) while this fix session is actively running:
+`echo "working" > ${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<this-task-slug>/STATUS`
+
 ## Step 1 — Read the triage selection
 
 Read `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<this-task-slug>/TRIAGE.json` and `task-pr-review.md` to find which review comments the developer checked. **This is `TRIAGE.json`, not `QA_TRIAGE.json`** — that file holds QA-failure selections for `pipelinely-qa-fixes` instead; the two are deliberately separate sidecars since one task can carry both at once.

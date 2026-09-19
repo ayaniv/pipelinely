@@ -86,7 +86,7 @@ You are my workflow orchestrator. For every task I give you:
 
    Then reset STATUS to `working` and open a fresh tab.
 
-4. **Resolve the tasks dir once, write `launch.sh`, then open an iTerm2 tab.** Resolve `TASKS_DIR` to an absolute path first — `echo "${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}"` — and reuse that literal value everywhere below. `do shell script`, `write text`, and `launch.sh` each run under a *different* shell/profile (`/bin/sh` with no profile, the interactive login zsh, and bash via shebang with no rc sourcing, respectively) — a deferred `${TASKS_DIR:-...}` expression can resolve differently in each and send `ITERM_SESSION`/`TMUX_SESSION`/the worker itself to inconsistent directories if `TASKS_DIR` is ever overridden.
+4. **Resolve the tasks dir once, write `launch.sh`, then open an iTerm2 tab.** Resolve `TASKS_DIR` to an absolute path first — `echo "${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}"` — and reuse that literal value everywhere below. `dispatch-tab.sh`, the new tab's `write text`, and `launch.sh` each run under a *different* shell/profile (this orchestrator's own shell, the interactive login zsh, and bash via shebang with no rc sourcing, respectively) — a deferred `${TASKS_DIR:-...}` expression can resolve differently in each and send `ITERM_SESSION`/`TMUX_SESSION`/the worker itself to inconsistent directories if `TASKS_DIR` is ever overridden. That's why `dispatch-tab.sh` requires `--tasks-dir` and `--launch-script` as absolute paths and refuses relative ones.
 
    Write `<resolved-tasks-dir>/<task-slug>/launch.sh` with the Write tool (literal bytes — no shell-escaping needed, unlike inlining this into an AppleScript string):
    ```bash
@@ -108,45 +108,83 @@ You are my workflow orchestrator. For every task I give you:
 
    The `\$` escaping in `\${REPOS_DIR:-\$HOME/Dev}` prevents bash from expanding these when launch.sh itself is executed; the literal string `${REPOS_DIR:-$HOME/Dev}` reaches the claude prompt unresolved, where it expands later when the worker's own Claude Code session runs a Bash tool command containing that text. Without the escaping, bash would resolve these immediately to the orchestrator's environment values (wrong — we want the worker's values).
 
-   **Collision check — run this before opening the tab:**
+   **Then open the tab with one command — `scripts/dispatch-tab.sh`. Never run the collision check, the STATUS write, or the AppleScript below by hand as separate steps.** Run by hand, the STATUS write kept getting silently dropped on some fraction of dispatches (the orchestrator pattern-matching its own previous tool-call sequence instead of re-reading this procedure), and no amount of rewording this doc fixed that. The script makes skipping it impossible:
+   ```bash
+   bash ~/Dev/pipelinely/scripts/dispatch-tab.sh \
+     --tasks-dir <resolved-tasks-dir> \
+     --slug <task-slug> \
+     --tmux-name worker-<task-slug> \
+     --launch-script <resolved-tasks-dir>/<task-slug>/launch.sh \
+     --claim-pointers yes
+   ```
+   All five flags are required, with no defaults. The Reusable form table below gives each stage's values. The script runs these three steps in order, and they explain what it does and why:
+   - the collision check;
+   - the STATUS write;
+   - the tab open.
+
+   Exit codes:
+   - `0`: the tab opened.
+   - `2`: bad arguments. Nothing was touched.
+   - `3`: `COLLISION`. Nothing was touched.
+   - `1`: this dispatch's command didn't start within 10s. STATUS was restored to what it said before, no pointers were claimed, and the message says which case it was:
+     - osascript failed to open the tab.
+     - The typed command arrived corrupted, for example when a stray keystroke lands in the fresh tab first. Look at that tab before retrying.
+     - The message starts with `COLLISION`: another session took the name between the collision check and the tab opening. Treat it like exit `3`: ask the developer.
+
+   **Collision check (the script's first step):**
 
    ```bash
-   tmux has-session -t =worker-<task-slug> 2>/dev/null && echo COLLISION
+   tmux has-session -t "=<tmux-name>"
    ```
 
-   If it prints `COLLISION`, a tmux session already owns this name. **Stop and ask the developer — do not dispatch and do not kill it.** A live session there is a running Claude process holding real context; killing it is unrecoverable. The two legitimate answers are "that's still working, reattach to it instead" and "that's stale, kill it and dispatch" — and only the developer knows which. (The reuse rule above already retires the session for a re-dispatched `done` task, so reaching `COLLISION` means something unexpected: a slug clash with a live worker, or an orchestrator that restarted and lost its board.)
+   If the script exits `3` with `COLLISION`, a tmux session already owns this name. **Stop and ask the developer — do not dispatch and do not kill it.** A live session there is a running Claude process holding real context; killing it is unrecoverable. The two legitimate answers are "that's still working, reattach to it instead" and "that's stale, kill it and dispatch" — and only the developer knows which. (The reuse rule above already retires the session for a re-dispatched `done` task, so reaching `COLLISION` means something unexpected: a slug clash with a live worker, or an orchestrator that restarted and lost its board.)
 
-   Then open the tab. The orchestrator captures the new tab's **stable iTerm session id** to `ITERM_SESSION`, and the tmux session name to `TMUX_SESSION` — the cockpit's → Terminal button uses both to refocus or reattach:
-   ```applescript
-   tell application "iTerm2"
-     tell current window
-       set newTab to (create tab with default profile)
-       set sid to id of current session of newTab
-       do shell script "echo " & sid & " > <resolved-tasks-dir>/<task-slug>/ITERM_SESSION"
-       do shell script "echo worker-<task-slug> > <resolved-tasks-dir>/<task-slug>/TMUX_SESSION"
-       tell current session of newTab
-         write text "tmux new-session -s worker-<task-slug> \"bash '<resolved-tasks-dir>/<task-slug>/launch.sh'\" || echo COCKPIT_TMUX_COLLISION"
-       end tell
-     end tell
-   end tell
+   **STATUS write (the script's second step).** Once the collision check passes, the script writes `working` to STATUS by absolute path, the same as every other STATUS write in this doc:
+   ```bash
+   echo "working" > <resolved-tasks-dir>/<task-slug>/STATUS
    ```
+   This runs for every dispatch that reaches this point in the shared procedure — ad-hoc, and every `cockpit-*` skill's primary/long-lived or secondary/ephemeral tab alike, per the "Reusable form" subsection below — because it lives here rather than in any one caller. It's what clears a previous stage's leftover `waiting: ...`/`paused: ...` STATUS text before the new session's own reporting takes over: without it, a task continuing from one pipeline stage into the next (e.g. `pipelinely-plan-review` or `pipelinely-dev` opening a fresh tab to carry on work) keeps showing the dashboard the prior stage's stale `waiting: ...` text — genuinely misread as "needs you" — for the entire new stage, even though the new session is actively working and nothing is blocked on a human. (Step 3's ad-hoc flow already writes `working` once, immediately after creating a brand-new task's `TASK.md`, before this point is ever reached — this write is a harmless no-op repeat for that path. The reuse rule above writes it too, for a re-dispatched `done` task. This is the one case neither of those already covers: continuing an *existing*, not-yet-`done` task into its next pipeline stage.)
+
+   **Tab open (the script's third step).** The script opens a new iTerm2 tab and types this into it:
+   ```bash
+   tmux new-session -s <tmux-name> "touch '<per-dispatch ack file>' && exec bash '<launch-script>'" || echo COCKPIT_TMUX_COLLISION
+   ```
+   With `--claim-pointers yes`, it then records two pointers, which the cockpit's → Terminal button uses to refocus or reattach:
+   - the new tab's **stable iTerm session id**, in `ITERM_SESSION`;
+   - the tmux session name, in `TMUX_SESSION`.
+
+   Before claiming anything, the script waits for that ack file. osascript returning only proves the text was sent, not that the typed command ran.
+
+   The ack file is the check rather than `tmux has-session` for two reasons:
+   - Another session that grabbed the same name can't create this dispatch's ack file.
+   - A launch script that exits immediately still leaves its ack behind.
+
+   If osascript fails, or the ack never appears, the script restores STATUS to its previous value. Otherwise a `working` card would show with no session behind it.
 
    No `-A`: the collision check above already confirmed no session owned this name at that moment, but it and this command are two separate steps with real wall-clock time between them (this whole `create tab` round trip), so a same-slug dispatch racing this one can still win in between. `-A` would make tmux silently attach this "new" tab to whatever that other, unrelated session already has running instead of starting `launch.sh` — the worker would sit there typing into a stranger's live conversation with no indication anything was wrong. Plain `tmux new-session` instead fails loudly (a `COCKPIT_TMUX_COLLISION` line printed into the otherwise-empty new tab) on a genuine collision, which the developer or the orchestrator can notice and react to, rather than silently misdirecting a dispatch.
 
    ### Reusable form — every `cockpit-*` skill dispatch uses this too
 
-   The write-`launch.sh` → collision-check → open-tab sequence above is one procedure. Every pipeline-stage dispatch (`pipelinely-planning`, `pipelinely-plan-review`, `pipelinely-dev`, `pipelinely-qa`, `pipelinely-cr`) reuses it exactly rather than each carrying its own copy — they just supply different values for:
+   The sequence above is one procedure:
+   1. Write `launch.sh`.
+   2. Run `scripts/dispatch-tab.sh`.
+
+   Every pipeline-stage dispatch reuses it exactly instead of each carrying its own copy. That covers `pipelinely-planning`, `pipelinely-plan-review`, `pipelinely-dev`, `pipelinely-qa` and `pipelinely-cr`. Each one supplies different values for the parameters in the table below. The `<tmux-name>`, `<launch-script>` and claim rows map directly to the script's `--tmux-name`, `--launch-script` (absolute path, in the task dir) and `--claim-pointers` flags:
 
    | Parameter | Ad-hoc dispatch (above) | Primary/long-lived tab (`pipelinely-planning`, `pipelinely-dev`) | Secondary/ephemeral tab (`pipelinely-plan-review`, `pipelinely-qa`, `pipelinely-cr`) |
    |---|---|---|---|
    | `<tmux-name>` | `worker-<task-slug>` | `worker-<slug>` | `worker-<slug>-<suffix>` (`-review` / `-qa` / `-cr`) — distinct so it can't collide with a still-live primary session |
    | `<launch-script>` | `launch.sh` | `launch.sh` | `launch-<suffix>.sh` — distinct so a secondary dispatch never overwrites the primary tab's own dispatch record |
-   | Claim `ITERM_SESSION`/`TMUX_SESSION`? | yes | yes | **no for `pipelinely-qa`/`pipelinely-cr`** — those pointers must keep pointing at the dev tab; yes for `pipelinely-plan-review` (no primary tab exists yet to protect at that point in the pipeline) |
+   | Claim `ITERM_SESSION`/`TMUX_SESSION`? (`--claim-pointers`) | yes | yes | **no for `pipelinely-qa`/`pipelinely-cr`** — those pointers must keep pointing at the dev tab; yes for `pipelinely-plan-review` (no primary tab exists yet to protect at that point in the pipeline) |
    | Worktree | new (branch is new, per the `git ... checkout -b` flow above) | new — same flow | reuse the existing worktree — no `git worktree add`; the embedded `claude` prompt first `cp`s `TASK.md` from the tasks dir into the worktree, **then** `cd`s into `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>` — see note below |
    | `COCKPIT_STAGE` | whatever the dispatcher sets | `planning` / `dev` | `plan-review` / `qa` / `code-review` |
    | `claude` invocation | `exec claude "<prompt>"` | `exec claude "<prompt>"` (`pipelinely-dev`) / `exec claude --model opus "<prompt>"` (`pipelinely-planning`) | `exec claude --model opus "<prompt>"` (`pipelinely-plan-review` only) / `exec claude "<prompt>"` (`pipelinely-qa`, `pipelinely-cr`) |
 
-   When `ITERM_SESSION`/`TMUX_SESSION` should **not** be claimed, skip the two `do shell script "echo ... > .../ITERM_SESSION"` / `.../TMUX_SESSION` lines in the AppleScript above entirely — everything else (opening the tab, `tmux new-session -s <tmux-name> "bash '<launch-script-path>'" || echo COCKPIT_TMUX_COLLISION`) stays identical.
+   When `ITERM_SESSION`/`TMUX_SESSION` should **not** be claimed, pass `--claim-pointers no`. Everything else stays the same: the collision check, the STATUS write, the tab and its tmux command, and the ack check. The only difference is that the script leaves both pointer files untouched. For example, a `pipelinely-cr` dispatch looks like this:
+   ```bash
+   bash ~/Dev/pipelinely/scripts/dispatch-tab.sh --tasks-dir <resolved-tasks-dir> --slug <slug> \
+     --tmux-name worker-<slug>-cr --launch-script <resolved-tasks-dir>/<slug>/launch-cr.sh --claim-pointers no
+   ```
 
    **Reuse-worktree `TASK.md` refresh — do not drop this, it looks redundant but isn't.** For the reuse-existing-worktree column, the embedded `claude` prompt's first instruction (before the `cd`) must be a literal `cp` of the freshly-written `TASK.md`: `cp "<resolved-tasks-dir>/<slug>/TASK.md" "${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>/TASK.md"`. The worker's own `Read TASK.md` is a **relative path** that resolves against wherever it `cd`s to — so once it's inside the worktree, it reads the worktree's *local* copy, not the tasks-dir source of truth. That local copy was only ever written once, by whichever dispatch first created the worktree (`pipelinely-planning` or a milestone's first `pipelinely-dev`); every later reuse-dispatch (`pipelinely-plan-review`, `pipelinely-qa`, `pipelinely-cr`, and `pipelinely-dev` continuing a flat task past `pipelinely-planning`) writes a *new* `TASK.md` to the tasks dir but never touches the worktree's stale one unless this `cp` step runs first. Skipping it means the fresh session dutifully follows whatever stale `Mode`/`Steps` the leftover local copy contains instead of the current stage's actual instructions. This mirrors the new-worktree path's step (3) "copy TASK.md into the worktree root" — that one runs once at creation; this one must run on **every** reuse dispatch, since the tasks-dir `TASK.md` gets rewritten each time but the worktree copy doesn't update itself.
 

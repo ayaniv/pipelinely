@@ -72,9 +72,9 @@ export default defineConfig({
       // shorter than that real critical section alone, which is exactly
       // what the "two dispatches" test waits out.
       COCKPIT_ORCH_LOCK_TIMEOUT_MS: '10000',
-      // This webServer is a test fixture, not a developer sitting in front
-      // of it — see server.ts's own comment on COCKPIT_SKIP_AUTO_OPEN.
-      COCKPIT_SKIP_AUTO_OPEN: '1',
+      // Browser auto-open is opt-in (COCKPIT_AUTO_OPEN_BROWSER, see
+      // server.ts's own comment) and nothing here sets it, so this webServer
+      // never pops a real browser tab without needing to say so explicitly.
       // Deliberately NOT setting COCKPIT_DISPATCH_ENABLED here — this
       // e2e-launched server must identify as non-canonical, the same as any
       // other process running src/server.ts outside the pipelinely

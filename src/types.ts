@@ -243,6 +243,9 @@ export interface Task {
   waitingReason?: string   // text after "waiting: " prefix (trimmed) — blocked on a decision only the user can make
   pausedReason?: string    // text after "paused: " prefix (trimmed) — the user deliberately set this task aside; distinct from waiting because a "Resume" CTA only makes sense here
   reviewRef?: string       // text after "review: " prefix — a PR URL or number, when the worker recorded one
+  // Resolved server-side from GitHub by branch (see prLookup.ts) when neither
+  // reviewRef nor the TIMELINE names a PR. Never read from a task dir file.
+  prNumber?: string
   doneNote?: string        // text after "done: " prefix (trimmed) — the worker's closing note, e.g. what merged and what didn't
   handoverSession?: number // number parsed from "handover: session #N" pattern
   updatedAt: Date          // mtime of STATUS file

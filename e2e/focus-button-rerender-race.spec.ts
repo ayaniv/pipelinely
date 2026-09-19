@@ -228,6 +228,9 @@ test('backlog list: clicking Waive survives a same-content renderBacklog re-rend
 // page.clock instead of a real wait so a tick is deterministic rather than
 // depending on landing on a real-clock boundary, the same non-determinism
 // that made the "board card" test above flaky before this mechanism existed.
+// The second test below additionally anchors that fake clock to the
+// fixture's own real file mtime rather than real "now" — see its own
+// comment for why.
 test.describe('card-time freshness label', () => {
   test('a card\'s time-ago label populates after render, not left empty', async ({ page }) => {
     await page.goto('/')
@@ -242,21 +245,22 @@ test.describe('card-time freshness label', () => {
     const time = page.locator(`${card} [data-testid="card-time"]`)
     await expect(time).toHaveText(/ago$/)
 
-    // relTime buckets by order of magnitude (s/m/h/d), so "does the label
-    // change after a 1h fast-forward" only holds while the fixture's real
-    // age is still under a day — false once this checkout's own
-    // fixtures/tasks/focus-dead-session/STATUS mtime (relTime's source,
-    // via taskParser.ts's updatedAt) drifts past that, which it inevitably
-    // does the longer this worktree sits (git checkout sets mtime to
-    // checkout time, not any date in the fixture's own content). Pinning
-    // the fake clock to a small, controlled offset from that real mtime —
-    // rather than real Date.now() — decouples this test from however many
-    // days have actually passed since checkout.
-    const statusMtimeMs = (await fs.stat(FOCUS_DEAD_SESSION_STATUS_PATH)).mtimeMs
-    await page.clock.install({ time: statusMtimeMs + 5 * 60_000 }) // pinned "5m ago"
+    // Anchor the fake clock to the fixture's own real STATUS mtime — the
+    // exact value the server reports as this task's updatedAt
+    // (taskParser.ts's `statusStat.mtime`) — instead of leaving `before`
+    // computed against real wall-clock "now". Nothing ever refreshes this
+    // fixture file's mtime, so real elapsed time since it was last
+    // checked out only grows; once that drift passes 24h, `before` lands
+    // in the "d ago" bucket and a further 1-hour fast-forward can never
+    // cross another day boundary, making `after` below deterministically
+    // equal `before` regardless of retries. Forcing a render 2 hours after
+    // the real mtime keeps `before` solidly inside the "h ago" bucket no
+    // matter how long it's been since checkout.
+    const { mtimeMs } = await fs.stat(FOCUS_DEAD_SESSION_STATUS_PATH)
+    const ONE_HOUR_MS = 60 * 60 * 1000
+    await page.clock.install({ time: mtimeMs + 2 * ONE_HOUR_MS })
     await page.evaluate(() => { renderDashboard(currentTasks) })
     const before = await time.textContent()
-    expect(before).toBe('5m ago')
 
     // Tag the actual button DOM node so a replacement (a fresh node from a
     // full innerHTML rewrite) would lose the tag, while an in-place text
@@ -265,9 +269,18 @@ test.describe('card-time freshness label', () => {
       document.querySelector(`${sel} [data-testid="focus-btn"]`).dataset.testStableMarker = '1'
     }, card)
 
-    // +2h reliably crosses the m -> h bucket boundary from the pinned "5m
-    // ago" baseline above, regardless of the real calendar date.
-    await page.clock.fastForward('02:00')
+    // A plain millisecond count, not the '01:00' string this line used to
+    // pass: Playwright's clock.fastForward string format is "[hh:]mm:ss",
+    // so '01:00' parsed as 1 minute 0 seconds, not the 1 hour every
+    // surrounding comment (and this test's own name) describes — the real
+    // root cause of this test's failure, not just the mtime drift above.
+    // A 60s step reliably crossed the "m ago" bucket while the fixture was
+    // fresh, then stopped crossing anything once real drift pushed
+    // `before` into the coarser "h ago"/"d ago" buckets, which is exactly
+    // the failure QA reported. pipelinely-merge-gate.spec.ts's own
+    // `fastForward(10_000)` uses a bare millisecond number for the same
+    // reason: the mm:ss string shorthand reads like hh:mm and isn't.
+    await page.clock.fastForward(ONE_HOUR_MS)
     await page.evaluate(() => { renderDashboard(currentTasks) })
 
     const marker = await page.locator(`${card} [data-testid="focus-btn"]`).getAttribute('data-test-stable-marker')

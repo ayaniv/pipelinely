@@ -58,7 +58,7 @@ const REATTACH_SESSION_NAME = `cockpit-e2e-window-${process.pid}`
 const DEAD_SESSION_ID = 'dead-orchestrator-session-not-real'
 
 // The marker the dispatch command prints when tmux refuses to create the
-// session. Must stay in sync with orchestrator-prompt.md, the handover
+// session. Must stay in sync with scripts/dispatch-tab.sh, the handover
 // skill, and src/focusTab.ts's openAnnotationSession — if the marker is
 // renamed in one place and not the others, the collision is silent again in
 // whichever copy was missed.
@@ -134,6 +134,7 @@ test.describe('tmux dispatch — no copy of the pattern still carries -A', () =>
   // ones at all.
   const DISPATCH_SOURCES = [
     'orchestrator-prompt.md',
+    'scripts/dispatch-tab.sh',
     '.claude/skills/pipelinely-handover/SKILL.md',
     'src/focusTab.ts',
   ]

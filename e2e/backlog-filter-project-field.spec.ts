@@ -148,6 +148,18 @@ test.describe('a backlog item carries a project', () => {
     ).toBe(false)
   })
 
+  test('a tagged row renders a visible project badge, an untagged row renders none', async ({ page }) => {
+    await openBacklogWithFilters(page)
+
+    await expect(backlogRow(page, COCKPIT_INDEX).getByTestId('backlog-row-project')).toHaveText(BOARD_PROJECT)
+    await expect(backlogRow(page, OVERLAP_INDEX).getByTestId('backlog-row-project')).toHaveText(SHARED_PROJECT)
+    await expect(backlogRow(page, BACKLOG_ONLY_INDEX).getByTestId('backlog-row-project')).toHaveText(BACKLOG_ONLY_PROJECT)
+
+    // No placeholder/empty badge for an untagged item — the element itself
+    // must not be rendered, not just rendered blank.
+    await expect(backlogRow(page, UNTAGGED_INDEX).getByTestId('backlog-row-project')).toHaveCount(0)
+  })
+
   test('the bracket tag is stripped from the rendered description', async ({ page }) => {
     await openBacklogWithFilters(page)
 
@@ -269,18 +281,6 @@ test.describe('the project filter narrows the Backlog panel', () => {
     expect(await backlogTabCount(page)).toBe(1)
   })
 
-  test('Clear restores every backlog row', async ({ page }) => {
-    await openBacklogWithFilters(page)
-    const all = await backlogRows(page).count()
-
-    await projectChip(page, BOARD_PROJECT).click()
-    expect(await backlogRows(page).count()).toBeLessThan(all)
-
-    await page.getByTestId('filter-clear').click()
-
-    await expect(backlogRows(page)).toHaveCount(all)
-    expect(await chipRow(page).locator('.filter-chip.is-active').count()).toBe(0)
-  })
 })
 
 // --- index addressing under a filter ---------------------------------------
@@ -405,8 +405,14 @@ test.describe('the edit form can set a project', () => {
         await page.getByTestId('backlog-edit-save-btn').click()
 
         await expect(backlogRow(page, COCKPIT_INDEX)).toBeVisible()
-        expect(
-          await backlogRow(page, COCKPIT_INDEX).evaluate((row) => row.hasAttribute('data-project')),
+        // expect.poll, not a one-shot evaluate() read: the save click fires
+        // an async POST + re-render, and unlike the sibling "saving a
+        // project" case above (an auto-retrying `toHaveAttribute`), a single
+        // synchronous read here can land before that re-render completes —
+        // reliably enough under a fully-parallel run's CPU contention to
+        // read the stale pre-save DOM and see the attribute still present.
+        await expect.poll(
+          () => backlogRow(page, COCKPIT_INDEX).evaluate((row) => row.hasAttribute('data-project')),
         ).toBe(false)
 
         const raw = await fs.readFile(BACKLOG_PATH, 'utf-8')

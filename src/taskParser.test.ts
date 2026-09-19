@@ -305,6 +305,24 @@ describe('findPrNumber', () => {
     expect(findPrNumber(task)).toBe('42')
   })
 
+  it('falls back to the server-resolved prNumber when neither reviewRef nor any dev note names a PR', () => {
+    const task = {
+      reviewRef: undefined,
+      prNumber: '108',
+      stageHistory: [{ stage: 'dev' as const, at: '2026-08-10T12:00:00Z', note: 'PR opened: no number recorded' }],
+    }
+    expect(findPrNumber(task)).toBe('108')
+  })
+
+  it('prefers a PR named in the TIMELINE over the server-resolved prNumber', () => {
+    const task = {
+      reviewRef: undefined,
+      prNumber: '108',
+      stageHistory: [{ stage: 'dev' as const, at: '2026-08-10T12:00:00Z', note: 'PR #42 open' }],
+    }
+    expect(findPrNumber(task)).toBe('42')
+  })
+
   it('is null when neither reviewRef nor any dev note mentions a PR', () => {
     const task = {
       reviewRef: undefined,
@@ -798,6 +816,63 @@ describe('computeStage', () => {
 
   it('is qa when the review approved', () => {
     expect(computeStage({ ...base, status: 'review', reviewVerdict: 'approved' })).toBe('qa')
+  })
+
+  it('a clean QA result advances a TIMELINE pinned at qa to merge', () => {
+    expect(computeStage({
+      ...base,
+      stageHistory: [{ stage: 'qa', at: '2026-08-03T10:00:00Z', note: null }],
+      qaResult: { failed: 0 },
+    })).toBe('merge')
+  })
+
+  it('a failed QA result advances a TIMELINE pinned at qa to qa-fixes', () => {
+    expect(computeStage({
+      ...base,
+      stageHistory: [{ stage: 'qa', at: '2026-08-03T10:00:00Z', note: null }],
+      qaResult: { failed: 2 },
+    })).toBe('qa-fixes')
+  })
+
+  it('does not refine ahead of a dispatched QA that has not reported back yet', () => {
+    expect(computeStage({
+      ...base,
+      stageHistory: [{ stage: 'qa', at: '2026-08-03T10:00:00Z', note: null }],
+      qaResult: null,
+    })).toBe('qa')
+  })
+
+  it('does not drag a qa-fixes task back to qa-fixes-via-merge on a stale clean qaResult', () => {
+    expect(computeStage({
+      ...base,
+      stageHistory: [{ stage: 'qa-fixes', at: '2026-08-03T11:00:00Z', note: null }],
+      qaResult: { failed: 0 },
+    })).toBe('qa-fixes')
+  })
+
+  it('leaves a TIMELINE already at merge unchanged by a clean qaResult', () => {
+    expect(computeStage({
+      ...base,
+      stageHistory: [{ stage: 'merge', at: '2026-08-03T12:00:00Z', note: null }],
+      qaResult: { failed: 0 },
+    })).toBe('merge')
+  })
+
+  it('does not let a qaResult refine any non-qa stage', () => {
+    expect(computeStage({
+      ...base,
+      stageHistory: [{ stage: 'dev', at: '2026-08-03T09:00:00Z', note: null }],
+      qaResult: { failed: 0 },
+    })).toBe('dev')
+  })
+
+  it('the done gate still wins over a qa-refining qaResult', () => {
+    expect(computeStage({
+      ...base,
+      status: 'done',
+      stageHistory: [{ stage: 'qa', at: '2026-08-03T10:00:00Z', note: null }],
+      qaResult: { failed: 0 },
+    })).toBeNull()
   })
 
   it('is qa-fixes when QA found failures', () => {

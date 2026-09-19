@@ -61,7 +61,7 @@ When this session grows long, proactively suggest `/pipelinely-handover` before 
 Write by **absolute path**. When you need input: `echo "waiting: <reason>" > ${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>/STATUS`. When the PR is open: `echo "waiting: PR open, ready for CR" > ${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>/STATUS` — **not** `done`. `done` is reserved for after the whole pipeline (through merge) completes; marking this `done` early would hide it from `pipelinely-cr`/`pipelinely-qa`.
 
 ## Pipeline artifact reporting (required)
-- **TIMELINE** — `echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) dev <PR note>" >> ${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>/TIMELINE`
+- **TIMELINE** — `echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) dev PR #<number> opened: <title>" >> ${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>/TIMELINE` — **always include the PR number** (`PR #<number>`, or the full `.../pull/<number>` URL). The dashboard reads it from here to show the PR link and enable the Merge button; a note without it only works because the server falls back to a slower GitHub lookup by branch.
 
 ## Metrics reporting (required)
 Periodically run `bash ~/Dev/pipelinely/scripts/write-metrics.sh` so the dashboard's CTX/MODEL/TOKENS/COST tiles stay live.

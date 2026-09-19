@@ -133,7 +133,10 @@ test.describe('session card', () => {
     await page.goto('/')
 
     const card = page.locator(`[data-testid="task-card"][data-slug="${METRICS_SLUG}"]`)
-    await card.getByTestId('card-open-detail').click()
+    // The design-v2 follow-up round replaced the header's open-detail arrow
+    // with the design's terminal button, leaving the card title as the
+    // board's open-detail affordance.
+    await card.locator('.card-title').click()
 
     await expect(page.getByTestId('task-detail')).toBeVisible()
     const meta = page.getByTestId('detail-meta')
@@ -163,9 +166,10 @@ test.describe('session card', () => {
     await page.goto('/')
 
     // resume-dead-session has no dispatchable next stage (paused, not
-    // 'waiting') — cardFooterHtml falls back to a plain "Review" CTA, still
-    // the one primary button; the terminal icon beside it (resume-btn, since
-    // status is paused) is a secondary, un-primaried affordance.
+    // 'waiting') — cardFooterHtml falls back to its "See details" CTA, still
+    // the one primary button; the terminal icon (resume-btn, since status is
+    // paused) is a secondary, un-primaried affordance, in the card's header
+    // row rather than beside the CTA as of the design-v2 follow-up round.
     const card = page.locator('[data-testid="task-card"][data-slug="resume-dead-session"]')
     await expect(card).toBeVisible()
     await expect(card.getByTestId('card-cta-btn')).toHaveAttribute('data-primary', 'true')

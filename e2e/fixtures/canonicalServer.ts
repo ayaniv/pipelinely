@@ -46,10 +46,6 @@ export async function startCanonicalServer(): Promise<string> {
       REPOS_DIR,
       WORKTREES_DIR,
       PORT: '0',
-      // This is a test fixture, not a developer sitting in front of it — see
-      // server.ts's own comment on COCKPIT_SKIP_AUTO_OPEN. Without this,
-      // every start pops open a real browser tab on the developer's desktop.
-      COCKPIT_SKIP_AUTO_OPEN: '1',
     },
     reject: false, // a kill() on teardown must not surface as an unhandled rejection
   })

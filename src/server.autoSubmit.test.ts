@@ -26,6 +26,7 @@ import { firstNonLoopbackIPv4 } from './testNetwork.js'
 const stageInSessionCalls: { sessionId: string; text: string }[] = []
 const pasteIntoSessionQuietCalls: { sessionId: string; text: string }[] = []
 const pasteIntoSessionCalls: { sessionId: string; text: string }[] = []
+const trackedPasteCalls: { target: unknown; text: string; options: unknown }[] = []
 
 // Spreads the real module and overrides only the exports that actually shell
 // out to osascript/tmux. Listing the fakes by hand instead would silently
@@ -69,7 +70,16 @@ vi.mock('./focusTab.js', async (importOriginal) => ({
   openVSCode: vi.fn(async () => undefined),
   openBrowserUrl: vi.fn(async () => undefined),
   openAnnotationSession: vi.fn(async () => ({ status: 'error' as const, error: 'not exercised in this suite' })),
-  pasteIntoTrackedSession: vi.fn(async () => ({ status: 'no-session' as const, hadRecordedSession: false })),
+  // Own-session-target stage-skill routes through this, not stageInSession/
+  // pasteIntoSessionQuiet directly any more (see server.ts's own comment) —
+  // defaults to a live-session success so the existing "staged"/"submitted"
+  // cases below need no change beyond asserting against trackedPasteCalls
+  // instead. Individual tests override with mockResolvedValueOnce/
+  // mockImplementationOnce for the reattach/failure branches.
+  pasteIntoTrackedSession: vi.fn((target: unknown, text: string, options: unknown) => {
+    trackedPasteCalls.push({ target, text, options })
+    return Promise.resolve({ status: 'ok' as const, reattached: false })
+  }),
 }))
 
 const ORCHESTRATOR_SESSION_ID = 'orchestrator-session-id'
@@ -190,6 +200,13 @@ beforeEach(async () => {
   stageInSessionCalls.length = 0
   pasteIntoSessionQuietCalls.length = 0
   pasteIntoSessionCalls.length = 0
+  trackedPasteCalls.length = 0
+  const { pasteIntoTrackedSession } = await import('./focusTab.js')
+  vi.mocked(pasteIntoTrackedSession).mockReset()
+  vi.mocked(pasteIntoTrackedSession).mockImplementation((target: unknown, text: string, options: unknown) => {
+    trackedPasteCalls.push({ target, text, options })
+    return Promise.resolve({ status: 'ok' as const, reattached: false })
+  })
   // No ORCHESTRATOR_TMUX on purpose: with no live tmux session recorded,
   // writeToOrchestrator takes its fast path and writes to the recorded tab
   // directly, which is the branch these cases are about.
@@ -276,23 +293,36 @@ describe('POST /stage-skill/:slug — orchestrator-target stage (dev)', () => {
 })
 
 describe('POST /stage-skill/:slug — own-session-target stage (qa-fixes)', () => {
-  it('a LOOPBACK request carrying autoSubmit:true is still only staged', async () => {
+  // Routed through pasteIntoTrackedSession, not stageInSession/
+  // pasteIntoSessionQuiet directly — see server.ts's own comment on why
+  // (reattach-and-retry resilience, same helper /pipelinely-handover/:slug uses).
+  it('a LOOPBACK request carrying autoSubmit:true is still only staged (submit:false, focus:true)', async () => {
     const res = await postStageSkill(loopbackUrl, OWN_SESSION_SLUG, { stage: 'qa-fixes', autoSubmit: true })
 
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ submitted: false })
-    expect(stageInSessionCalls).toEqual([{ sessionId: OWN_SESSION_ID, text: '/pipelinely-qa-fixes' }])
+    expect(trackedPasteCalls).toHaveLength(1)
+    expect(trackedPasteCalls[0].text).toBe('/pipelinely-qa-fixes')
+    expect(trackedPasteCalls[0].options).toEqual({ submit: false, focus: true })
+    expect(trackedPasteCalls[0].target).toEqual({
+      sessionId: OWN_SESSION_ID,
+      tmuxSession: null,
+      sessionFilePath: path.join(tmpDir, OWN_SESSION_SLUG, 'ITERM_SESSION'),
+    })
+    expect(stageInSessionCalls).toEqual([])
     expect(pasteIntoSessionQuietCalls).toEqual([])
     expect(pasteIntoSessionCalls).toEqual([])
   })
 
-  it.skipIf(lanAddress === null)('a remote request carrying autoSubmit:true is submitted, quietly', async () => {
+  it.skipIf(lanAddress === null)('a remote request carrying autoSubmit:true is submitted, quietly (submit:true, focus:false)', async () => {
     const res = await postStageSkill(remoteUrl(), OWN_SESSION_SLUG, { stage: 'qa-fixes', autoSubmit: true })
 
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ submitted: true })
-    expect(pasteIntoSessionQuietCalls).toEqual([{ sessionId: OWN_SESSION_ID, text: '/pipelinely-qa-fixes' }])
+    expect(trackedPasteCalls).toHaveLength(1)
+    expect(trackedPasteCalls[0].options).toEqual({ submit: true, focus: false })
     expect(stageInSessionCalls).toEqual([])
+    expect(pasteIntoSessionQuietCalls).toEqual([])
     expect(pasteIntoSessionCalls).toEqual([])
   })
 
@@ -301,7 +331,56 @@ describe('POST /stage-skill/:slug — own-session-target stage (qa-fixes)', () =
 
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ submitted: false })
-    expect(stageInSessionCalls).toHaveLength(1)
-    expect(pasteIntoSessionQuietCalls).toEqual([])
+    expect(trackedPasteCalls).toHaveLength(1)
+    expect(trackedPasteCalls[0].options).toEqual({ submit: false, focus: true })
+  })
+
+  // The actual bug this branch used to have: a closed tab whose tmux session
+  // is still alive no longer flatly refuses — pasteIntoTrackedSession
+  // reattaches it, and the route reports success either way.
+  it('200 when the result is { status: "ok", reattached: true } — the reattach-then-retry case', async () => {
+    const { pasteIntoTrackedSession } = await import('./focusTab.js')
+    vi.mocked(pasteIntoTrackedSession).mockResolvedValueOnce({ status: 'ok', reattached: true })
+
+    const res = await postStageSkill(loopbackUrl, OWN_SESSION_SLUG, { stage: 'qa-fixes' })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ submitted: false })
+  })
+
+  it('409 with { reattached: true } on reattach-paste-failed, and logs it', async () => {
+    const { pasteIntoTrackedSession } = await import('./focusTab.js')
+    vi.mocked(pasteIntoTrackedSession).mockResolvedValueOnce({ status: 'reattach-paste-failed' })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    try {
+      const res = await postStageSkill(loopbackUrl, OWN_SESSION_SLUG, { stage: 'qa-fixes' })
+      expect(res.status).toBe(409)
+      const body = await res.json()
+      expect(body.reattached).toBe(true)
+      expect(body.error).toContain('the command still failed to stage')
+      expect(errorSpy).toHaveBeenCalled()
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+
+  it('503 on no-session, with hadRecordedSession=true wording — the tab is gone and there is no live tmux session to reattach', async () => {
+    const { pasteIntoTrackedSession } = await import('./focusTab.js')
+    vi.mocked(pasteIntoTrackedSession).mockResolvedValueOnce({ status: 'no-session', hadRecordedSession: true })
+
+    const res = await postStageSkill(loopbackUrl, OWN_SESSION_SLUG, { stage: 'qa-fixes' })
+    expect(res.status).toBe(503)
+    const body = await res.json()
+    expect(body.error).toContain("own tab not found")
+  })
+
+  it('503 on no-session, with hadRecordedSession=false wording — never had a session recorded at all', async () => {
+    const { pasteIntoTrackedSession } = await import('./focusTab.js')
+    vi.mocked(pasteIntoTrackedSession).mockResolvedValueOnce({ status: 'no-session', hadRecordedSession: false })
+
+    const res = await postStageSkill(loopbackUrl, OWN_SESSION_SLUG, { stage: 'qa-fixes' })
+    expect(res.status).toBe(503)
+    const body = await res.json()
+    expect(body.error).toContain('has no recorded session to stage into')
   })
 })
