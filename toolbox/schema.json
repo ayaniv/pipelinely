@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ayaniv/pipelinely/blob/main/toolbox/schema.json",
+  "title": "Pipelinely Toolbox registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tools"],
+  "properties": {
+    "tools": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/tool" }
+    }
+  },
+  "$defs": {
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "description", "url", "stage", "type"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "description": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "url": { "type": "string", "format": "uri", "pattern": "^https://" },
+        "stage": { "enum": ["planning", "dev", "code-review", "qa"] },
+        "type": { "enum": ["tool", "skill", "plugin", "integration"] },
+        "author": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}
