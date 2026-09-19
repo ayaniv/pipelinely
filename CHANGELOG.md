@@ -13,6 +13,10 @@ private development history, going back to the first commit on 2026-06-27,
 included so the arc of how this got built is visible rather than starting
 from a blank slate.
 
+## 2026-09-19
+
+- [#3](https://github.com/ayaniv/pipelinely/pull/3) Add dispatch-tab.sh, card Merge CTA, You tab and /help feedback page
+
 ## 2026-09-16
 
 - Scrubbed the private tree, added a leak-check gate, and built the
