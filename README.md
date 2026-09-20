@@ -251,3 +251,9 @@ truth for state; a missing `STATUS` is treated as `working`. The current
 pipeline **stage** (`planning` / `plan-review` / `dev` / `qa` / `qa-fixes` /
 `code-review` / `comment-fix` / `merge`) is computed from `TIMELINE`, not
 stored — see `computeStage` in `src/taskParser.ts`.
+
+### Community Toolbox
+
+A small curated list of skills, plugins and tools that fit an agentic pipeline
+lives at [pipelinely.cc/toolbox](https://pipelinely.cc/toolbox). To add one, see
+[CONTRIBUTING.md](CONTRIBUTING.md#add-to-the-toolbox).

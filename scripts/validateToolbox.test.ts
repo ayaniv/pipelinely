@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { execa } from 'execa'
 import fs from 'node:fs'
 import path from 'node:path'
 import { validateToolbox } from './validateToolbox.js'
@@ -95,10 +96,69 @@ describe('validateToolbox', () => {
       expect(validateToolbox('tools: nope\n', schema).join('\n')).toContain('/tools')
     })
 
+    it('points a schema error at its line in registry.yml', () => {
+      const errors = validateToolbox(registryOf(validEntry.replace('stage: dev', 'stage: shipping')), schema)
+      expect(errors.join('\n')).toContain('(line 6)')
+    })
+
+    it('points a missing-field error at the entry it belongs to', () => {
+      const errors = validateToolbox(registryOf(validEntry.replace(/ {4}name: .*\n/, '')), schema)
+      expect(errors.join('\n')).toContain('(line 2)')
+    })
+
+    it('points a duplicate-id error at the repeated id', () => {
+      const errors = validateToolbox(registryOf(validEntry + validEntry), schema)
+      expect(errors.join('\n')).toContain('duplicate id "some-tool" (line 8)')
+    })
+
     it('reports invalid YAML with a line number', () => {
       const errors = validateToolbox('tools:\n  - id: [unclosed\n', schema)
       expect(errors).toHaveLength(1)
       expect(errors[0]).toMatch(/YAML parse error.*line \d+/)
     })
+  })
+})
+
+describe('validate:toolbox CLI', () => {
+  const REPO_ROOT = path.join(import.meta.dirname, '..')
+  const TSX_BIN = path.join(REPO_ROOT, 'node_modules', '.bin', 'tsx')
+  const EXIT_INVALID = 1
+  let checkoutDir: string
+
+  // The directory name has a space on purpose: the entry-point guard once
+  // compared a percent-encoded file URL to a raw path and silently never ran.
+  beforeEach(() => {
+    checkoutDir = fs.mkdtempSync(path.join(REPO_ROOT, 'cli check '))
+    fs.mkdirSync(path.join(checkoutDir, 'scripts'))
+    fs.mkdirSync(path.join(checkoutDir, 'toolbox'))
+    fs.copyFileSync(path.join(import.meta.dirname, 'validateToolbox.ts'), path.join(checkoutDir, 'scripts', 'validateToolbox.ts'))
+    fs.copyFileSync(path.join(TOOLBOX_DIR, 'schema.json'), path.join(checkoutDir, 'toolbox', 'schema.json'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(checkoutDir, { recursive: true, force: true })
+  })
+
+  const runCli = (registryYaml?: string) => {
+    if (registryYaml !== undefined) fs.writeFileSync(path.join(checkoutDir, 'toolbox', 'registry.yml'), registryYaml)
+    return execa(TSX_BIN, [path.join(checkoutDir, 'scripts', 'validateToolbox.ts')], { reject: false })
+  }
+
+  it('exits 0 and reports valid for the real registry', async () => {
+    const result = await runCli(realRegistryYaml)
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('is valid')
+  })
+
+  it('exits non-zero and prints the error for an invalid registry', async () => {
+    const result = await runCli(registryOf(VALID_ENTRY.replace('id: some-tool', 'id: BAD')))
+    expect(result.exitCode).toBe(EXIT_INVALID)
+    expect(result.stderr).toContain('/tools/0/id')
+  })
+
+  it('exits non-zero when the registry file is missing', async () => {
+    const result = await runCli()
+    expect(result.exitCode).toBe(EXIT_INVALID)
+    expect(result.stderr).toContain('failed to run')
   })
 })

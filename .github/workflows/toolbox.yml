@@ -5,6 +5,8 @@ name: Toolbox
 # pings the Vercel Deploy Hook so pipelinely-marketing rebuilds /toolbox with
 # the new registry.
 on:
+  # Path-filtered, so keep `validate` advisory: making it a required check would
+  # block PRs that never touch these paths (it would never report).
   pull_request:
     paths:
       - 'toolbox/**'
@@ -58,4 +60,4 @@ jobs:
             echo "::error::VERCEL_DEPLOY_HOOK_URL not configured (see PR description)"; exit 1
           fi
           # The hook URL is itself the credential; drop the response body so nothing lands in logs.
-          curl -fsS -X POST "$VERCEL_DEPLOY_HOOK_URL" > /dev/null
+          curl -fsS --max-time 30 --retry 3 --retry-all-errors -X POST "$VERCEL_DEPLOY_HOOK_URL" > /dev/null
