@@ -77,4 +77,7 @@ function runCli(): void {
   }
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) runCli()
+// import.meta.url resolves symlinks (Node reports the realpath of the loaded
+// module), but process.argv[1] keeps whatever path was invoked — so a symlinked
+// entry point must be resolved the same way before comparing the two.
+if (import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) runCli()

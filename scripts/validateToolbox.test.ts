@@ -161,4 +161,16 @@ describe('validate:toolbox CLI', () => {
     expect(result.exitCode).toBe(EXIT_INVALID)
     expect(result.stderr).toContain('failed to run')
   })
+
+  it('runs the entry-point guard through a symlink to the script', async () => {
+    // import.meta.url reports the realpath of the loaded module, but
+    // process.argv[1] keeps the symlink path — the guard must resolve both
+    // the same way or it silently never runs.
+    fs.writeFileSync(path.join(checkoutDir, 'toolbox', 'registry.yml'), registryOf(VALID_ENTRY.replace('id: some-tool', 'id: BAD')))
+    const symlinkPath = path.join(checkoutDir, 'validate-link.ts')
+    fs.symlinkSync(path.join(checkoutDir, 'scripts', 'validateToolbox.ts'), symlinkPath)
+    const result = await execa(TSX_BIN, [symlinkPath], { reject: false })
+    expect(result.exitCode).toBe(EXIT_INVALID)
+    expect(result.stderr).toContain('/tools/0/id')
+  })
 })
