@@ -8,7 +8,8 @@
     "pipelinely-merge": "tsx src/pipelinelyMergeCli.ts",
     "pipelinely-onboard": "tsx src/pipelinelyOnboardCli.ts",
     "test:e2e": "playwright test --project=ui",
-    "test:e2e:integration": "bash scripts/e2e-integration/run.sh"
+    "test:e2e:integration": "bash scripts/e2e-integration/run.sh",
+    "validate:toolbox": "tsx scripts/validateToolbox.ts"
   },
   "main": "src/server.ts",
   "dependencies": {
@@ -21,8 +22,11 @@
     "@playwright/test": "^1.62.1",
     "@types/express": "^4.17.21",
     "@types/node": "^20.10.6",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
     "tsx": "^4.7.0",
     "typescript": "^5.3.3",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.9",
+    "yaml": "^2.9.1"
   }
 }

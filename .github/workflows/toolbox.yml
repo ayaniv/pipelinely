@@ -1,0 +1,63 @@
+name: Toolbox
+
+# `validate` runs on PRs (pull_request, not pull_request_target, so fork PRs
+# never see secrets — and it needs none). `deploy` re-validates on main, then
+# pings the Vercel Deploy Hook so pipelinely-marketing rebuilds /toolbox with
+# the new registry.
+on:
+  # Path-filtered, so keep `validate` advisory: making it a required check would
+  # block PRs that never touch these paths (it would never report).
+  pull_request:
+    paths:
+      - 'toolbox/**'
+      - 'scripts/validateToolbox*.ts'
+      - '.github/workflows/toolbox.yml'
+      - 'package.json'
+      - 'package-lock.json'
+  push:
+    branches: [main]
+    paths:
+      - 'toolbox/registry.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run validate:toolbox
+      - run: npx vitest run scripts/validateToolbox.test.ts
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: toolbox-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run validate:toolbox
+
+      - name: Trigger pipelinely-marketing rebuild
+        env:
+          VERCEL_DEPLOY_HOOK_URL: ${{ secrets.VERCEL_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$VERCEL_DEPLOY_HOOK_URL" ]; then
+            echo "::error::VERCEL_DEPLOY_HOOK_URL not configured (see PR description)"; exit 1
+          fi
+          # The hook URL is itself the credential; drop the response body so nothing lands in logs.
+          curl -fsS --max-time 30 --retry 3 --retry-all-errors -X POST "$VERCEL_DEPLOY_HOOK_URL" > /dev/null
