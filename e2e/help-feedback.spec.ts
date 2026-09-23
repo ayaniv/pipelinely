@@ -228,6 +228,14 @@ test.describe('Help page — Send stages the feedback command', () => {
     await expect(messageInput(page)).toHaveValue('')
     expect(posts.feedback).toEqual([{ message: MESSAGE }])
   })
+
+  test('a Contact support mailto link is offered alongside the composer', async ({ page }) => {
+    await openHelpFromSidebar(page)
+
+    const link = page.getByTestId('help-support-link')
+    await expect(link).toBeVisible()
+    await expect(link).toHaveAttribute('href', 'mailto:ayaniv@gmail.com?subject=pipelinely')
+  })
 })
 
 test.describe('Help page — Send reports failures honestly', () => {
