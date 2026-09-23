@@ -151,108 +151,14 @@ Two optional installers under `dotfiles/`, alongside the existing
 Both refuse to run, with an install hint, if their required binary (`tmux`,
 the `plannotator` CLI) isn't on `PATH` yet.
 
-## How it works
+## Learn more
 
-1. `/pipelinely` turns the current tab into the **orchestrator**. It
-   never does task work itself — every task, however small, gets dispatched
-   to its own worker. Before writing `TASK.md` it checks the free-text
-   `WEEKLY_FOCUS` banner (set from the dashboard) and asks the developer to
-   confirm if a new task doesn't obviously fit it.
-2. **Planning** (`pipelinely-planning`) explores the target repo in a fresh
-   Opus 5 session, decides whether the work splits into milestones, names a
-   real verifier, writes runnable e2e tests, and writes `tech-design.md`.
-3. **Plan Review** (`pipelinely-plan-review`) dispatches a *second*, independent
-   Opus 5 session — one that has never seen the plan being written — to
-   review it cold and revise it in place. This can run several rounds; each
-   round's outcome is logged to `TIMELINE`. The developer can also open the
-   plan in **Plannotator** (`/annotate-plan/:slug` → a dedicated, ephemeral
-   tmux/iTerm2 tab running `/plannotator-annotate`) to leave inline visual
-   feedback on `tech-design.md` before Dev is allowed to start — deliberately
-   never the orchestrator's own session, since Plannotator blocks
-   synchronously on the browser round-trip.
-4. **Dev** (`pipelinely-dev`) creates the task's git worktree and branch, opens
-   its own long-lived tab, and implements test-driven through to an opened
-   PR. Every dispatched `TASK.md` carries the constraints from
-   `docs/engineering-constraints.md` verbatim.
-5. **QA** (`pipelinely-qa`) and **Code Review** (`pipelinely-cr`) each run in a
-   fresh session against the live PR — QA runs the e2e suite and writes
-   `QA_REPORT.md`; CR runs a diff-based code review and writes `task-pr-review.md`.
-   Neither ever claims the task's `ITERM_SESSION`/`TMUX_SESSION`, so
-   → Terminal always points back at the dev tab. Failing QA cases and
-   review comments are triaged from the dashboard (`QA_TRIAGE.json` /
-   `TRIAGE.json`) — the developer picks what's worth fixing.
-6. **QA fixes** / **Comment fixes** run back in the dev's own tab (context
-   helps here, unlike the review stages), then hand off to a fresh QA/CR
-   re-run. A stage with nothing worth acting on can be skipped from the
-   dashboard instead of dispatching a fixer.
-7. **Merge** is the one stage with no skill, deliberately — the developer
-   clicks Merge on the dashboard, which runs a real `gh pr merge` and
-   surfaces failures (not mergeable, checks pending, conflicts) verbatim.
-8. Multi-milestone work fans out: each milestone (`<parent>-m<N>`) runs its
-   own copy of this same pipeline, waits on any `needs:` dependency to reach
-   `merge`, and rolls up into one parent card with a global progress bar.
-9. Every worker's tab/tmux session is named and durable — the dashboard
-   detects an orphaned session (tab closed, tmux still alive) and offers to
-   reattach or refocus; **→ Terminal** always finds the tab by its stable
-   iTerm session id, not by name.
-10. The **dashboard** watches `TASKS_DIR`, pushes live updates over SSE, and
-    gives each task a shareable `/task/<slug>` page across three tabs —
-    Backlog, In Progress, Done (Done split into per-date cards). From there:
-    → Terminal, VS Code, Browse App (dev URL), Open PR, Merge, Skip stage,
-    and the QA/CR triage checklists.
+How the pipeline stages work, the dashboard's own UI, the full skills
+reference, every configuration env var, and the task directory layout all
+live in the [user guide](https://pipelinely.cc/docs) — kept in one place so
+it can't drift out of sync with this README.
 
-## Configuration
-
-All optional — sensible defaults shown. Set in your shell profile so both
-the server and the skills agree.
-
-| Env var | Default | What |
-|---|---|---|
-| `TASKS_DIR` | `~/Dev/pipelinely/tasks` | Where task state lives (gitignored, but pipeline artifacts are allow-listed so history survives). The server watches it; every skill reads/writes to it. |
-| `REPOS_DIR` | `~/Dev` | Base dir where code repos are cloned (`$REPOS_DIR/<repo>`). |
-| `WORKTREES_DIR` | `~/Dev/worktrees` | Base dir for per-task git worktrees (`$WORKTREES_DIR/<slug>`). |
-| `PORT` | `3030` | Dashboard port. |
-| `COCKPIT_TASK_SLUG` | _(set per worker tab)_ | Set by each stage's `launch.sh` when it opens a tab; the statusline hook and `write-metrics.sh` use it to write that session's `METRICS-<session-id>.json`. |
-| `COCKPIT_STAGE` | _(set per worker tab)_ | The pipeline stage this session is running (`planning`, `qa`, …). Labels the session's row in the dashboard's per-session breakdown; `null` for a hand-started tab. |
-
-## Task directory layout
-
-Each task is a folder under `TASKS_DIR`:
-
-```
-<TASKS_DIR>/<slug>/
-  TASK.md           # the task brief (Workspace, Mode, Context, Steps, …)
-  STATUS            # "working" | "waiting: <reason>" | "paused: <reason>" |
-                     # "review" | "review: <PR url or number>" | "done" |
-                     # "handover: session #N — …"
-  METRICS           # { contextPct, model, inputTokens, outputTokens } — current session
-  METRICS-N.json    # historical snapshots (handover cost tracking)
-  METRICS-<session-id>.json  # one per Claude session: stage, context, tokens, startedAt/updatedAt
-  ITERM_SESSION     # stable iTerm2 session id for → Terminal focus
-  TMUX_SESSION      # named tmux session backing that tab — survives the tab closing
-  HANDOVER-N.md     # continuation context written by /pipelinely-handover
-  DEV_URL           # optional — enables the Browse App button
-  VERIFY            # the command or target that decides whether this task is done
-  TIMELINE          # append-only "<ISO> <stage> [note]" lines — the task's stage history
-  tech-design.md    # the plan; a "## Milestones" section here turns on the milestone fan-out view
-  QA_REPORT.md      # QA's result — the "<n> of <m> cases failed" headline plus Failing Cases and Passing Cases lists (the full case list, not just failures)
-  task-pr-review.md # the code review's verdict and its Must Fix / Should Fix bullets
-  TRIAGE.json       # which review findings the human selected for a fixer agent
-  QA_TRIAGE.json    # which failing QA cases the human selected — a separate sidecar, since a task can carry both
-  launch.sh          # the shell command each stage's tab was opened running (exports COCKPIT_TASK_SLUG/COCKPIT_STAGE)
-  launch-annotate.sh # written by /annotate-plan — opens Plannotator against this task's tech-design.md
-
-<TASKS_DIR>/WEEKLY_FOCUS  # plain-text banner shown at the top of the dashboard, edited in-place from the UI
-<TASKS_DIR>/BACKLOG.md    # "- [ ] [<project>] <description> (<date>)" lines — [<project>] optional; not tasks yet, promoted via the dashboard's backlog panel
-```
-
-`model` may be a string or `{ id, display_name }`. `STATUS` is the source of
-truth for state; a missing `STATUS` is treated as `working`. The current
-pipeline **stage** (`planning` / `plan-review` / `dev` / `qa` / `qa-fixes` /
-`code-review` / `comment-fix` / `merge`) is computed from `TIMELINE`, not
-stored — see `computeStage` in `src/taskParser.ts`.
-
-### Community Toolbox
+## Community Toolbox
 
 A small curated list of skills, plugins and tools that fit an agentic pipeline
 lives at [pipelinely.cc/toolbox](https://pipelinely.cc/toolbox). To add one, see

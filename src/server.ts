@@ -119,6 +119,15 @@ const PORT = parseInt(process.env.PORT ?? String(defaultPortForCwd(process.cwd()
 // runs (see stageScope.ts's own comment on the symlink chain).
 const SKILLS_DIR = path.join(__dirname, '..', '.claude', 'skills')
 const ENGINEERING_CONSTRAINTS_PATH = path.join(__dirname, '..', 'docs', 'engineering-constraints.md')
+// Read live (not cached at module load), mirroring reposDir()/worktreesDir()
+// in taskParser.ts — the one other way to swap in a fixture would be
+// mutating the real docs/user-guide.md, which would race docsGuide.test.ts
+// reading it in a concurrent vitest worker.
+function docsGuidePath(): string {
+  return process.env.DOCS_GUIDE_PATH
+    ? path.resolve(process.env.DOCS_GUIDE_PATH)
+    : path.join(__dirname, '..', 'docs', 'user-guide.md')
+}
 const WEEKLY_FOCUS_PATH = path.join(TASKS_DIR, 'WEEKLY_FOCUS')
 // BACKLOG.md is a sibling file at the top of TASKS_DIR, not a task
 // subdirectory — parsed separately from parseAllTasks.
@@ -625,6 +634,12 @@ app.get('/help', (_, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'))
 })
 
+// GET /docs — same dashboard shell, opened straight into the Docs page
+// (mirrors GET /help's own reasoning).
+app.get('/docs', (_, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'))
+})
+
 // GET /backlog, GET /done, GET /you — same dashboard shell, opened straight
 // into that board tab. '/' itself is the fourth board tab (In Progress) —
 // see the client's own DEFAULT_TAB/tabUrl, which is why it doesn't need a
@@ -1078,6 +1093,28 @@ app.get('/api/stage-scope', async (_, res) => {
     res.json({ stages: await loadStageScopes(SKILLS_DIR, ENGINEERING_CONSTRAINTS_PATH) })
   } catch (err) {
     console.error('Failed to load stage scopes:', err)
+    res.sendStatus(500)
+  }
+})
+
+// GET /api/docs — the user guide (docs/user-guide.md), rendered through the
+// same renderMarkdownToHtml the Plan tab's GET /tech-design/:slug already
+// uses. 404 when the file is missing (a checkout that predates it, or a
+// guide not yet published downstream); 500 on any other read failure. No
+// server-side cache: the file is read per request, so an edit shows up the
+// next time the Docs page opens with no restart, matching /api/stage-scope's
+// reasoning above. No slug or user input reaches the path, so there is no
+// traversal surface.
+app.get('/api/docs', async (_, res) => {
+  try {
+    const raw = await fs.readFile(docsGuidePath(), 'utf-8').catch((err: NodeJS.ErrnoException) => {
+      if (err.code === 'ENOENT') return null
+      throw err
+    })
+    if (raw === null) return res.sendStatus(404)
+    res.json({ html: renderMarkdownToHtml(raw) })
+  } catch (err) {
+    console.error('Failed to read docs/user-guide.md:', err)
     res.sendStatus(500)
   }
 })

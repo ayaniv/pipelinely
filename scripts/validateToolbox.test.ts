@@ -6,7 +6,6 @@ import { validateToolbox } from './validateToolbox.js'
 
 const TOOLBOX_DIR = path.join(import.meta.dirname, '..', 'toolbox')
 const schema = JSON.parse(fs.readFileSync(path.join(TOOLBOX_DIR, 'schema.json'), 'utf8'))
-const realRegistryYaml = fs.readFileSync(path.join(TOOLBOX_DIR, 'registry.yml'), 'utf8')
 
 const VALID_ENTRY = `  - id: some-tool
     name: Some Tool
@@ -17,6 +16,10 @@ const VALID_ENTRY = `  - id: some-tool
 `
 
 const registryOf = (entries: string): string => `tools:\n${entries}`
+// cockpit-ai has no toolbox/registry.yml of its own (that content is
+// pipelinely-only) — this fixture stands in for it wherever the original,
+// pipelinely-side test read the real file.
+const sampleRegistryYaml = registryOf(VALID_ENTRY)
 
 describe('validateToolbox', () => {
   let validEntry: string
@@ -26,8 +29,8 @@ describe('validateToolbox', () => {
   })
 
   describe('happy path', () => {
-    it('accepts the real registry', () => {
-      expect(validateToolbox(realRegistryYaml, schema)).toEqual([])
+    it('accepts a valid registry', () => {
+      expect(validateToolbox(sampleRegistryYaml, schema)).toEqual([])
     })
 
     it('accepts an entry with the optional author field', () => {
@@ -144,8 +147,8 @@ describe('validate:toolbox CLI', () => {
     return execa(TSX_BIN, [path.join(checkoutDir, 'scripts', 'validateToolbox.ts')], { reject: false })
   }
 
-  it('exits 0 and reports valid for the real registry', async () => {
-    const result = await runCli(realRegistryYaml)
+  it('exits 0 and reports valid for a valid registry', async () => {
+    const result = await runCli(sampleRegistryYaml)
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain('is valid')
   })
