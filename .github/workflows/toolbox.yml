@@ -2,8 +2,8 @@ name: Toolbox
 
 # `validate` runs on PRs (pull_request, not pull_request_target, so fork PRs
 # never see secrets — and it needs none). `deploy` re-validates on main, then
-# pings the Vercel Deploy Hook so pipelinely-marketing rebuilds /toolbox with
-# the new registry.
+# pings the Vercel Deploy Hook so pipelinely-marketing rebuilds — /toolbox on
+# a registry change, /docs on a guide change.
 on:
   # Path-filtered, so keep `validate` advisory: making it a required check would
   # block PRs that never touch these paths (it would never report).
@@ -18,6 +18,7 @@ on:
     branches: [main]
     paths:
       - 'toolbox/registry.yml'
+      - 'docs/user-guide.md'
   workflow_dispatch:
 
 permissions:
