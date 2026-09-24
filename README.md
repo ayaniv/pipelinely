@@ -163,3 +163,7 @@ it can't drift out of sync with this README.
 A small curated list of skills, plugins and tools that fit an agentic pipeline
 lives at [pipelinely.cc/toolbox](https://pipelinely.cc/toolbox). To add one, see
 [CONTRIBUTING.md](CONTRIBUTING.md#add-to-the-toolbox).
+
+## License
+
+MIT — see [LICENSE](LICENSE).
