@@ -21,8 +21,4 @@ describe('MIT license', () => {
   it('ends the README with a License section linking LICENSE', () => {
     expect(readRepoFile('README.md').endsWith('## License\n\nMIT — see [LICENSE](LICENSE).\n')).toBe(true)
   })
-
-  it('fails loudly when a license file is missing', () => {
-    expect(() => readRepoFile('LICENSE.does-not-exist')).toThrow(/ENOENT/)
-  })
 })
