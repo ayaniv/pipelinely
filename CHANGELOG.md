@@ -13,6 +13,10 @@ private development history, going back to the first commit on 2026-06-27,
 included so the arc of how this got built is visible rather than starting
 from a blank slate.
 
+## 2026-09-24
+
+- [#7](https://github.com/ayaniv/pipelinely/pull/7) Add MIT LICENSE
+
 ## 2026-09-23
 
 - [#6](https://github.com/ayaniv/pipelinely/pull/6) Add a user guide, published from cockpit-ai
