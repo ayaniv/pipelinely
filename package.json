@@ -12,6 +12,7 @@
     "validate:toolbox": "tsx scripts/validateToolbox.ts"
   },
   "main": "src/server.ts",
+  "license": "MIT",
   "dependencies": {
     "chokidar": "^3.5.3",
     "execa": "^9.6.1",
