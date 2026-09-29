@@ -1,17 +1,32 @@
 #!/usr/bin/env bash
-# install.sh — one command to set up pipelinely: clones the repo (skipped if
-# already checked out, in which case it fast-forwards it), installs
-# dependencies, symlinks the pipeline skills into ~/.claude/skills, and runs
-# every optional dotfiles installer whose required binary is already on PATH.
-# Safe to re-run — re-running is how an existing install picks up updates.
+# install.sh — one command to set up pipelinely: first checks every README
+# prerequisite and stops, changing nothing, if any is missing; then clones the
+# repo (skipped if already checked out, in which case it fast-forwards it),
+# installs dependencies, symlinks the pipeline skills into ~/.claude/skills,
+# and runs every optional dotfiles installer whose required binary is already
+# on PATH. Safe to re-run — re-running is how an existing install picks up
+# updates.
 # Usage: curl -fsSL https://pipelinely.cc/install.sh | sh
 #    or: bash install.sh   (from an existing clone)
+# Overrides (all optional): PIPELINELY_DIR, PIPELINELY_REMOTE, and — so tests
+# never depend on the developer's own machine — PIPELINELY_APP_DIRS (where to
+# look for iTerm.app) and PIPELINELY_BREW_PREFIXES (where to look for a
+# Homebrew install that isn't on PATH yet).
 set -euo pipefail
 
 DEST="${PIPELINELY_DIR:-$HOME/Dev/pipelinely}"
 # HTTPS, not SSH: a first-time `curl | sh` user usually has no GitHub SSH key.
 REMOTE="${PIPELINELY_REMOTE:-https://github.com/ayaniv/pipelinely.git}"
 UPDATE_BRANCH=main
+MIN_NODE_MAJOR=20
+APP_DIRS="${PIPELINELY_APP_DIRS:-/Applications $HOME/Applications}"
+BREW_PREFIXES="${PIPELINELY_BREW_PREFIXES:-/opt/homebrew /usr/local}"
+HOMEBREW_INSTALL_COMMAND='/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+
+# Parallel arrays (bash 3.2 on macOS has no associative arrays): the Nth
+# missing prerequisite and the fix that resolves it.
+MISSING_ITEMS=()
+MISSING_FIXES=()
 
 # Fast-forwards an existing checkout so re-running the installer updates it.
 # Never touches a checkout with local changes or on another branch, and
@@ -31,14 +46,120 @@ update_existing_checkout() {
   fi
 }
 
-# git/node/npm are checked inline — dotfiles/lib/install-helpers.sh's own
-# require_command isn't reachable yet until the clone below exists.
-for cmd in git node npm; do
-  if ! command -v "$cmd" >/dev/null 2>&1; then
-    echo "${cmd} not found on PATH — install it first, then re-run this script." >&2
-    exit 1
+record_ok() {
+  echo "  ok  $1"
+}
+
+record_missing() {
+  MISSING_ITEMS+=("$1")
+  MISSING_FIXES+=("$2")
+}
+
+# Records one prerequisite as ok or missing based on whether `command -v`
+# finds its binary. $1 = label, $2 = binary, $3 = fix when missing.
+check_command() {
+  if command -v "$2" >/dev/null 2>&1; then
+    record_ok "$1"
+  else
+    record_missing "$1 not found" "$3"
   fi
-done
+}
+
+# Whether iTerm.app is installed in any of APP_DIRS (word-split on purpose).
+iterm_installed() {
+  local app_dir
+  for app_dir in $APP_DIRS; do
+    [[ -d "$app_dir/iTerm.app" ]] && return 0
+  done
+  return 1
+}
+
+check_node() {
+  if ! command -v node >/dev/null 2>&1; then
+    record_missing "node not found (need ${MIN_NODE_MAJOR}+)" "brew install node"
+    return
+  fi
+  local node_version node_major
+  node_version="$(node --version 2>/dev/null || true)"
+  node_major="${node_version#v}"
+  node_major="${node_major%%.*}"
+  if [[ "$node_major" =~ ^[0-9]+$ ]] && (( node_major >= MIN_NODE_MAJOR )); then
+    record_ok "node $node_version"
+  else
+    record_missing "node ${MIN_NODE_MAJOR}+ required (found ${node_version:-an unreadable version})" "brew install node"
+  fi
+}
+
+# The Homebrew line comes first in the MISSING block because it's a
+# precondition for every `brew install` fix. Prints nothing when brew is on
+# PATH or no fix needs it.
+print_homebrew_advice() {
+  local needs_brew=false fix prefix
+  for fix in ${MISSING_FIXES[@]+"${MISSING_FIXES[@]}"}; do
+    [[ "$fix" == brew* ]] && needs_brew=true
+  done
+  if [[ "$needs_brew" == false ]] || command -v brew >/dev/null 2>&1; then
+    return
+  fi
+  for prefix in $BREW_PREFIXES; do
+    if [[ -x "$prefix/bin/brew" ]]; then
+      echo "  Homebrew is installed but not on your PATH. Run this, and add it to ~/.zprofile:" >&2
+      echo "      eval \"\$($prefix/bin/brew shellenv)\"" >&2
+      return
+    fi
+  done
+  echo "  Homebrew isn't installed. Install it first:" >&2
+  echo "      $HOMEBREW_INSTALL_COMMAND" >&2
+}
+
+# Checks every README prerequisite, collecting the gaps instead of exiting at
+# the first one, so a new user fixes everything in a single pass. Runs before
+# anything is cloned, installed or linked. dotfiles/lib/install-helpers.sh's
+# own require_command isn't reachable yet — it arrives with the clone below.
+preflight() {
+  echo "Checking prerequisites..."
+
+  if [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]]; then
+    record_ok "macOS"
+  else
+    record_missing "macOS required" "(Pipelinely only runs on macOS)"
+  fi
+  if iterm_installed; then
+    record_ok "iTerm2"
+  else
+    record_missing "iTerm2 not found" "brew install --cask iterm2"
+  fi
+  check_command "git" git "xcode-select --install"
+  check_node
+  check_command "npm" npm "brew install node"
+  check_command "tmux" tmux "brew install tmux"
+  check_command "jq" jq "brew install jq"
+  check_command "gh" gh "brew install gh"
+  if command -v gh >/dev/null 2>&1; then
+    if gh auth status >/dev/null 2>&1; then
+      record_ok "gh signed in"
+    else
+      record_missing "gh not signed in" "gh auth login"
+    fi
+  fi
+  check_command "claude" claude "npm install -g @anthropic-ai/claude-code"
+
+  if (( ${#MISSING_ITEMS[@]} == 0 )); then
+    return
+  fi
+  {
+    echo
+    echo "MISSING prerequisites — install these, then re-run this script:"
+  } >&2
+  print_homebrew_advice
+  local index
+  for index in "${!MISSING_ITEMS[@]}"; do
+    echo "  - ${MISSING_ITEMS[$index]}  →  ${MISSING_FIXES[$index]}" >&2
+  done
+  exit 1
+}
+
+preflight
 
 if [[ ! -e "$DEST" ]]; then
   echo "Cloning pipelinely into $DEST..."

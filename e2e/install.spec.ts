@@ -243,7 +243,7 @@ test.describe('install.sh', () => {
 
 // Preflight: every README prerequisite is checked before install.sh changes
 // anything, and all the gaps are reported together, each with its fix.
-test.describe('install.sh prerequisite preflight @pending', () => {
+test.describe('install.sh prerequisite preflight', () => {
   async function callsSoFar(): Promise<string> {
     return (await pathExists(callLog)) ? fs.readFile(callLog, 'utf-8') : ''
   }
