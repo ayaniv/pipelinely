@@ -11,7 +11,9 @@
 # Overrides (all optional): PIPELINELY_DIR, PIPELINELY_REMOTE, and — so tests
 # never depend on the developer's own machine — PIPELINELY_APP_DIRS (where to
 # look for iTerm.app) and PIPELINELY_BREW_PREFIXES (where to look for a
-# Homebrew install that isn't on PATH yet).
+# Homebrew install that isn't on PATH yet) — both colon-separated lists, so a
+# path with a space in it survives — and PIPELINELY_GH_TIMEOUT_SECONDS (how
+# long to wait on `gh auth status`, which talks to the network).
 set -euo pipefail
 
 DEST="${PIPELINELY_DIR:-$HOME/Dev/pipelinely}"
@@ -19,8 +21,11 @@ DEST="${PIPELINELY_DIR:-$HOME/Dev/pipelinely}"
 REMOTE="${PIPELINELY_REMOTE:-https://github.com/ayaniv/pipelinely.git}"
 UPDATE_BRANCH=main
 MIN_NODE_MAJOR=20
-APP_DIRS="${PIPELINELY_APP_DIRS:-/Applications $HOME/Applications}"
-BREW_PREFIXES="${PIPELINELY_BREW_PREFIXES:-/opt/homebrew /usr/local}"
+GH_AUTH_TIMEOUT_SECONDS="${PIPELINELY_GH_TIMEOUT_SECONDS:-10}"
+# Colon-separated, not space-separated: the default embeds $HOME, which may
+# itself contain a space (/Users/Jane Doe).
+IFS=: read -r -a APP_DIRS <<< "${PIPELINELY_APP_DIRS:-/Applications:$HOME/Applications}"
+IFS=: read -r -a BREW_PREFIXES <<< "${PIPELINELY_BREW_PREFIXES:-/opt/homebrew:/usr/local}"
 HOMEBREW_INSTALL_COMMAND='/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
 
 # Parallel arrays (bash 3.2 on macOS has no associative arrays): the Nth
@@ -65,13 +70,51 @@ check_command() {
   fi
 }
 
-# Whether iTerm.app is installed in any of APP_DIRS (word-split on purpose).
 iterm_installed() {
   local app_dir
-  for app_dir in $APP_DIRS; do
+  for app_dir in "${APP_DIRS[@]}"; do
     [[ -d "$app_dir/iTerm.app" ]] && return 0
   done
   return 1
+}
+
+# `command -v git` is true on a fresh Mac with no Command Line Tools, because
+# /usr/bin/git is a shim that only then offers to install them — so actually
+# run it.
+check_git() {
+  if git --version >/dev/null 2>&1; then
+    record_ok "git"
+  else
+    record_missing "git not found (or Xcode Command Line Tools not installed)" "xcode-select --install"
+  fi
+}
+
+# Runs a command, killing it after $1 seconds. macOS ships no `timeout`.
+# The watchdog's output is detached so a lingering `sleep` can't hold a
+# caller's pipe open. Returns the command's status (143 when it timed out).
+run_with_timeout() {
+  local seconds="$1" command_pid watchdog_pid command_status=0
+  shift
+  "$@" >/dev/null 2>&1 &
+  command_pid=$!
+  ( sleep "$seconds"; kill "$command_pid" 2>/dev/null ) >/dev/null 2>&1 &
+  watchdog_pid=$!
+  wait "$command_pid" 2>/dev/null || command_status=$?
+  kill "$watchdog_pid" 2>/dev/null || true
+  return "$command_status"
+}
+
+# Scoped to github.com so a stale token for some other configured host can't
+# fail it. It needs the network, hence the bound; a timeout or offline run is
+# reported as such rather than as a plain "not signed in".
+check_gh_auth() {
+  local auth_status=0
+  run_with_timeout "$GH_AUTH_TIMEOUT_SECONDS" gh auth status --hostname github.com || auth_status=$?
+  if (( auth_status == 0 )); then
+    record_ok "gh signed in"
+  else
+    record_missing "gh not signed in to github.com (or the check failed offline / timed out)" "gh auth login"
+  fi
 }
 
 check_node() {
@@ -94,16 +137,22 @@ check_node() {
 # precondition for every `brew install` fix. Prints nothing when brew is on
 # PATH or no fix needs it.
 print_homebrew_advice() {
-  local needs_brew=false fix prefix
+  local needs_brew=false fix prefix profile
   for fix in ${MISSING_FIXES[@]+"${MISSING_FIXES[@]}"}; do
     [[ "$fix" == brew* ]] && needs_brew=true
   done
   if [[ "$needs_brew" == false ]] || command -v brew >/dev/null 2>&1; then
     return
   fi
-  for prefix in $BREW_PREFIXES; do
+  for prefix in "${BREW_PREFIXES[@]}"; do
     if [[ -x "$prefix/bin/brew" ]]; then
-      echo "  Homebrew is installed but not on your PATH. Run this, and add it to ~/.zprofile:" >&2
+      case "${SHELL:-}" in
+        */zsh) profile="~/.zprofile" ;;
+        */bash) profile="~/.bash_profile" ;;
+        *) profile="~/.profile" ;;
+      esac
+      echo "  Homebrew is installed but not on your PATH. Add it permanently, then reload:" >&2
+      echo "      echo 'eval \"\$($prefix/bin/brew shellenv)\"' >> $profile" >&2
       echo "      eval \"\$($prefix/bin/brew shellenv)\"" >&2
       return
     fi
@@ -119,28 +168,32 @@ print_homebrew_advice() {
 preflight() {
   echo "Checking prerequisites..."
 
-  if [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]]; then
+  # Everything below assumes macOS (brew fixes, iTerm2), so a positively
+  # identified other OS bails out early rather than print advice that's wrong
+  # there. An unresolvable uname (empty PATH) just counts as a missing item.
+  local os_name
+  os_name="$(uname -s 2>/dev/null || true)"
+  if [[ "$os_name" == "Darwin" ]]; then
     record_ok "macOS"
+  elif [[ -n "$os_name" ]]; then
+    echo "MISSING: macOS — Pipelinely only runs on macOS (found $os_name)." >&2
+    exit 1
   else
-    record_missing "macOS required" "(Pipelinely only runs on macOS)"
+    record_missing "macOS required (could not run uname)" "(Pipelinely only runs on macOS)"
   fi
   if iterm_installed; then
     record_ok "iTerm2"
   else
     record_missing "iTerm2 not found" "brew install --cask iterm2"
   fi
-  check_command "git" git "xcode-select --install"
+  check_git
   check_node
   check_command "npm" npm "brew install node"
   check_command "tmux" tmux "brew install tmux"
   check_command "jq" jq "brew install jq"
   check_command "gh" gh "brew install gh"
   if command -v gh >/dev/null 2>&1; then
-    if gh auth status >/dev/null 2>&1; then
-      record_ok "gh signed in"
-    else
-      record_missing "gh not signed in" "gh auth login"
-    fi
+    check_gh_auth
   fi
   check_command "claude" claude "npm install -g @anthropic-ai/claude-code"
 

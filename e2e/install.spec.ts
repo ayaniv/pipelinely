@@ -49,6 +49,7 @@ async function stubGit() {
   await writeFiles(stubBin, {
     git: `#!/bin/sh
 echo "git $*" >> "${callLog}"
+if [ "$1" = "--version" ]; then exit "\${STUB_GIT_VERSION_EXIT:-0}"; fi
 if [ "$1" = "clone" ]; then
   mkdir -p "$3/.claude/skills/pipelinely" "$3/dotfiles/lib" "$3/dotfiles/${OPTIONAL_INSTALLER_DIR}"
   echo "fake skill" > "$3/.claude/skills/pipelinely/SKILL.md"
@@ -85,7 +86,7 @@ async function stubNpm() {
     // install.sh reads `node --version` to enforce Node 20+; the answer comes
     // from STUB_NODE_VERSION so a case can pose as an old Node. Keeps this
     // suite from depending on a real Node binary under /usr/bin or /bin.
-    node: `#!/bin/sh\necho "v\${STUB_NODE_VERSION:-${SUPPORTED_NODE_VERSION}}"\n`,
+    node: `#!/bin/sh\n[ -n "\${STUB_NODE_BROKEN:-}" ] && exit 1\necho "v\${STUB_NODE_VERSION:-${SUPPORTED_NODE_VERSION}}"\n`,
   })
   await fs.chmod(path.join(stubBin, 'npm'), 0o755)
   await fs.chmod(path.join(stubBin, 'node'), 0o755)
@@ -99,7 +100,7 @@ async function stubOtherPrerequisites() {
     [TMUX_BINARY]: `#!/bin/sh\nexit 0\n`,
     jq: `#!/bin/sh\nexit 0\n`,
     claude: `#!/bin/sh\nexit 0\n`,
-    gh: `#!/bin/sh\necho "gh $*" >> "${callLog}"\nif [ "$1" = "auth" ]; then exit "\${STUB_GH_AUTH_EXIT:-0}"; fi\nexit 0\n`,
+    gh: `#!/bin/sh\necho "gh $*" >> "${callLog}"\nif [ "$1" = "auth" ]; then [ -n "\${STUB_GH_AUTH_HANG:-}" ] && sleep 30; exit "\${STUB_GH_AUTH_EXIT:-0}"; fi\nexit 0\n`,
     uname: `#!/bin/sh\necho "\${STUB_UNAME:-Darwin}"\n`,
   }
   await writeFiles(stubBin, stubs)
@@ -372,5 +373,102 @@ test.describe('install.sh prerequisite preflight', () => {
     const calls = await callsSoFar()
     expect(calls).not.toContain('pull')
     expect(calls).not.toContain('npm ')
+  })
+
+  test('failure path: git is only the Command Line Tools shim — reported missing with the xcode-select fix', async () => {
+    const result = await runInstaller({ withStubBin: true, gitEnv: { STUB_GIT_VERSION_EXIT: '1' } })
+    expect(result.exitCode).not.toBe(0)
+    expect(result.all).toContain('xcode-select --install')
+    await expectNothingChanged()
+  })
+
+  test('failure path: gh auth is checked against github.com only', async () => {
+    await runInstaller({ withStubBin: true })
+    expect(await callsSoFar()).toContain('gh auth status --hostname github.com')
+  })
+
+  test('failure path: gh auth hangs — the check is bounded and reported, not waited on forever', async () => {
+    const startedAt = Date.now()
+    const result = await runInstaller({ withStubBin: true, gitEnv: { STUB_GH_AUTH_HANG: '1', PIPELINELY_GH_TIMEOUT_SECONDS: '1' } })
+    expect(Date.now() - startedAt).toBeLessThan(15_000)
+    expect(result.exitCode).not.toBe(0)
+    expect(result.all).toContain('gh auth login')
+    await expectNothingChanged()
+  })
+
+  test('a home directory containing a space does not hide an installed iTerm2', async () => {
+    const spacedHome = path.join(home, 'Jane Doe')
+    await fs.mkdir(path.join(spacedHome, 'Applications', 'iTerm.app'), { recursive: true })
+    await fs.rm(path.join(appsDir, 'iTerm.app'), { recursive: true })
+
+    // An empty override falls back to the script's default list, which embeds $HOME.
+    const result = await runInstaller({ withStubBin: true, gitEnv: { HOME: spacedHome, PIPELINELY_APP_DIRS: '' } })
+    expect(result.all).not.toContain('iTerm2 not found')
+  })
+
+  test('failure path: node exists but errors on --version — reported, not a crash', async () => {
+    const result = await runInstaller({ withStubBin: true, gitEnv: { STUB_NODE_BROKEN: '1' } })
+    expect(result.exitCode).not.toBe(0)
+    expect(result.all).toContain('20+')
+    expect(result.all).toContain('brew install node')
+    await expectNothingChanged()
+  })
+
+  test('failure path: not macOS — no brew or Homebrew advice is printed', async () => {
+    await removeStub('node')
+    const result = await runInstaller({ withStubBin: true, gitEnv: { STUB_UNAME: 'Linux' } })
+    expect(result.exitCode).not.toBe(0)
+    expect(result.all).toMatch(/macOS/)
+    expect(result.all).not.toContain('brew')
+    expect(result.all).not.toContain('Homebrew')
+  })
+
+  test('failure path: Homebrew installed at the Intel /usr/local-style second prefix — found and advised', async () => {
+    await removeStub('node')
+    const intelPrefix = path.join(home, 'usr-local')
+    await writeFiles(intelPrefix, { 'bin/brew': '#!/bin/sh\nexit 0\n' })
+    await fs.chmod(path.join(intelPrefix, 'bin', 'brew'), 0o755)
+
+    const result = await runInstaller({ withStubBin: true, gitEnv: { PIPELINELY_BREW_PREFIXES: `${brewPrefix}:${intelPrefix}` } })
+    expect(result.all).toContain(`${intelPrefix}/bin/brew shellenv`)
+    expect(result.all).not.toContain('Homebrew/install')
+  })
+
+  test('failure path: a brew file that is not executable does not count as Homebrew being installed', async () => {
+    await removeStub('node')
+    await writeFiles(brewPrefix, { 'bin/brew': '#!/bin/sh\nexit 0\n' }) // written without the executable bit
+
+    const result = await runInstaller({ withStubBin: true })
+    expect(result.all).toContain('Homebrew/install')
+    expect(result.all).not.toContain('brew shellenv')
+  })
+
+  test('the off-PATH Homebrew advice gives a copy-pasteable profile line, keyed off the login shell', async () => {
+    await removeStub('node')
+    await writeFiles(brewPrefix, { 'bin/brew': '#!/bin/sh\nexit 0\n' })
+    await fs.chmod(path.join(brewPrefix, 'bin', 'brew'), 0o755)
+
+    const result = await runInstaller({ withStubBin: true, gitEnv: { SHELL: '/bin/zsh' } })
+    expect(result.all).toContain(`>> ~/.zprofile`)
+  })
+
+  test('the MISSING block goes to stderr, not stdout', async () => {
+    await removeStub('claude')
+    const result = await runInstaller({ withStubBin: true })
+    expect(result.stderr).toContain('@anthropic-ai/claude-code')
+    expect(result.stdout).not.toContain('@anthropic-ai/claude-code')
+  })
+
+  test('idempotent: re-running after fixing the missing prerequisite completes the install', async () => {
+    await removeStub('claude')
+    const failed = await runInstaller({ withStubBin: true })
+    expect(failed.exitCode).not.toBe(0)
+    await expectNothingChanged()
+
+    await writeFiles(stubBin, { claude: '#!/bin/sh\nexit 0\n' })
+    await fs.chmod(path.join(stubBin, 'claude'), 0o755)
+    const rerun = await runInstaller({ withStubBin: true })
+    expect(rerun.exitCode, rerun.all).toBe(0)
+    expect(await callsSoFar()).toContain(`npm --prefix ${dest} install`)
   })
 })
