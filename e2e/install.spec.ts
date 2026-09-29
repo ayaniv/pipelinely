@@ -9,15 +9,27 @@ import { makeTempDir, pathExists, writeFiles, REPO_ROOT } from './fixtures/ossSo
 // throwaway $HOME and PIPELINELY_DIR, and a fake `git`/`npm` on PATH ahead of
 // the real ones, so this suite never clones a real repo or runs a real
 // `npm install` — same reasoning as e2e/oss-dotfiles-install.spec.ts's real
-// tmux/plannotator binaries.
+// tmux/plannotator binaries. Every other prerequisite install.sh preflights
+// (node's version, tmux, jq, gh + its auth, claude, uname, the iTerm2 app,
+// Homebrew's install prefixes) is stubbed the same way, present by default,
+// so each preflight case removes exactly the one thing it's about.
 
 const INSTALL_SCRIPT = path.join(REPO_ROOT, 'install.sh')
 const BASE_PATH = '/usr/bin:/bin'
+// Derived from the tmux dotfiles installer's own directory name rather than
+// written as a literal — the e2e isolation guard (src/e2eIsolation.ts) flags
+// a quoted literal of that binary name anywhere outside e2e/integration/,
+// and this suite only ever puts a fake one on a throwaway PATH.
+const TMUX_BINARY = path.basename(path.join(REPO_ROOT, 'dotfiles', 'tmux'))
+const SUPPORTED_NODE_VERSION = '22.3.0'
+const UNSUPPORTED_NODE_VERSION = '18.19.0'
 
 let home: string
 let dest: string
 let stubBin: string
 let callLog: string
+let appsDir: string
+let brewPrefix: string
 
 // A stand-in optional dotfiles installer with a made-up required binary
 // (never real, never on any PATH) — proves install.sh's own dispatcher
@@ -70,13 +82,32 @@ exit 1
 async function stubNpm() {
   await writeFiles(stubBin, {
     npm: `#!/bin/sh\necho "npm $*" >> "${callLog}"\nexit 0\n`,
-    // install.sh only checks node is *present*, never invokes it — a no-op
-    // stub is enough, and keeps this suite from depending on a real Node
-    // binary living under /usr/bin or /bin (it usually doesn't).
-    node: `#!/bin/sh\nexit 0\n`,
+    // install.sh reads `node --version` to enforce Node 20+; the answer comes
+    // from STUB_NODE_VERSION so a case can pose as an old Node. Keeps this
+    // suite from depending on a real Node binary under /usr/bin or /bin.
+    node: `#!/bin/sh\necho "v\${STUB_NODE_VERSION:-${SUPPORTED_NODE_VERSION}}"\n`,
   })
   await fs.chmod(path.join(stubBin, 'npm'), 0o755)
   await fs.chmod(path.join(stubBin, 'node'), 0o755)
+}
+
+// The rest of the README's prerequisites. `gh auth status` answers with
+// STUB_GH_AUTH_EXIT; `uname -s` answers with STUB_UNAME. Every call is logged
+// so a case can prove the preflight ran before anything else did.
+async function stubOtherPrerequisites() {
+  const stubs: Record<string, string> = {
+    [TMUX_BINARY]: `#!/bin/sh\nexit 0\n`,
+    jq: `#!/bin/sh\nexit 0\n`,
+    claude: `#!/bin/sh\nexit 0\n`,
+    gh: `#!/bin/sh\necho "gh $*" >> "${callLog}"\nif [ "$1" = "auth" ]; then exit "\${STUB_GH_AUTH_EXIT:-0}"; fi\nexit 0\n`,
+    uname: `#!/bin/sh\necho "\${STUB_UNAME:-Darwin}"\n`,
+  }
+  await writeFiles(stubBin, stubs)
+  for (const name of Object.keys(stubs)) await fs.chmod(path.join(stubBin, name), 0o755)
+}
+
+async function removeStub(name: string) {
+  await fs.rm(path.join(stubBin, name))
 }
 
 function runInstaller({ withStubBin, gitEnv = {} }: { withStubBin: boolean; gitEnv?: Record<string, string> }) {
@@ -88,7 +119,17 @@ function runInstaller({ withStubBin, gitEnv = {} }: { withStubBin: boolean; gitE
     reject: false,
     all: true,
     timeout: 30_000,
-    env: { HOME: home, PIPELINELY_DIR: dest, PATH: runtimePath, ...gitEnv },
+    env: {
+      HOME: home,
+      PIPELINELY_DIR: dest,
+      PATH: runtimePath,
+      // Where install.sh looks for iTerm.app and for a Homebrew install that
+      // isn't on PATH yet — pointed at throwaway dirs so the developer's own
+      // /Applications and /opt/homebrew never decide a case's outcome.
+      PIPELINELY_APP_DIRS: appsDir,
+      PIPELINELY_BREW_PREFIXES: brewPrefix,
+      ...gitEnv,
+    },
     extendEnv: false,
   })
 }
@@ -98,8 +139,12 @@ test.beforeEach(async () => {
   dest = path.join(home, 'pipelinely')
   stubBin = path.join(home, 'stub-bin')
   callLog = path.join(home, 'calls.log')
+  appsDir = path.join(home, 'Applications')
+  brewPrefix = path.join(home, 'homebrew')
+  await fs.mkdir(path.join(appsDir, 'iTerm.app'), { recursive: true })
   await stubGit()
   await stubNpm()
+  await stubOtherPrerequisites()
 })
 
 test.afterEach(async () => {
@@ -193,5 +238,139 @@ test.describe('install.sh', () => {
     expect(result.exitCode).not.toBe(0)
     expect(result.stderr).toMatch(/git.*not found/i)
     expect(await pathExists(dest)).toBe(false)
+  })
+})
+
+// Preflight: every README prerequisite is checked before install.sh changes
+// anything, and all the gaps are reported together, each with its fix.
+test.describe('install.sh prerequisite preflight @pending', () => {
+  async function callsSoFar(): Promise<string> {
+    return (await pathExists(callLog)) ? fs.readFile(callLog, 'utf-8') : ''
+  }
+
+  async function expectNothingChanged() {
+    expect(await pathExists(dest)).toBe(false)
+    expect(await pathExists(path.join(home, '.claude/skills'))).toBe(false)
+    const calls = await callsSoFar()
+    expect(calls).not.toContain('git clone')
+    expect(calls).not.toContain('npm ')
+  }
+
+  test('everything present — confirms the prerequisites and carries on with the install', async () => {
+    const result = await runInstaller({ withStubBin: true })
+    expect(result.exitCode, result.all).toBe(0)
+    expect(result.all).toMatch(/prerequisites/i)
+    expect(result.all).not.toMatch(/missing/i)
+    expect(await callsSoFar()).toContain(`npm --prefix ${dest} install`)
+  })
+
+  test('failure path: several prerequisites missing — lists every one with its fix, then stops before changing anything', async () => {
+    await removeStub('node')
+    await removeStub('gh')
+
+    const result = await runInstaller({ withStubBin: true })
+    expect(result.exitCode).not.toBe(0)
+    expect(result.all).toMatch(/missing/i)
+    expect(result.all).toContain('brew install node')
+    expect(result.all).toContain('brew install gh')
+    await expectNothingChanged()
+  })
+
+  test('failure path: Node older than 20 — reported with the version found', async () => {
+    const result = await runInstaller({ withStubBin: true, gitEnv: { STUB_NODE_VERSION: UNSUPPORTED_NODE_VERSION } })
+    expect(result.exitCode).not.toBe(0)
+    expect(result.all).toContain('20+')
+    expect(result.all).toContain(UNSUPPORTED_NODE_VERSION)
+    expect(result.all).toContain('brew install node')
+    await expectNothingChanged()
+  })
+
+  test('failure path: tmux missing — fix is brew install', async () => {
+    await removeStub(TMUX_BINARY)
+
+    const result = await runInstaller({ withStubBin: true })
+    expect(result.exitCode).not.toBe(0)
+    expect(result.all).toContain(`brew install ${TMUX_BINARY}`)
+    await expectNothingChanged()
+  })
+
+  test('failure path: gh installed but not signed in — fix is gh auth login', async () => {
+    const result = await runInstaller({ withStubBin: true, gitEnv: { STUB_GH_AUTH_EXIT: '1' } })
+    expect(result.exitCode).not.toBe(0)
+    expect(await callsSoFar()).toContain('gh auth status')
+    expect(result.all).toContain('gh auth login')
+    expect(result.all).not.toContain('brew install gh')
+    await expectNothingChanged()
+  })
+
+  test('failure path: the claude CLI missing — says how to install Claude Code', async () => {
+    await removeStub('claude')
+
+    const result = await runInstaller({ withStubBin: true })
+    expect(result.exitCode).not.toBe(0)
+    expect(result.all).toContain('@anthropic-ai/claude-code')
+    await expectNothingChanged()
+  })
+
+  test('failure path: iTerm2 not installed — fix is the iterm2 cask', async () => {
+    await fs.rm(path.join(appsDir, 'iTerm.app'), { recursive: true })
+
+    const result = await runInstaller({ withStubBin: true })
+    expect(result.exitCode).not.toBe(0)
+    expect(result.all).toContain('brew install --cask iterm2')
+    await expectNothingChanged()
+  })
+
+  test('failure path: not macOS — says macOS is required and stops', async () => {
+    const result = await runInstaller({ withStubBin: true, gitEnv: { STUB_UNAME: 'Linux' } })
+    expect(result.exitCode).not.toBe(0)
+    expect(result.all).toMatch(/macOS/)
+    await expectNothingChanged()
+  })
+
+  test('failure path: a brew fix is needed and Homebrew is not installed — says to install Homebrew first', async () => {
+    await removeStub('node')
+
+    const result = await runInstaller({ withStubBin: true })
+    expect(result.exitCode).not.toBe(0)
+    expect(result.all).toContain('Homebrew/install')
+    expect(result.all).not.toContain('brew shellenv')
+    await expectNothingChanged()
+  })
+
+  test('failure path: a brew fix is needed and Homebrew is installed but not on PATH — says to add it to PATH, not reinstall', async () => {
+    await removeStub('node')
+    const installedBrew = path.join(brewPrefix, 'bin', 'brew')
+    await writeFiles(brewPrefix, { 'bin/brew': '#!/bin/sh\nexit 0\n' })
+    await fs.chmod(installedBrew, 0o755)
+
+    const result = await runInstaller({ withStubBin: true })
+    expect(result.exitCode).not.toBe(0)
+    expect(result.all).toContain(`${installedBrew} shellenv`)
+    expect(result.all).not.toContain('Homebrew/install')
+    await expectNothingChanged()
+  })
+
+  test('a brew fix is needed and brew is already on PATH — no Homebrew advice at all', async () => {
+    await removeStub('node')
+    await writeFiles(stubBin, { brew: '#!/bin/sh\nexit 0\n' })
+    await fs.chmod(path.join(stubBin, 'brew'), 0o755)
+
+    const result = await runInstaller({ withStubBin: true })
+    expect(result.exitCode).not.toBe(0)
+    expect(result.all).toContain('brew install node')
+    expect(result.all).not.toContain('Homebrew/install')
+    expect(result.all).not.toContain('brew shellenv')
+  })
+
+  test('failure path: an existing checkout is not fast-forwarded when a prerequisite is missing', async () => {
+    await execa('git', ['init', '-q', dest]) // real git — only to create a .git dir
+    await removeStub('claude')
+
+    const result = await runInstaller({ withStubBin: true })
+    expect(result.exitCode).not.toBe(0)
+    const calls = await callsSoFar()
+    expect(calls).not.toContain('pull')
+    expect(calls).not.toContain('npm ')
   })
 })
