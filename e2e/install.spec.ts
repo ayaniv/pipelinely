@@ -401,9 +401,22 @@ test.describe('install.sh prerequisite preflight', () => {
     await fs.mkdir(path.join(spacedHome, 'Applications', 'iTerm.app'), { recursive: true })
     await fs.rm(path.join(appsDir, 'iTerm.app'), { recursive: true })
 
-    // An empty override falls back to the script's default list, which embeds $HOME.
-    const result = await runInstaller({ withStubBin: true, gitEnv: { HOME: spacedHome, PIPELINELY_APP_DIRS: '' } })
+    // Explicit list shaped like the default (a system dir, then $HOME/Applications)
+    // but never the real /Applications, so the developer's own iTerm2 can't satisfy it.
+    const fakeSystemApps = path.join(home, 'system-apps')
+    await fs.mkdir(fakeSystemApps)
+    const result = await runInstaller({
+      withStubBin: true,
+      gitEnv: { HOME: spacedHome, PIPELINELY_APP_DIRS: `${fakeSystemApps}:${spacedHome}/Applications` },
+    })
     expect(result.all).not.toContain('iTerm2 not found')
+  })
+
+  test('a successful run prints no watchdog job report and a non-numeric gh timeout falls back to the default', async () => {
+    const result = await runInstaller({ withStubBin: true, gitEnv: { PIPELINELY_GH_TIMEOUT_SECONDS: 'soon' } })
+    expect(result.exitCode, result.all).toBe(0)
+    expect(result.stderr).not.toMatch(/Terminated|line \d+:/)
+    expect(result.all).toContain('gh signed in')
   })
 
   test('failure path: node exists but errors on --version — reported, not a crash', async () => {

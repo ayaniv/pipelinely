@@ -21,7 +21,10 @@ DEST="${PIPELINELY_DIR:-$HOME/Dev/pipelinely}"
 REMOTE="${PIPELINELY_REMOTE:-https://github.com/ayaniv/pipelinely.git}"
 UPDATE_BRANCH=main
 MIN_NODE_MAJOR=20
-GH_AUTH_TIMEOUT_SECONDS="${PIPELINELY_GH_TIMEOUT_SECONDS:-10}"
+DEFAULT_GH_AUTH_TIMEOUT_SECONDS=10
+GH_AUTH_TIMEOUT_SECONDS="${PIPELINELY_GH_TIMEOUT_SECONDS:-$DEFAULT_GH_AUTH_TIMEOUT_SECONDS}"
+# A non-numeric value would make the watchdog's `sleep` fail and kill gh at once.
+[[ "$GH_AUTH_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || GH_AUTH_TIMEOUT_SECONDS="$DEFAULT_GH_AUTH_TIMEOUT_SECONDS"
 # Colon-separated, not space-separated: the default embeds $HOME, which may
 # itself contain a space (/Users/Jane Doe).
 IFS=: read -r -a APP_DIRS <<< "${PIPELINELY_APP_DIRS:-/Applications:$HOME/Applications}"
@@ -97,10 +100,18 @@ run_with_timeout() {
   shift
   "$@" >/dev/null 2>&1 &
   command_pid=$!
-  ( sleep "$seconds"; kill "$command_pid" 2>/dev/null ) >/dev/null 2>&1 &
+  # The watchdog traps TERM so stopping it exits normally (no "Terminated" job
+  # report on stderr) and takes its own `sleep` with it instead of orphaning it.
+  (
+    sleep "$seconds" &
+    local sleep_pid=$!
+    trap 'kill "$sleep_pid" 2>/dev/null; exit 0' TERM
+    wait "$sleep_pid" && kill "$command_pid" 2>/dev/null
+  ) >/dev/null 2>&1 &
   watchdog_pid=$!
   wait "$command_pid" 2>/dev/null || command_status=$?
   kill "$watchdog_pid" 2>/dev/null || true
+  wait "$watchdog_pid" 2>/dev/null || true
   return "$command_status"
 }
 
