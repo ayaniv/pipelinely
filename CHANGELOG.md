@@ -13,6 +13,10 @@ private development history, going back to the first commit on 2026-06-27,
 included so the arc of how this got built is visible rather than starting
 from a blank slate.
 
+## 2026-09-30
+
+- [#8](https://github.com/ayaniv/pipelinely/pull/8) install.sh: prerequisite preflight
+
 ## 2026-09-24
 
 - [#7](https://github.com/ayaniv/pipelinely/pull/7) Add MIT LICENSE
