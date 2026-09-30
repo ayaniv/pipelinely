@@ -100,7 +100,7 @@ async function stubOtherPrerequisites() {
     [TMUX_BINARY]: `#!/bin/sh\nexit 0\n`,
     jq: `#!/bin/sh\nexit 0\n`,
     claude: `#!/bin/sh\nexit 0\n`,
-    gh: `#!/bin/sh\necho "gh $*" >> "${callLog}"\nif [ "$1" = "auth" ]; then [ -n "\${STUB_GH_AUTH_HANG:-}" ] && sleep 30; exit "\${STUB_GH_AUTH_EXIT:-0}"; fi\nexit 0\n`,
+    gh: `#!/bin/sh\necho "gh $*" >> "${callLog}"\nif [ "$1" = "auth" ]; then [ -n "\${STUB_GH_AUTH_DELAY:-}" ] && sleep "\$STUB_GH_AUTH_DELAY"; exit "\${STUB_GH_AUTH_EXIT:-0}"; fi\nexit 0\n`,
     uname: `#!/bin/sh\necho "\${STUB_UNAME:-Darwin}"\n`,
   }
   await writeFiles(stubBin, stubs)
@@ -389,7 +389,7 @@ test.describe('install.sh prerequisite preflight', () => {
 
   test('failure path: gh auth hangs — the check is bounded and reported, not waited on forever', async () => {
     const startedAt = Date.now()
-    const result = await runInstaller({ withStubBin: true, gitEnv: { STUB_GH_AUTH_HANG: '1', PIPELINELY_GH_TIMEOUT_SECONDS: '1' } })
+    const result = await runInstaller({ withStubBin: true, gitEnv: { STUB_GH_AUTH_DELAY: '30', PIPELINELY_GH_TIMEOUT_SECONDS: '1' } })
     expect(Date.now() - startedAt).toBeLessThan(15_000)
     expect(result.exitCode).not.toBe(0)
     expect(result.all).toContain('gh auth login')
@@ -412,12 +412,25 @@ test.describe('install.sh prerequisite preflight', () => {
     expect(result.all).not.toContain('iTerm2 not found')
   })
 
-  test('a successful run prints no watchdog job report and a non-numeric gh timeout falls back to the default', async () => {
-    const result = await runInstaller({ withStubBin: true, gitEnv: { PIPELINELY_GH_TIMEOUT_SECONDS: 'soon' } })
+  test('a successful run prints no watchdog job report', async () => {
+    const result = await runInstaller({ withStubBin: true })
     expect(result.exitCode, result.all).toBe(0)
     expect(result.stderr).not.toMatch(/Terminated|line \d+:/)
     expect(result.all).toContain('gh signed in')
   })
+
+  // gh takes a moment to answer, so a timeout that wrongly stayed invalid (and
+  // made the watchdog kill it at once) would report "not signed in".
+  for (const invalidTimeout of ['soon', '0']) {
+    test(`an invalid gh timeout (${invalidTimeout}) falls back to the default instead of killing gh at once`, async () => {
+      const result = await runInstaller({
+        withStubBin: true,
+        gitEnv: { PIPELINELY_GH_TIMEOUT_SECONDS: invalidTimeout, STUB_GH_AUTH_DELAY: '1' },
+      })
+      expect(result.exitCode, result.all).toBe(0)
+      expect(result.all).toContain('gh signed in')
+    })
+  }
 
   test('failure path: node exists but errors on --version — reported, not a crash', async () => {
     const result = await runInstaller({ withStubBin: true, gitEnv: { STUB_NODE_BROKEN: '1' } })

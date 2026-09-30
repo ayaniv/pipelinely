@@ -23,8 +23,9 @@ UPDATE_BRANCH=main
 MIN_NODE_MAJOR=20
 DEFAULT_GH_AUTH_TIMEOUT_SECONDS=10
 GH_AUTH_TIMEOUT_SECONDS="${PIPELINELY_GH_TIMEOUT_SECONDS:-$DEFAULT_GH_AUTH_TIMEOUT_SECONDS}"
-# A non-numeric value would make the watchdog's `sleep` fail and kill gh at once.
-[[ "$GH_AUTH_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || GH_AUTH_TIMEOUT_SECONDS="$DEFAULT_GH_AUTH_TIMEOUT_SECONDS"
+# Anything but a positive integer (non-numeric, or 0) would make the watchdog
+# kill gh at once, falsely reporting it as not signed in.
+[[ "$GH_AUTH_TIMEOUT_SECONDS" =~ ^0*[1-9][0-9]*$ ]] || GH_AUTH_TIMEOUT_SECONDS="$DEFAULT_GH_AUTH_TIMEOUT_SECONDS"
 # Colon-separated, not space-separated: the default embeds $HOME, which may
 # itself contain a space (/Users/Jane Doe).
 IFS=: read -r -a APP_DIRS <<< "${PIPELINELY_APP_DIRS:-/Applications:$HOME/Applications}"
@@ -103,9 +104,12 @@ run_with_timeout() {
   # The watchdog traps TERM so stopping it exits normally (no "Terminated" job
   # report on stderr) and takes its own `sleep` with it instead of orphaning it.
   (
+    local sleep_pid=""
+    # Installed before the sleep starts so an instant-exit command can't send
+    # TERM before it exists and leave the sleep orphaned.
+    trap '[[ -z "$sleep_pid" ]] || kill "$sleep_pid" 2>/dev/null; exit 0' TERM
     sleep "$seconds" &
-    local sleep_pid=$!
-    trap 'kill "$sleep_pid" 2>/dev/null; exit 0' TERM
+    sleep_pid=$!
     wait "$sleep_pid" && kill "$command_pid" 2>/dev/null
   ) >/dev/null 2>&1 &
   watchdog_pid=$!
