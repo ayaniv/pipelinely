@@ -15,7 +15,7 @@ test.use({ colorScheme: 'light', viewport: { width: 1280, height: 900 } })
 const SLUG = 'dev-ready'
 
 // Chain tab id -> the Stage value /api/stage-scope keys its response by.
-// Mirrors FLAT_CHAIN_STAGES in public/index.html; merge is deliberately
+// Mirrors FLAT_CHAIN_STAGES in web/src/pipelineStages.ts; merge is deliberately
 // absent (no skill backs it).
 const SKILL_BACKED_TABS = [
   { id: 'planning', stage: 'planning' },
@@ -108,12 +108,10 @@ test.describe('stage scope summary', () => {
     await expect(page.getByTestId('stage-scope-dev')).toBeVisible()
   })
 
-  // CR finding: a failed fetch stored `null` into stageScopeCache, which the
-  // pending/loaded guard couldn't tell apart from "never fetched" — so it
-  // re-issued the request (and re-logged the failure) on every subsequent
-  // detail-view open for as long as the endpoint kept failing, contradicting
-  // the "fetched at most once per page load" comment at the openTaskDetail
-  // call site. Closing and reopening the same task exercises exactly that
+  // A failed fetch must be remembered: if it were not, every subsequent
+  // detail-view open would re-issue the request (and re-log the failure) for
+  // as long as the endpoint kept failing, contradicting "fetched at most once
+  // per page load". Closing and reopening the same task exercises exactly that
   // second call, without a full page reload (which would reset the cache
   // for an unrelated reason and prove nothing).
   test('a failed scope fetch is remembered and not retried on a later detail-view open', async ({ page }) => {
@@ -124,6 +122,9 @@ test.describe('stage scope summary', () => {
     })
 
     await page.goto(`/task/${SLUG}?stage=dev`)
+    // The panel (and with it the scope fetch) appears once the graph chunk is
+    // in; counting requests or asserting absence before then proves nothing.
+    await expect(page.getByTestId('detail-panel-footer')).toBeVisible()
     await expect(page.getByTestId('stage-scope-dev')).toHaveCount(0)
     expect(requestCount).toBe(1)
 

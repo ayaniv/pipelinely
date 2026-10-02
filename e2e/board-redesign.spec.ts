@@ -19,7 +19,7 @@ import { gotoBoardTab } from './fixtures/boardTabs'
 // src/taskParser.ts), which no fixture can have. The Working tile itself
 // does not depend solely on that, though — it also counts a task whose
 // STATUS file says "working" even without a confirmed live session (see
-// renderSummaryStrip in public/index.html), so the loop below compares it
+// SummaryStrip), so the loop below compares it
 // against cards carrying that same raw lifecycle status (data-lifecycle-
 // status) rather than the attentionStatus-derived data-status the other
 // two tiles compare against.
@@ -69,23 +69,37 @@ test.describe('board layout', () => {
       { testid: 'pulse-chip-working', selector: '[data-lifecycle-status="working"]:not([data-status="needs-you"])' },
     ]
 
+    // Chip and cards are read in one evaluation and polled together: the
+    // blocked-on-approval poll (dashboard-show-blocked-workers) moves cards in
+    // and out of needs-you at runtime, so two separate reads can straddle a
+    // re-render and disagree for a reason that isn't a bug.
     for (const { testid, selector } of chips) {
-      const cardCount = await page
-        .locator(`[data-testid="task-card"]${selector}`)
-        .count()
-      const chipText = await page.getByTestId(testid).innerText()
-      const chipCount = Number(chipText.match(/\d+/)![0])
-      expect(chipCount, `${testid} should equal the ${selector} card count`).toBe(cardCount)
+      await expect
+        .poll(
+          () =>
+            page.evaluate(
+              ({ testid, selector }) => {
+                const chipText = document.querySelector(`[data-testid="${testid}"]`)?.textContent ?? ''
+                const chipCount = Number(chipText.match(/\d+/)?.[0] ?? NaN)
+                const cardCount = document.querySelectorAll(`[data-testid="task-card"]${selector}`).length
+                return chipCount - cardCount
+              },
+              { testid, selector },
+            ),
+          { message: `${testid} should equal the ${selector} card count` },
+        )
+        .toBe(0)
     }
   })
 
   test('the waiting chip is non-zero, so the consistency check above is not vacuous', async ({ page }) => {
     await page.goto('/')
 
-    const cardCount = await page
-      .locator('[data-testid="task-card"][data-status="needs-you"]')
-      .count()
-    expect(cardCount).toBeGreaterThan(0)
+    // The React frame paints the board once /api/tasks lands, so wait for the
+    // needs-you cards rather than counting them the instant goto returns.
+    const needsYouCards = page.locator('[data-testid="task-card"][data-status="needs-you"]')
+    await expect(needsYouCards.first()).toBeVisible()
+    expect(await needsYouCards.count()).toBeGreaterThan(0)
   })
 
   // Superseded: M2 of the Claude Design v2 alignment removed the card's
@@ -260,7 +274,7 @@ test.describe('done list', () => {
     await gotoBoardTab(page, 'done')
 
     // Each board tab is its own real page now (/backlog, /done — see
-    // switchTab's own tabUrl), so the "did not navigate" assertion is
+    // boardTabUrl in boardTabRoutes.ts), so the "did not navigate" assertion is
     // relative to whichever tab this test landed on, not bare '/'.
     await expect(page).toHaveURL('/done')
     await expect(page.getByTestId('task-detail')).toBeHidden()

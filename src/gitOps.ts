@@ -22,25 +22,69 @@ export async function openPrInBrowser(repoPath: string, prNumber: string): Promi
   }
 }
 
-// Asks GitHub which open PR has `branch` as its head. This is the source of
-// truth findPrNumber falls back to when a task's TIMELINE never recorded a PR
-// number (a `dev PR opened: <title>` note carries none). Returns null both
-// for "no open PR" and for a gh failure — the failure is logged, and the
-// caller treats either as "nothing to link" rather than breaking the board.
-export async function findOpenPrNumberByBranch(repoPath: string, branch: string): Promise<string | null> {
+const BRANCH_PR_LOOKUP_LIMIT = 20
+// One hung gh must not stall the whole snapshot broadcast (refreshTasks awaits
+// every lookup).
+const BRANCH_PR_LOOKUP_TIMEOUT_MS = 15_000
+
+export interface BranchPr {
+  prNumber: string
+  isOpen: boolean
+}
+
+// Asks GitHub which PR has `branch` as its head — the source of truth for a
+// task's PR, ahead of anything a worker wrote in a TIMELINE note. A branch
+// can carry several (an old merged one and a newer open one): OPEN wins,
+// otherwise the most recently created. Fork PRs are ignored: `--head` matches
+// the ref name only, so a fork branch with the same name would otherwise win.
+// Returns null both for "no PR" and for a gh failure — the failure is logged,
+// and the caller treats either as "nothing branch-derived" rather than
+// breaking the board.
+export async function findPrByBranch(repoPath: string, branch: string): Promise<BranchPr | null> {
   try {
     const { stdout } = await execa(
       'gh',
-      ['pr', 'list', '--head', branch, '--state', 'open', '--json', 'number', '--limit', '1'],
-      { cwd: repoPath },
+      ['pr', 'list', '--head', branch, '--state', 'all', '--json', 'number,state,createdAt,isCrossRepository', '--limit', String(BRANCH_PR_LOOKUP_LIMIT)],
+      { cwd: repoPath, timeout: BRANCH_PR_LOOKUP_TIMEOUT_MS },
     )
     const prs: unknown = JSON.parse(stdout)
-    if (!Array.isArray(prs) || prs.length === 0) return null
-    const number: unknown = prs[0]?.number
-    return typeof number === 'number' ? String(number) : null
+    if (!Array.isArray(prs)) return null
+
+    const sameRepoPrs = prs.filter(
+      (pr): pr is { number: number; state: string; createdAt: string; isCrossRepository: false } =>
+        typeof pr?.number === 'number' &&
+        typeof pr?.state === 'string' &&
+        typeof pr?.createdAt === 'string' &&
+        pr?.isCrossRepository === false,
+    )
+    const ranked = [...sameRepoPrs].sort(
+      (a, b) => Number(b.state === 'OPEN') - Number(a.state === 'OPEN') || b.createdAt.localeCompare(a.createdAt),
+    )
+    if (ranked.length === 0) return null
+    return { prNumber: String(ranked[0].number), isOpen: ranked[0].state === 'OPEN' }
   } catch (err) {
-    console.error(`Failed to look up the open PR for branch ${branch} in ${repoPath}:`, err)
+    console.error(`Failed to look up the PR for branch ${branch} in ${repoPath}:`, err)
     return null
+  }
+}
+
+// Reads which branch a PR's head is on, so Open PR can refuse a PR that isn't
+// the task's own, the same way the merge gate does.
+export async function readPrHeadBranch(
+  repoPath: string,
+  prNumber: string,
+): Promise<{ ok: true; headRefName: string; isCrossRepository: boolean } | { ok: false; error: string }> {
+  try {
+    const { stdout } = await execa('gh', ['pr', 'view', prNumber, '--json', 'headRefName,isCrossRepository'], { cwd: repoPath })
+    const view: unknown = JSON.parse(stdout)
+    const { headRefName, isCrossRepository } = (view ?? {}) as Record<string, unknown>
+    if (typeof headRefName !== 'string' || !headRefName || typeof isCrossRepository !== 'boolean') {
+      throw new Error('gh pr view returned data in an unexpected shape')
+    }
+    return { ok: true, headRefName, isCrossRepository }
+  } catch (err) {
+    console.error(`Failed to read PR #${prNumber}'s head branch in ${repoPath}:`, err)
+    return { ok: false, error: errorMessage(err) }
   }
 }
 
@@ -194,4 +238,38 @@ export async function commitAndRemoveWorktree(
   }
 
   return { ok: true }
+}
+
+// Refs a task branch might have forked from, most authoritative first.
+const BASE_REF_CANDIDATES = ['origin/HEAD', 'origin/master', 'origin/main', 'master', 'main']
+
+// A dashboard refresh reads every task waiting at a QA-entry marker, and a
+// task that needs QA stays there for days. The diff only changes when the
+// branch's HEAD does, so it is cached per worktree keyed on that sha.
+const changedFilesCache = new Map<string, { headSha: string; files: string[] }>()
+
+// The files a task's branch changes relative to the base it forked from — the
+// PR's file list, read locally so a dashboard refresh needs no network call.
+// null (logged) when the list cannot be read, kept distinct from [] ("changed
+// nothing") so a caller never mistakes an unreadable diff for an empty one.
+export async function listBranchChangedFiles(worktreePath: string): Promise<string[] | null> {
+  try {
+    const { stdout: headSha } = await execa('git', ['-C', worktreePath, 'rev-parse', 'HEAD'])
+    const cached = changedFilesCache.get(worktreePath)
+    if (cached?.headSha === headSha) return cached.files
+
+    for (const baseRef of BASE_REF_CANDIDATES) {
+      const hasBaseRef = await execa('git', ['-C', worktreePath, 'rev-parse', '--verify', '--quiet', baseRef], { reject: false })
+      if (hasBaseRef.exitCode !== 0) continue
+      const { stdout } = await execa('git', ['-C', worktreePath, 'diff', '--name-only', `${baseRef}...HEAD`])
+      const files = stdout.split('\n').filter(Boolean)
+      changedFilesCache.set(worktreePath, { headSha, files })
+      return files
+    }
+    console.error(`No base ref found to diff ${worktreePath} against`)
+    return null
+  } catch (err) {
+    console.error(`Failed to list changed files in ${worktreePath}:`, err)
+    return null
+  }
 }

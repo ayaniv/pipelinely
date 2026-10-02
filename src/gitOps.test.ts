@@ -3,7 +3,7 @@ import { execa } from 'execa'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { findOpenPrNumberByBranch, mergePullRequest, deleteRemoteBranch, removeWorktreeAndBranch, commitAndRemoveWorktree } from './gitOps.js'
+import { findPrByBranch, readPrHeadBranch, mergePullRequest, deleteRemoteBranch, removeWorktreeAndBranch, commitAndRemoveWorktree, listBranchChangedFiles } from './gitOps.js'
 
 // Defaults to the REAL execa (every existing test above keeps shelling out
 // to real git, unaffected) — a test that needs a deterministic `gh` result
@@ -294,27 +294,50 @@ describe('commitAndRemoveWorktree', () => {
   })
 })
 
-describe('findOpenPrNumberByBranch', () => {
-  it('asks GitHub for the open PR whose head is the branch and returns its number', async () => {
-    vi.mocked(execa).mockResolvedValueOnce({ stdout: '[{"number":108}]' } as never)
-    const result = await findOpenPrNumberByBranch('/repo', 'claude/fix-header-ctx-progress-bar')
-    expect(result).toBe('108')
+describe('findPrByBranch', () => {
+  const pr = (number: number, state: string, createdAt: string, isCrossRepository = false) => ({ number, state, createdAt, isCrossRepository })
+
+  it('asks GitHub, with a timeout, for every PR (any state) whose head is the branch', async () => {
+    vi.mocked(execa).mockResolvedValueOnce({ stdout: JSON.stringify([pr(108, 'OPEN', '2026-09-20T10:00:00Z')]) } as never)
+    const result = await findPrByBranch('/repo', 'claude/fix-header-ctx-progress-bar')
+    expect(result).toEqual({ prNumber: '108', isOpen: true })
     expect(execa).toHaveBeenCalledWith(
       'gh',
-      ['pr', 'list', '--head', 'claude/fix-header-ctx-progress-bar', '--state', 'open', '--json', 'number', '--limit', '1'],
-      { cwd: '/repo' },
+      ['pr', 'list', '--head', 'claude/fix-header-ctx-progress-bar', '--state', 'all', '--json', 'number,state,createdAt,isCrossRepository', '--limit', '20'],
+      { cwd: '/repo', timeout: 15_000 },
     )
   })
 
-  it('is null when the branch has no open PR', async () => {
-    vi.mocked(execa).mockResolvedValueOnce({ stdout: '[]' } as never)
-    expect(await findOpenPrNumberByBranch('/repo', 'claude/nothing')).toBeNull()
+  it('prefers the OPEN PR over a newer merged one', async () => {
+    vi.mocked(execa).mockResolvedValueOnce({
+      stdout: JSON.stringify([pr(120, 'MERGED', '2026-09-24T10:00:00Z'), pr(110, 'OPEN', '2026-09-20T10:00:00Z')]),
+    } as never)
+    expect(await findPrByBranch('/repo', 'claude/x')).toEqual({ prNumber: '110', isOpen: true })
   })
 
-  it('is null, and logs, when gh fails', async () => {
+  it('with no OPEN PR, picks the most recently created one and reports it as not open', async () => {
+    vi.mocked(execa).mockResolvedValueOnce({
+      stdout: JSON.stringify([pr(101, 'CLOSED', '2026-09-01T10:00:00Z'), pr(105, 'MERGED', '2026-09-10T10:00:00Z')]),
+    } as never)
+    expect(await findPrByBranch('/repo', 'claude/x')).toEqual({ prNumber: '105', isOpen: false })
+  })
+
+  it('ignores a fork PR that merely reuses the branch name, even when it is OPEN', async () => {
+    vi.mocked(execa).mockResolvedValueOnce({
+      stdout: JSON.stringify([pr(200, 'OPEN', '2026-09-24T10:00:00Z', true), pr(110, 'MERGED', '2026-09-20T10:00:00Z')]),
+    } as never)
+    expect(await findPrByBranch('/repo', 'claude/x')).toEqual({ prNumber: '110', isOpen: false })
+  })
+
+  it('is null when the branch has no PR', async () => {
+    vi.mocked(execa).mockResolvedValueOnce({ stdout: '[]' } as never)
+    expect(await findPrByBranch('/repo', 'claude/nothing')).toBeNull()
+  })
+
+  it('is null, and logs, when gh fails or times out', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.mocked(execa).mockRejectedValueOnce(new Error('gh: not authenticated'))
-    expect(await findOpenPrNumberByBranch('/repo', 'claude/x')).toBeNull()
+    expect(await findPrByBranch('/repo', 'claude/x')).toBeNull()
     expect(errorSpy).toHaveBeenCalled()
     errorSpy.mockRestore()
   })
@@ -322,7 +345,93 @@ describe('findOpenPrNumberByBranch', () => {
   it('is null, and logs, when gh returns something that is not the expected JSON', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.mocked(execa).mockResolvedValueOnce({ stdout: 'not json' } as never)
-    expect(await findOpenPrNumberByBranch('/repo', 'claude/x')).toBeNull()
+    expect(await findPrByBranch('/repo', 'claude/x')).toBeNull()
+    expect(errorSpy).toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
+})
+
+describe('readPrHeadBranch', () => {
+  it('reads the head branch and fork flag of a PR', async () => {
+    vi.mocked(execa).mockResolvedValueOnce({ stdout: '{"headRefName":"claude/x","isCrossRepository":false}' } as never)
+    expect(await readPrHeadBranch('/repo', '42')).toEqual({ ok: true, headRefName: 'claude/x', isCrossRepository: false })
+    expect(execa).toHaveBeenCalledWith('gh', ['pr', 'view', '42', '--json', 'headRefName,isCrossRepository'], { cwd: '/repo' })
+  })
+
+  it('fails, and logs, when gh fails', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(execa).mockRejectedValueOnce(new Error('no such PR'))
+    const result = await readPrHeadBranch('/repo', '42')
+    expect(result).toEqual({ ok: false, error: expect.stringContaining('no such PR') })
+    expect(errorSpy).toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
+
+  it('fails, and logs, when gh returns an unexpected shape', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(execa).mockResolvedValueOnce({ stdout: '{"headRefName":5}' } as never)
+    expect((await readPrHeadBranch('/repo', '42')).ok).toBe(false)
+    expect(errorSpy).toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
+})
+
+describe('listBranchChangedFiles', () => {
+  let repoPath: string
+  let worktreePath: string
+
+  beforeEach(async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'gitops-changed-'))
+    repoPath = path.join(root, 'repo')
+    worktreePath = path.join(root, 'worktree')
+    await fs.mkdir(repoPath, { recursive: true })
+    await execa('git', ['init', '-q', '-b', 'master'], { cwd: repoPath })
+    await execa('git', ['config', 'user.email', 'test@example.com'], { cwd: repoPath })
+    await execa('git', ['config', 'user.name', 'Test'], { cwd: repoPath })
+    await fs.writeFile(path.join(repoPath, 'README.md'), 'init\n')
+    await execa('git', ['add', 'README.md'], { cwd: repoPath })
+    await execa('git', ['commit', '-q', '-m', 'init'], { cwd: repoPath })
+    await execa('git', ['worktree', 'add', '-q', '-b', 'claude/x', worktreePath], { cwd: repoPath })
+  })
+
+  afterEach(async () => {
+    await fs.rm(path.dirname(repoPath), { recursive: true, force: true })
+  })
+
+  it('lists the files the branch changed relative to its base', async () => {
+    await fs.mkdir(path.join(worktreePath, 'e2e'))
+    await fs.writeFile(path.join(worktreePath, 'e2e', 'a.spec.ts'), 'x\n')
+    await fs.writeFile(path.join(worktreePath, 'README.md'), 'changed\n')
+    await execa('git', ['add', '-A'], { cwd: worktreePath })
+    await execa('git', ['commit', '-q', '-m', 'work'], { cwd: worktreePath })
+
+    expect((await listBranchChangedFiles(worktreePath))?.sort()).toEqual(['README.md', 'e2e/a.spec.ts'])
+  })
+
+  it('returns an empty list, not null, for a branch with no changes', async () => {
+    expect(await listBranchChangedFiles(worktreePath)).toEqual([])
+  })
+
+  it('reuses the diff while HEAD is unchanged and recomputes after a new commit', async () => {
+    await fs.writeFile(path.join(worktreePath, 'a.txt'), 'a\n')
+    await execa('git', ['add', '-A'], { cwd: worktreePath })
+    await execa('git', ['commit', '-q', '-m', 'a'], { cwd: worktreePath })
+    const diffCalls = () => vi.mocked(execa).mock.calls.filter(([, args]) => (args as string[]).includes('diff')).length
+
+    await listBranchChangedFiles(worktreePath)
+    await listBranchChangedFiles(worktreePath)
+    expect(diffCalls()).toBe(1)
+
+    await fs.writeFile(path.join(worktreePath, 'b.txt'), 'b\n')
+    await execa('git', ['add', '-A'], { cwd: worktreePath })
+    await execa('git', ['commit', '-q', '-m', 'b'], { cwd: worktreePath })
+    expect((await listBranchChangedFiles(worktreePath))?.sort()).toEqual(['a.txt', 'b.txt'])
+    expect(diffCalls()).toBe(2)
+  })
+
+  it('returns null and logs when the path is not a git worktree', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(await listBranchChangedFiles(path.join(path.dirname(repoPath), 'missing'))).toBeNull()
     expect(errorSpy).toHaveBeenCalled()
     errorSpy.mockRestore()
   })

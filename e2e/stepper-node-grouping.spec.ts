@@ -3,8 +3,8 @@ import { test, expect } from '@playwright/test'
 // Collapses three of the pipeline stepper's eight/six visible nodes into
 // their parent, display-only (see TASK.md): Plan Review folds into Planning,
 // CR fixes folds into CR, QA fixes folds into QA. The underlying Stage enum,
-// TIMELINE stage values, and each tab's own routing (detailL2Tab/STATUS/CTA)
-// are untouched — renderStageChain (public/index.html) just renders fewer
+// TIMELINE stage values, and each tab's own routing (selected stage/STATUS/CTA)
+// are untouched — the stage chain (web/src/views/task-detail/graph) just renders fewer
 // nodes, each one's state/note reflecting whichever of its folded sub-stages
 // is most advanced.
 //

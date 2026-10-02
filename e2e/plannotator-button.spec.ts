@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 
 // Covers the "Open in Plannotator" button on the Plan/Plan Review tab
-// (renderPlanTab in public/index.html): disabled until a task has a tracked
+// (PlanTab): disabled until a task has a tracked
 // tech-design.md, enabled once it does, and POSTs /annotate-plan/:slug on
 // click — which server.ts dispatches to a dedicated tmux/iTerm2 session (see
 // tech-design.md's "Decision 1"), never the orchestrator's own.

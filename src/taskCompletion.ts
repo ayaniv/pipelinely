@@ -16,7 +16,7 @@ export async function markTaskDone(tasksDir: string, task: CompletionTask): Prom
 
   let cleanupError: string | null = null
   if (task.worktree) {
-    const repoPath = path.join(reposDir(), task.repo)
+    const repoPath = path.join(reposDir(tasksDir), task.repo)
     const result = await removeWorktreeAndBranch(repoPath, task.worktree, task.branch)
     if (!result.ok) cleanupError = result.error
   }
@@ -27,6 +27,7 @@ export type MergeTaskOutcome =
   | { outcome: 'no-pr' }
   | { outcome: 'gate-unavailable'; error: string }
   | { outcome: 'blocked'; prNumber: string; blockers: MergeBlocker[] }
+  | { outcome: 'branch-mismatch'; prNumber: string; expectedBranch: string; actualBranch: string }
   | { outcome: 'merge-failed'; prNumber: string; error: string }
   | { outcome: 'merged'; prNumber: string; cleanupError: string | null }
 
@@ -40,9 +41,19 @@ export async function mergeTask(tasksDir: string, task: CompletionTask): Promise
   const prNumber = findPrNumber(task)
   if (!prNumber) return { outcome: 'no-pr' }
 
-  const repoPath = path.join(reposDir(), task.repo)
+  const repoPath = path.join(reposDir(tasksDir), task.repo)
   const gate = await checkMergeReadiness(repoPath, prNumber)
   if (!gate.ok) return { outcome: 'gate-unavailable', error: gate.error }
+
+  // Last line of defence against a mis-resolved PR number, checked BEFORE the
+  // gate's own blockers: --match-head-commit pins the SHA but not whose branch
+  // it is, so an open + green PR belonging to a different task would otherwise
+  // be merged, and a wrong PR that is MERGED must say "wrong PR", not the
+  // misleading "PR is not open".
+  const actualBranch = gate.readiness.headRefName
+  if (actualBranch && actualBranch !== task.branch) {
+    return { outcome: 'branch-mismatch', prNumber, expectedBranch: task.branch, actualBranch }
+  }
   if (!gate.readiness.ready) return { outcome: 'blocked', prNumber, blockers: gate.readiness.blockers }
 
   const { headSha, headRefName, isCrossRepository } = gate.readiness

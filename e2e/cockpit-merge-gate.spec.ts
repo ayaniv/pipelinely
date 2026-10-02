@@ -103,11 +103,15 @@ test.describe('Merge button — the preflight gate refuses', () => {
       await expect(mergeBanner(page)).toBeVisible()
       const linesBefore = await bannerLines(page)
 
-      // Same technique as e2e/focus-button-rerender-race.spec.ts: forces the
-      // exact re-render an SSE broadcast triggers while this view is open —
-      // the banner is client state (mergeBannerBySlug) a re-render reads,
-      // not DOM a re-render wipes.
-      await page.evaluate(() => { renderDashboard(currentTasks) })
+      // Drives the exact re-render an SSE broadcast triggers while this view
+      // is open — the banner is client state (data/clientState.ts) a re-render
+      // reads, not DOM a re-render wipes. A real same-content push through the
+      // page's own es.onmessage — the same technique
+      // e2e/react-task-detail.spec.ts uses — is what an SSE broadcast does.
+      await page.evaluate(async () => {
+        const snapshot = await fetch('/api/tasks').then((res) => res.json())
+        es.onmessage(new MessageEvent('message', { data: JSON.stringify(snapshot) }))
+      })
 
       await page.clock.install()
       await page.clock.fastForward(10_000)

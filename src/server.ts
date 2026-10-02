@@ -1,5 +1,8 @@
+import os from 'node:os'
 import express from 'express'
 import chokidar from 'chokidar'
+import { createApprovalPollState, createApprovalTicker, pollApprovalPrompts, productionApprovalWatchDeps } from './approvalWatch.js'
+import type { ApprovalPrompt } from './approvalPrompt.js'
 import {
   parseAllTasks,
   computeActiveProject,
@@ -19,6 +22,8 @@ import {
   parseQaCaseTitles,
   readSettings,
   computeAutoDispatch,
+  recordQaSkipped,
+  appendTimelineLine,
   DEFAULT_SETTINGS,
   parseSummarySection,
   stripSummarySection,
@@ -26,6 +31,7 @@ import {
   isBacklogProject,
 } from './taskParser.js'
 import type { PlanTestGroup } from './types.js'
+import { runAutoActions } from './autoActions.js'
 import { renderMarkdownToHtml } from './markdown.js'
 import { loadStageScopes } from './stageScope.js'
 import {
@@ -45,22 +51,31 @@ import {
   normalizeWhitespace,
   type TrackedSessionPasteResult,
 } from './focusTab.js'
-import { commitAndRemoveWorktree, findOpenPrNumberByBranch, openPrInBrowser } from './gitOps.js'
+import { commitAndRemoveWorktree, findPrByBranch, openPrInBrowser, readPrHeadBranch } from './gitOps.js'
 import { attachResolvedPrNumbers, createPrNumberCache, repoPrNumberLookup } from './prLookup.js'
 import { markTaskDone, mergeTask } from './taskCompletion.js'
-import { formatMergeBlockers } from './mergeGate.js'
+import { formatBranchMismatch, formatMergeBlockers } from './mergeGate.js'
 import { withOrchestratorLock, OrchestratorLockTimeoutError } from './orchestratorLock.js'
 import { composeBatchMessage, SAFE_TOKEN, renderBacklogProjectClause } from './batchDispatch.js'
-import { ActiveProjectProgress, AutoModeOverride, BacklogItem, DoneDateGroup, Settings, Stage, Task } from './types.js'
+import { ActiveProjectProgress, AutoModeOverride, BacklogItem, DoneDateGroup, Settings, Snapshot, Stage, Task } from './types.js'
 import path from 'path'
 import fs from 'node:fs/promises'
 import type { Server } from 'node:http'
 import open from 'open'
 import { fileURLToPath } from 'url'
 import { defaultPortForCwd } from './derivePort.js'
+import { resolveBindHosts, listenOnHosts, wideBindWarnings, dashboardUrl } from './bindHosts.js'
 import { resolveTasksDir } from './tasksDir.js'
 import { requestIsRemote } from './remoteAccess.js'
+import { checkAnswerDialogRequest } from './answerDialogGuard.js'
+import { answerDialog, productionDialogAnswerDeps } from './dialogAnswer.js'
+import { readOrchestratorTmux } from './orchestratorTmux.js'
+import { BAD_REQUEST_RESPONSE, UNKNOWN_TASK_RESPONSE, parseAnswerBody, responseForAnswerResult, responseForGuardRefusal } from './answerDialogRoute.js'
+import type { AnswerDialogResponseBody } from './answerDialogWire.js'
+import { installRemoteAuth, requestAccess } from './remoteAuth.js'
+import { REMOTE_TOKEN_FILE_ENV_VAR, readRemoteToken, resolveRemoteTokenPath } from './remoteToken.js'
 import { sanitizeInheritedEnv, SERVER_STARTUP_LEAK_VARS } from './sanitizeInheritedEnv.js'
+import { findResultDoc } from './resultDoc.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -111,7 +126,7 @@ const NOT_CANONICAL_ERROR =
 // derived range so a worktree's dev server and its own e2e webServer, both
 // commonly alive at once, can never collide with each other either.
 const PORT = parseInt(process.env.PORT ?? String(defaultPortForCwd(process.cwd(), 3030, 3030, 500)), 10)
-// Resolved off __dirname, the same way `GET /` resolves public/index.html —
+// Resolved off __dirname, the same way `GET /` resolves public/dist/index.html —
 // deliberately not TASKS_DIR/REPOS_DIR (env vars, and stale fixture paths
 // are known to leak into iTerm2 tabs through them). A worktree's own server
 // reads that worktree's own .claude/skills, previewing its own skill edits;
@@ -135,9 +150,6 @@ const BACKLOG_PATH = path.join(TASKS_DIR, 'BACKLOG.md')
 // Written by the /pipelinely skill on startup — its own iTerm2 session
 // id, so the backlog's "Start" button knows which tab to paste into.
 const ORCHESTRATOR_SESSION_PATH = path.join(TASKS_DIR, 'ORCHESTRATOR_SESSION')
-// Also written by /pipelinely, but only when it's running inside tmux —
-// the session name to reattach to when the recorded iTerm tab is gone.
-const ORCHESTRATOR_TMUX_PATH = path.join(TASKS_DIR, 'ORCHESTRATOR_TMUX')
 // Orchestrator-level preferences — see readSettings/parseSettingsContent in
 // taskParser.ts. Currently just the global auto-mode default.
 const SETTINGS_PATH = path.join(TASKS_DIR, 'SETTINGS.json')
@@ -207,7 +219,8 @@ async function writeToOrchestratorLocked(
   write: (sessionId: string, text: string) => Promise<boolean>,
 ): Promise<OrchestratorWriteResult> {
   const sessionId = (await fs.readFile(ORCHESTRATOR_SESSION_PATH, 'utf-8').catch(() => '')).trim()
-  const tmuxSession = (await fs.readFile(ORCHESTRATOR_TMUX_PATH, 'utf-8').catch(() => '')).trim()
+  // The session to reattach to when the recorded iTerm tab is gone; an unreadable file counts as none.
+  const tmuxSession = (await readOrchestratorTmux(TASKS_DIR).catch(() => null)) ?? ''
 
   // Identity (FINDINGS.md item 2): the lock alone does nothing about a
   // pointer that was already wrong when the critical section opened — a
@@ -383,9 +396,20 @@ async function dispatchAndRecordAuto(slug: string, stage: Stage): Promise<void> 
   }
 
   try {
-    await fs.appendFile(path.join(TASKS_DIR, slug, 'TIMELINE'), `${new Date().toISOString()} ${stage} ${note}\n`)
+    await appendTimelineLine(path.join(TASKS_DIR, slug), stage, note)
   } catch (err) {
     console.error(`[auto-mode] failed to append TIMELINE for ${slug}:`, err)
+  }
+}
+
+// The auto-mode outcome for a task whose QA is not applicable: nothing is
+// pasted anywhere, the task just moves to "ready to merge". Merging stays the
+// developer's click.
+async function skipQaAndRecordAuto(slug: string, reason: string): Promise<void> {
+  try {
+    await recordQaSkipped(TASKS_DIR, slug, reason)
+  } catch (err) {
+    console.error(`[auto-mode] failed to record the QA skip for ${slug}:`, err)
   }
 }
 
@@ -393,7 +417,7 @@ async function runAutoAdvancePassOnce(): Promise<void> {
   // Phase 1 — synchronous, no await anywhere in it. Interleaving
   // "decide, record, await" per task would leave the map half-updated
   // across an await point, which the rerun flag above can observe.
-  const toDispatch: { slug: string; stage: Stage }[] = []
+  const toDispatch: { slug: string; stage: Stage; skipReason?: string }[] = []
   const seenSlugs = new Set<string>()
 
   for (const task of currentTasks) {
@@ -407,7 +431,7 @@ async function runAutoAdvancePassOnce(): Promise<void> {
     // 'working' to a new task's STATUS before it ever opens the tab, so no
     // task dir's first observed state is an eligible handoff.
     if (lastAutoKey.has(task.slug) && auto !== null && key !== lastAutoKey.get(task.slug) && task.autoMode) {
-      toDispatch.push({ slug: task.slug, stage: auto.stage })
+      toDispatch.push({ slug: task.slug, stage: auto.stage, skipReason: auto.skipReason })
     }
 
     // Set for EVERY task, whether or not it dispatched and whether or not
@@ -425,9 +449,7 @@ async function runAutoAdvancePassOnce(): Promise<void> {
   // the time the first await happens, so a failed dispatch is never
   // retried on the next refresh, and a mid-pass rerun re-reads a
   // consistent map.
-  for (const { slug, stage } of toDispatch) {
-    await dispatchAndRecordAuto(slug, stage)
-  }
+  await runAutoActions(toDispatch, { dispatch: dispatchAndRecordAuto, skipQa: skipQaAndRecordAuto })
 }
 
 // Shared 503 response for every pointer-touching route that got
@@ -515,7 +537,21 @@ function respondTrackedSessionWriteFailure(
   })
 }
 
+async function isRemoteAccessEnabled(): Promise<boolean> {
+  try {
+    return (await readRemoteToken(currentRemoteTokenFile())) !== null
+  } catch (err) {
+    console.error('remote-auth: cannot read the remote token file; treating remote access as off for the startup warning', err)
+    return false
+  }
+}
+
 export const app = express()
+// First, ahead of the body parser and every static mount, so nothing is
+// served (and no remote body is parsed) before the gate has decided. Resolved
+// per request so `remote-token rotate` and `disable` apply with no restart.
+const currentRemoteTokenFile = () => resolveRemoteTokenPath(process.env, os.homedir())
+installRemoteAuth(app, { readToken: () => readRemoteToken(currentRemoteTokenFile()) })
 app.use(express.json())
 
 let currentTasks: Task[] = []
@@ -533,7 +569,7 @@ const sseClients: Set<express.Response> = new Set()
 // shipped live-only-on-broadcast and absent on a cold /api/tasks load (or
 // vice versa). Anything added to the snapshot going forward belongs here,
 // not in a second copy at either call site.
-function buildSnapshot() {
+function buildSnapshot(): Snapshot {
   return {
     tasks: currentTasks,
     activeProject: currentActiveProject,
@@ -558,10 +594,14 @@ function broadcastTasks(): void {
 }
 
 const prNumberCache = createPrNumberCache()
-const lookUpPrNumber = repoPrNumberLookup(findOpenPrNumberByBranch)
+const lookUpPrNumber = repoPrNumberLookup(findPrByBranch, TASKS_DIR)
+
+// slug -> the dialog a worker's tmux session is stopped on, owned by the
+// approval poll below and stamped onto tasks by parseAllTasks.
+let currentApprovalPrompts = new Map<string, ApprovalPrompt>()
 
 async function refreshTasks(): Promise<void> {
-  const parsedTasks = await parseAllTasks(TASKS_DIR, currentSettings)
+  const parsedTasks = await parseAllTasks(TASKS_DIR, currentSettings, currentApprovalPrompts)
   currentTasks = await attachResolvedPrNumbers(parsedTasks, lookUpPrNumber, prNumberCache)
   currentActiveProject = computeActiveProject(currentTasks)
   currentDoneGroups = groupDoneTasksByDate(currentTasks)
@@ -598,6 +638,21 @@ async function refreshOrchestratorContext(): Promise<void> {
   broadcastTasks()
 }
 
+// public/dist/ is Vite's build output (web/vite.config.ts's build.outDir),
+// written by `npm run build:web` — react-migration M0's bundle. Missing
+// until that has run at least once (or after `rm -rf public/dist`), which
+// sendDashboardShell below treats as a named 500, not a bare ENOENT, so the
+// failure points at the fix instead of reading like a stack trace.
+const DASHBOARD_DIST = path.join(__dirname, '..', 'public', 'dist')
+
+function sendDashboardShell(_req: express.Request, res: express.Response): void {
+  res.sendFile(path.join(DASHBOARD_DIST, 'index.html'), (err) => {
+    if (!err) return
+    console.error('dashboard bundle missing — run npm run build:web', err)
+    if (!res.headersSent) res.status(500).send('dashboard bundle missing — run npm run build:web')
+  })
+}
+
 // The design's own illustrations (Claude Design project 76cb2c13…): the
 // sidebar app mark and the two section-header heads. Scoped to public/art
 // rather than public/ so this never becomes an accidental way to serve the
@@ -607,52 +662,54 @@ app.use('/art', express.static(path.join(__dirname, '..', 'public', 'art'), {
   maxAge: '1h',
 }))
 
+// Vite's own hashed JS/CSS bundle — scoped to dist/assets exactly like
+// /art above, so it can't also serve the rest of dist/ (e.g. dist/index.html
+// by name, which react-shell.spec.ts checks for directly).
+app.use('/assets', express.static(path.join(DASHBOARD_DIST, 'assets'), {
+  fallthrough: false,
+  maxAge: '1h',
+}))
+
+// Self-hosted Figtree + JetBrains Mono woff2 files (web/public/fonts/, copied
+// into dist/fonts by Vite's public-dir passthrough) — the @font-face rules in
+// app.css point here so the dashboard never asks Google Fonts. Scoped like
+// /assets above. The filenames aren't content-hashed, so keep the cache short —
+// a deliberate font update must reach browsers within an hour, not a week.
+app.use('/fonts', express.static(path.join(DASHBOARD_DIST, 'fonts'), {
+  fallthrough: false,
+  maxAge: '1h',
+}))
+
 // GET / — serve the dashboard
-app.get('/', (_, res) => {
-  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'))
-})
+app.get('/', sendDashboardShell)
 
 // GET /task/:slug — same dashboard shell; the client reads location.pathname
 // on boot and opens straight into that task's detail view. Kept as a plain
 // mirror of GET / (not a redirect) so a direct load/refresh here works
 // without a round trip, and the client owns which task actually exists.
-app.get('/task/:slug', (_, res) => {
-  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'))
-})
+app.get('/task/:slug', sendDashboardShell)
 
 // GET /settings — same dashboard shell, opened straight into the settings
 // page (mirrors GET /task/:slug's own reasoning). Distinct from POST
 // /settings below, which actually writes the setting — Express dispatches
 // on method, so the two coexist on the same path with no conflict.
-app.get('/settings', (_, res) => {
-  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'))
-})
+app.get('/settings', sendDashboardShell)
 
 // GET /help — same dashboard shell, opened straight into the help page
 // (mirrors GET /settings' own reasoning).
-app.get('/help', (_, res) => {
-  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'))
-})
+app.get('/help', sendDashboardShell)
 
 // GET /docs — same dashboard shell, opened straight into the Docs page
 // (mirrors GET /help's own reasoning).
-app.get('/docs', (_, res) => {
-  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'))
-})
+app.get('/docs', sendDashboardShell)
 
 // GET /backlog, GET /done, GET /you — same dashboard shell, opened straight
 // into that board tab. '/' itself is the fourth board tab (In Progress) —
 // see the client's own DEFAULT_TAB/tabUrl, which is why it doesn't need a
 // route of its own here.
-app.get('/backlog', (_, res) => {
-  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'))
-})
-app.get('/done', (_, res) => {
-  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'))
-})
-app.get('/you', (_, res) => {
-  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'))
-})
+app.get('/backlog', sendDashboardShell)
+app.get('/done', sendDashboardShell)
+app.get('/you', sendDashboardShell)
 
 // GET /api/tasks — snapshot for initial page load
 app.get('/api/tasks', (_, res) => {
@@ -667,7 +724,7 @@ app.get('/api/tasks', (_, res) => {
 // whatever the last connecting client happened to be — the failure mode
 // being a desktop tab told it is remote. Read-only, no side effects, no lock.
 app.get('/api/access', (req, res) => {
-  res.json({ isRemoteAccess: requestIsRemote(req) })
+  res.json({ isRemoteAccess: requestIsRemote(req), hasRemoteSession: requestAccess(res) === 'remote-authenticated' })
 })
 
 // POST /weekly-focus — free-text banner describing this week's focus
@@ -739,6 +796,46 @@ app.get('/events', (req, res) => {
   req.on('close', () => sseClients.delete(res))
 })
 
+// POST /answer-dialog/:slug — types exactly one key into a worker's tmux
+// pane to answer the Claude Code dialog it is stopped on. Only ever reached by
+// an explicit click: nothing else in the server calls answerDialog
+// (dialogAnswer.contract.test.ts). Every refusal is `{ reason, error }`; see
+// dialogAnswer.ts for the safety rules.
+const productionDialogAnswerDepsForTasksDir = productionDialogAnswerDeps(TASKS_DIR)
+
+app.post('/answer-dialog/:slug', async (req, res) => {
+  const { slug } = req.params
+  try {
+    const refusal = checkAnswerDialogRequest(req)
+    if (refusal) {
+      console.warn(`[answerDialog] refused ${slug} from ${req.socket.remoteAddress ?? 'unknown-peer'}: ${refusal}`)
+      const { status, body } = responseForGuardRefusal(refusal)
+      return res.status(status).json(body)
+    }
+    if (!isCanonicalDispatchInstance()) return res.status(403).json({ reason: 'not-canonical', error: NOT_CANONICAL_ERROR } satisfies AnswerDialogResponseBody)
+
+    const answer = parseAnswerBody(req.body)
+    if (!answer) return res.status(BAD_REQUEST_RESPONSE.status).json(BAD_REQUEST_RESPONSE.body)
+    const task = currentTasks.find((candidate) => candidate.slug === slug)
+    if (!task) return res.status(UNKNOWN_TASK_RESPONSE.status).json(UNKNOWN_TASK_RESPONSE.body)
+
+    const result = await answerDialog(
+      task,
+      { slug, ...answer, peer: req.socket.remoteAddress ?? 'unknown-peer', userAgent: req.get('user-agent') ?? null },
+      { publishedPrompt: task.approvalPrompt ?? null, tasks: currentTasks },
+      productionDialogAnswerDepsForTasksDir,
+    )
+    // So the card reflects the new pane in this same push, not up to a poll interval later.
+    if (result.outcome === 'answered' || result.outcome === 'unconfirmed') await approvalTick()
+    const { status, body } = responseForAnswerResult(result)
+    return res.status(status).json(body)
+  } catch (err) {
+    console.error(`[answerDialog] ${slug} failed:`, err)
+    // approvalTick() can throw after a key went out, so this must not say nothing was sent.
+    return res.status(500).json({ reason: 'internal', error: 'Answering failed unexpectedly, so it is unknown whether a key was sent. Check the terminal.' } satisfies AnswerDialogResponseBody)
+  }
+})
+
 // POST /focus/:slug — focus iTerm2 tab, or reattach to its tmux session
 // if the tab closed but the session backing it is still alive. If neither
 // is reachable (e.g. after a computer restart wiped both), falls back to
@@ -782,7 +879,7 @@ app.post('/focus/:slug', async (req, res) => {
 
     // outcome === 'none': neither the recorded iTerm session nor its tmux
     // session is alive. Mirror what a developer would do by hand.
-    const message = buildDeadSessionMessage(req.params.slug, task)
+    const message = buildDeadSessionMessage(req.params.slug, task, TASKS_DIR)
     const result = await writeToOrchestrator(message, pasteIntoSession)
     if (result.status === 'ok') return res.status(202).json({ fallback: true })
 
@@ -847,7 +944,7 @@ app.post('/orchestrator/tab', async (req, res) => {
     // consistent — see orchestratorLock.ts's own comment.
     const { outcome, sessionId } = await withOrchestratorLock(TASKS_DIR, async () => {
       const sessionId = (await fs.readFile(ORCHESTRATOR_SESSION_PATH, 'utf-8').catch(() => '')).trim() || null
-      const tmuxSession = (await fs.readFile(ORCHESTRATOR_TMUX_PATH, 'utf-8').catch(() => '')).trim() || null
+      const tmuxSession = await readOrchestratorTmux(TASKS_DIR).catch(() => null)
       const outcome = await reattachOrFocus('orchestrator', sessionId, tmuxSession, ORCHESTRATOR_SESSION_PATH)
       return { outcome, sessionId }
     })
@@ -949,9 +1046,22 @@ app.post('/open-pr/:slug', async (req, res) => {
     if (!task) return res.sendStatus(404)
 
     const prNumber = findPrNumber(task)
-    if (!prNumber) return res.sendStatus(404)
+    if (!prNumber) {
+      console.error(`Open PR refused for ${req.params.slug}: no PR recorded`)
+      return res.status(404).json({ error: 'No PR recorded for this task yet' })
+    }
 
-    const repoPath = path.join(reposDir(), task.repo)
+    const repoPath = path.join(reposDir(TASKS_DIR), task.repo)
+    // Same guard as the merge path: a mis-resolved PR number must fail loudly
+    // rather than open somebody else's PR.
+    const head = await readPrHeadBranch(repoPath, prNumber)
+    if (!head.ok) return res.status(503).json({ error: head.error })
+    if (head.headRefName !== task.branch) {
+      const mismatch = { prNumber, expectedBranch: task.branch, actualBranch: head.headRefName }
+      console.error(`Open PR refused for ${req.params.slug}: ${formatBranchMismatch(mismatch)}`)
+      return res.status(409).json({ error: formatBranchMismatch(mismatch) })
+    }
+
     const result = await openPrInBrowser(repoPath, prNumber)
     if (!result.ok) return res.status(503).json({ error: result.error })
     res.sendStatus(200)
@@ -1063,6 +1173,27 @@ app.get('/tech-design/:slug', async (req, res) => {
   }
 })
 
+// GET /result-doc/:slug — a research task's deliverable markdown, for the
+// Result tab. The snapshot carries only its metadata (Task.resultDoc): a
+// document of up to 512 KB per task on every broadcast to every client is far
+// too much for something only an open Result tab reads, so it is fetched here,
+// under the same rule as /tech-design/:slug — looking the slug up in
+// currentTasks first means only a known task dir can be named.
+app.get('/result-doc/:slug', async (req, res) => {
+  try {
+    const task = currentTasks.find(t => t.slug === req.params.slug)
+    if (!task) return res.sendStatus(404)
+    const taskDir = path.join(TASKS_DIR, task.slug)
+    const taskMdContent = await fs.readFile(path.join(taskDir, 'TASK.md'), 'utf-8').catch(() => null)
+    const doc = await findResultDoc(taskDir, taskMdContent, task.mode)
+    if (!doc) return res.sendStatus(404)
+    res.json(doc)
+  } catch (err) {
+    console.error(`Failed to load the result document for ${req.params.slug}:`, err)
+    res.sendStatus(500)
+  }
+})
+
 // GET /qa-spec/:slug — planned QA case titles for a task that hasn't run QA
 // yet, parsed straight out of its declared e2e spec file(s) (qaSpecFile).
 // Resolved relative to the task's own worktree, not TASKS_DIR — this is
@@ -1085,8 +1216,8 @@ app.get('/qa-spec/:slug', async (req, res) => {
 // covers" summary, parsed live from .claude/skills/cockpit-*/SKILL.md on
 // every request (see stageScope.ts). No slug and no user input reach a
 // path here, so there's no traversal surface, and no server-side cache: the
-// client fetches this once per page load (see loadStageScope in
-// index.html), so a skill edit shows up on the next dashboard reload with
+// client fetches this once per page load (see useStageScopes in
+// web/src/data/taskResources.ts), so a skill edit shows up on the next dashboard reload with
 // no server restart needed.
 app.get('/api/stage-scope', async (_, res) => {
   try {
@@ -1215,7 +1346,7 @@ app.post('/shelve/:slug', async (req, res) => {
     // block the shelve. The branch is never deleted — see gitOps.ts.
     let cleanupError: string | null = null
     if (task.worktree) {
-      const cleanup = await commitAndRemoveWorktree(path.join(reposDir(), task.repo), task.worktree)
+      const cleanup = await commitAndRemoveWorktree(path.join(reposDir(TASKS_DIR), task.repo), task.worktree)
       if (!cleanup.ok) cleanupError = cleanup.error
     }
 
@@ -1248,6 +1379,9 @@ app.post('/merge-pr/:slug', async (req, res) => {
       case 'blocked':
         console.error(`Merge refused for ${req.params.slug}: ${formatMergeBlockers(result.blockers)}`)
         return res.status(409).json({ error: formatMergeBlockers(result.blockers), blockers: result.blockers })
+      case 'branch-mismatch':
+        console.error(`Merge refused for ${req.params.slug}: ${formatBranchMismatch(result)}`)
+        return res.status(409).json({ error: formatBranchMismatch(result) })
       case 'gate-unavailable':
       case 'merge-failed':
         console.error(`Merge failed for ${req.params.slug}:`, result.error)
@@ -1400,7 +1534,7 @@ app.post('/stage-skill/:slug', async (req, res) => {
     // unattended, triggered from a phone while the developer may be working
     // in an unrelated app on the desktop, so it must not raise iTerm2 to the
     // OS foreground. See that function's own comment.
-    const shouldAutoSubmit = req.body?.autoSubmit === true && requestIsRemote(req)
+    const shouldAutoSubmit = req.body?.autoSubmit === true && requestIsRemote(req) && requestAccess(res) === 'remote-authenticated'
     const write = shouldAutoSubmit ? pasteIntoSessionQuiet : stageInSession
 
     if (route.target === 'orchestrator') {
@@ -1567,8 +1701,7 @@ app.post('/skip-stage/:slug', async (req, res) => {
     const task = currentTasks.find(t => t.slug === req.params.slug)
     if (!task) return res.sendStatus(404)
 
-    const timelineLine = `${new Date().toISOString()} ${stage} ${skip.timelineNote}\n`
-    await fs.appendFile(path.join(TASKS_DIR, req.params.slug, 'TIMELINE'), timelineLine)
+    await appendTimelineLine(path.join(TASKS_DIR, req.params.slug), stage as Stage, skip.timelineNote)
     await fs.writeFile(path.join(TASKS_DIR, req.params.slug, 'STATUS'), `waiting: ${skip.nextWaitingReason}\n`)
 
     await refreshTasks()
@@ -1751,7 +1884,7 @@ app.post('/backlog/resume/:index', async (req, res) => {
 
 // Chokidar watcher
 const watcher = chokidar.watch(
-  path.join(TASKS_DIR, '**', '{STATUS,METRICS,METRICS-*.json,DEV_URL,PLAN.md,VERIFY,TIMELINE,QA_REPORT.md,task-pr-review.md,tech-design.md,TRIAGE.json,QA_TRIAGE.json,AUTO_MODE}'),
+  path.join(TASKS_DIR, '**', '{STATUS,METRICS,METRICS-*.json,DEV_URL,PLAN.md,VERIFY,TIMELINE,QA_REPORT.md,task-pr-review.md,tech-design.md,RESULT.md,AUDIT.md,DESIGN.md,FINDINGS.md,TASK.md,TRIAGE.json,QA_TRIAGE.json,AUTO_MODE}'),
   { ignoreInitial: true, usePolling: false }
 )
 watcher.on('all', () => { refreshTasks().catch(console.error) })
@@ -1781,6 +1914,20 @@ orchestratorMetricsWatcher.on('all', () => { refreshOrchestratorContext().catch(
 // until the next STATUS/METRICS/etc. write anywhere.
 setInterval(() => { refreshTasks().catch(console.error) }, 5 * 60 * 1000)
 
+// A pane change touches no file, so the watcher never fires for a worker that
+// stops on a permission dialog; poll the panes (read-only) instead.
+const APPROVAL_POLL_MS = Number(process.env.COCKPIT_APPROVAL_POLL_MS ?? 10_000)
+const approvalPollState = createApprovalPollState()
+const approvalTick = createApprovalTicker({
+  poll: () => pollApprovalPrompts(currentTasks, productionApprovalWatchDeps, approvalPollState),
+  onChange: async (prompts) => {
+    currentApprovalPrompts = prompts
+    await refreshTasks()
+  },
+  logError: console.error,
+})
+setInterval(() => { approvalTick() }, APPROVAL_POLL_MS)
+
 // PORT=0 is a legitimate "let the OS assign a free port" request (standard
 // net.Server semantics) — .listen(0, ...) binds a real ephemeral port under
 // the hood, but the pre-listen PORT constant stays literally 0. Read the
@@ -1809,34 +1956,30 @@ export async function main(): Promise<Server> {
   await refreshWeeklyFocus()
   await refreshBacklog()        // initial load (empty array if file missing)
   await refreshOrchestratorContext() // initial load (null if file missing)
-  // Explicit '0.0.0.0' rather than the default host: with no host given,
-  // Node binds an IPv6-only-reachable socket on some setups, which does NOT
-  // conflict at the OS level with an unrelated stray process bound to plain
-  // IPv4 0.0.0.0 on the same port — both silently coexist, and which one
-  // answers a given request depends on whether the client resolves
-  // 'localhost' to ::1 or 127.0.0.1. Binding 0.0.0.0 ourselves means any
-  // other process already on this port (0.0.0.0 or 127.0.0.1, the common
-  // case for both a stray cockpit server and a generic stray process) hits
-  // a real EADDRINUSE here instead — a loud, immediate crash rather than a
-  // dashboard flakily served by whichever process the OS happened to route
-  // to first.
-  return new Promise<Server>((resolve, reject) => {
-    const server = app.listen(PORT, '0.0.0.0', () => {
-      const boundPort = resolveBoundPort(server.address(), PORT)
-      console.log(`Pipelinely running at http://localhost:${boundPort}`)
-      // Opt-in, not opt-out: most callers of main() are not a developer
-      // sitting in front of the dashboard (playwright's webServer, every
-      // dispatched task's own "start the dev server for QA" step, etc.), so
-      // popping a real browser tab must be something a caller explicitly
-      // asks for via COCKPIT_AUTO_OPEN_BROWSER rather than something every
-      // new spawn site has to remember to opt out of.
-      if (process.env.COCKPIT_AUTO_OPEN_BROWSER) {
-        open(`http://localhost:${boundPort}`).catch(console.error)
-      }
-      resolve(server)
-    })
-    server.on('error', reject)
-  })
+  // Resolved before anything listens so a bad PIPELINELY_HOST fails startup
+  // loudly instead of falling back to a bind the developer did not ask for.
+  const bindHosts = resolveBindHosts(process.env)
+  const server = await listenOnHosts(app, bindHosts, PORT)
+  const boundPort = resolveBoundPort(server.address(), PORT)
+  const url = dashboardUrl(bindHosts, boundPort)
+  console.log(`Pipelinely running at ${url}`)
+  // A leaked override would make this server trust whatever token that file
+  // holds, so it must never be silent.
+  if (process.env[REMOTE_TOKEN_FILE_ENV_VAR]?.trim()) {
+    console.log(`Remote-access token file overridden by ${REMOTE_TOKEN_FILE_ENV_VAR}: ${currentRemoteTokenFile()}`)
+  }
+  const isRemoteAccessOn = await isRemoteAccessEnabled()
+  wideBindWarnings(bindHosts, boundPort, isRemoteAccessOn).forEach((warning) => console.warn(warning))
+  // Opt-in, not opt-out: most callers of main() are not a developer
+  // sitting in front of the dashboard (playwright's webServer, every
+  // dispatched task's own "start the dev server for QA" step, etc.), so
+  // popping a real browser tab must be something a caller explicitly
+  // asks for via COCKPIT_AUTO_OPEN_BROWSER rather than something every
+  // new spawn site has to remember to opt out of.
+  if (process.env.COCKPIT_AUTO_OPEN_BROWSER) {
+    open(url).catch(console.error)
+  }
+  return server
 }
 
 // Vitest sets this automatically — importing the module for server.test.ts

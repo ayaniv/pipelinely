@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { execa } from 'execa'
-import { evaluateMergeReadiness, formatMergeBlockers, checkMergeReadiness } from './mergeGate.js'
+import { evaluateMergeReadiness, formatBranchMismatch, formatMergeBlockers, checkMergeReadiness } from './mergeGate.js'
 
 vi.mock('execa', () => ({ execa: vi.fn() }))
 
@@ -205,5 +205,32 @@ describe('checkMergeReadiness', () => {
     const result = await checkMergeReadiness('/repo', '42')
     expect(result.ok).toBe(true)
     expect((result as { readiness: { blockers: { kind: string }[] } }).readiness.blockers).toEqual([expect.objectContaining({ kind: 'malformed' })])
+  })
+})
+
+describe('formatBranchMismatch', () => {
+  it('names the PR, both branches, and that it refuses', () => {
+    const message = formatBranchMismatch({ prNumber: '119', expectedBranch: 'claude/mine', actualBranch: 'claude/theirs' })
+    expect(message).toContain('PR #119')
+    expect(message).toContain('claude/theirs')
+    expect(message).toContain('claude/mine')
+    expect(message).toContain('refusing')
+  })
+})
+
+describe('evaluateMergeReadiness head branch on refusal', () => {
+  it('keeps headRefName when the PR is not ready, so callers can tell whose PR was refused', () => {
+    const view = {
+      state: 'MERGED', isDraft: false, mergeable: 'UNKNOWN_NOT_USED', mergeStateStatus: 'CLEAN',
+      headRefOid: 'a'.repeat(40), headRefName: 'claude/other', isCrossRepository: false, statusCheckRollup: [],
+    }
+    const result = evaluateMergeReadiness(view)
+    expect(result.ready).toBe(false)
+    expect(result.ready === false && result.headRefName).toBe('claude/other')
+  })
+
+  it('has no headRefName for a malformed read', () => {
+    const result = evaluateMergeReadiness('nonsense')
+    expect(result.ready === false && result.headRefName).toBeNull()
   })
 })

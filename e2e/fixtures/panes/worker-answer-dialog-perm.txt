@@ -1,0 +1,15 @@
+⏺ I'll run the unit tests before opening the PR.
+
+────────────────────────────────────────────────────────────────────────────────
+ Bash command
+
+   npm test -- --run src/answerDialog.test.ts
+   Run the answer-dialog unit tests
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for npm test commands in ~/worktrees/answer-demo
+   3. No, and tell Claude what to do differently
+
+ Esc to cancel · Tab to amend
+

@@ -17,7 +17,7 @@ const PANEL_TESTID: Record<BoardTab, string> = {
 
 // You is the one tab whose trigger is NOT a .tab-btn in #tab-bar — it reuses
 // the sidebar's existing account row at the bottom of the rail (see
-// index.html's .sidebar-account), so it has no tab-count-* of its own. Every
+// SidebarAccount in web/src/views/board/TabBar.tsx), so it has no tab-count-* of its own. Every
 // other tab keeps the tab-btn-<name> convention.
 const TRIGGER_TESTID: Record<BoardTab, string> = {
   backlog: 'tab-btn-backlog',
@@ -40,7 +40,7 @@ export async function selectBoardTab(page: Page, tab: BoardTab): Promise<void> {
 // orchestrator-session-self-heal.spec.ts's own openTask for the same
 // convention, needed by any spec whose backlog CTAs must render enabled
 // (canonical-dispatch-gate proactively disables them on a non-canonical
-// instance — see index.html's renderBacklog).
+// instance — see BacklogView.tsx).
 export async function gotoBoardTab(page: Page, tab: BoardTab, origin = ''): Promise<void> {
   await page.goto(`${origin}/`)
   await selectBoardTab(page, tab)

@@ -31,8 +31,8 @@ const WAVE = 2
 const WAVE_SLUGS = [`${PARENT}-m1`, `${PARENT}-m2`]
 
 // The wave-batch and backlog "Run selected" buttons this file clicks are
-// both canonical-dispatch-gate's proactively-disabled CTAs (see index.html's
-// renderMilestoneWaves/renderBacklog) — this suite's own shared webServer
+// both canonical-dispatch-gate's proactively-disabled CTAs (see MilestoneGraph.tsx and
+// BacklogView.tsx) — this suite's own shared webServer
 // (playwright.config.ts) deliberately never sets COCKPIT_DISPATCH_ENABLED,
 // so every test here runs its own dedicated, canonical instance of
 // src/server.ts to see those buttons enabled at all. Every dispatch route is

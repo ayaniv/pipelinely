@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest'
+import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -98,10 +99,16 @@ function remoteUrl(): string {
   return `http://${lanAddress}:${port}`
 }
 
+// A random per-run token, never anything resembling a real one. A remote peer
+// is only let through the remote-auth gate with the session cookie, so every
+// remote case sends it; the loopback ones do not need it.
+const TOKEN = `auto-submit-test-${crypto.randomUUID()}-${crypto.randomUUID()}`
+let sessionCookie: string
+
 async function postStageSkill(origin: string, slug: string, body: Record<string, unknown>) {
   return fetch(`${origin}/stage-skill/${slug}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(origin === loopbackUrl ? {} : { Cookie: sessionCookie }) },
     body: JSON.stringify(body),
   })
 }
@@ -154,6 +161,11 @@ beforeAll(async () => {
   // this suite runs as the canonical instance throughout — canonical-instance
   // gating itself is server.canonicalGate.test.ts's job, not this file's.
   process.env.COCKPIT_DISPATCH_ENABLED = '1'
+  const tokenFile = path.join(tmpDir, 'remote-token')
+  await fs.writeFile(tokenFile, TOKEN, { mode: 0o600 })
+  process.env.PIPELINELY_REMOTE_TOKEN_FILE = tokenFile
+  const { REMOTE_SESSION_COOKIE } = await import('./remoteAuth.js')
+  sessionCookie = `${REMOTE_SESSION_COOKIE}=${TOKEN}`
 
   // Written BEFORE importing server.js: currentTasks is only ever filled by
   // refreshTasks(), which runs from main() (never called here) and from the
@@ -194,6 +206,7 @@ afterAll(async () => {
   })
   await fs.rm(tmpDir, { recursive: true, force: true })
   delete process.env.COCKPIT_DISPATCH_ENABLED
+  delete process.env.PIPELINELY_REMOTE_TOKEN_FILE
 })
 
 beforeEach(async () => {
@@ -218,13 +231,13 @@ describe('GET /api/access', () => {
   it('reports isRemoteAccess false to a loopback caller', async () => {
     const res = await fetch(`${loopbackUrl}/api/access`)
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ isRemoteAccess: false })
+    expect(await res.json()).toEqual({ isRemoteAccess: false, hasRemoteSession: false })
   })
 
   it.skipIf(lanAddress === null)(`reports isRemoteAccess true to a non-loopback caller (${NO_LAN_REASON})`, async () => {
-    const res = await fetch(`${remoteUrl()}/api/access`)
+    const res = await fetch(`${remoteUrl()}/api/access`, { headers: { Cookie: sessionCookie } })
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ isRemoteAccess: true })
+    expect(await res.json()).toEqual({ isRemoteAccess: true, hasRemoteSession: true })
   })
 })
 

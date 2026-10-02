@@ -8,7 +8,7 @@ import { test, expect } from '@playwright/test'
 
 test.describe('side nav from the task detail view', () => {
   // Root cause: body.detail-open hides #board (and every .tab-panel inside
-  // it) outright — switchTab only flips which panel *would* show once that
+  // it) outright — selecting a tab alone only flips which panel *would* show once that
   // class comes off, so from an open detail view a side-nav click updated
   // internal state but never became visible. Fix: closing the detail view
   // is now part of the tab-bar's own click handler.
@@ -45,7 +45,7 @@ test.describe('side nav from the task detail view', () => {
 
 test.describe('parent link on a milestone child\'s detail view', () => {
   // Reuses task.projectTitle/task.projectBase — the same fields the board's
-  // own card-parent-chip reads (see index.html) — rather than deriving the
+  // own card-parent-chip reads (see SessionCard.tsx) — rather than deriving the
   // parent relationship a second way.
   test('a milestone child\'s detail view links back to its parent, and clicking it opens the parent', async ({ page }) => {
     await page.goto('/task/fanout-parent-m0')

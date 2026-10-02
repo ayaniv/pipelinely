@@ -104,13 +104,16 @@ freshly-dispatched worker (`orchestrator-prompt.md` step 4) — so closing its t
 detaches instead of killing it. It also **re-records both session files**, so the
 dashboard follows the handover to the new tab instead of pointing at the old one.
 
-#### 6a. Resolve the tasks dir once
+#### 6a. Resolve the tasks dir and the repo root once
 
 ```bash
 echo "${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}"
+npm --prefix $HOME/Dev/pipelinely run --silent repos-dir
 ```
 
-Use that resolved absolute path as a literal everywhere below. `do shell script`
+The second command prints `{"reposDir", "source"}`; its `reposDir` is `<resolved-repos-dir>` below.
+
+Use the resolved tasks dir as a literal everywhere below. `do shell script`
 (`/bin/sh`, no profile), `write text` (interactive login zsh), and the launch
 script (bash via shebang, no rc sourcing) are three different shells — a deferred
 `${TASKS_DIR:-...}` can resolve differently in each and scatter the session files.
@@ -126,8 +129,11 @@ a record.
 #!/bin/bash
 cd "<resolved-tasks-dir>/<slug>"
 export COCKPIT_TASK_SLUG=<slug>
+export REPOS_DIR='<resolved-repos-dir>'
 exec claude "Read TASK.md then HANDOVER-<N>.md. BEFORE doing any task work: (1) rename this iTerm2 tab to '<slug>' using osascript; (2) cd to the worktree at \${WORKTREES_DIR:-\$HOME/Dev/worktrees}/<slug>; (3) continue the task from where the previous session left off."
 ```
+
+`export REPOS_DIR='<resolved-repos-dir>'` hands the successor the same configured repo root a fresh dispatch gets (see `orchestrator-prompt.md`, Repo locations); a fresh shell has no `REPOS_DIR` of its own. Single-quote it exactly as step 4 does: replace each `'` inside the path with `'\''`.
 
 The `\$` escaping keeps `${WORKTREES_DIR:-$HOME/Dev/worktrees}` unexpanded when
 bash runs this script, so it reaches the claude prompt literally and expands later

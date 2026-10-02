@@ -89,7 +89,7 @@ async function distinctAttribute(locator: ReturnType<typeof activeCards>, attrib
 }
 
 // The project chip row is revealed by the toolbar's own "filter" toggle
-// (hidden by default — see board-toolbar in public/index.html), so every
+// (hidden by default — see board-toolbar in shell/AppFrame.tsx), so every
 // case needs it opened before it can read or click a chip.
 async function waitForBoard(page: Page) {
   await expect(activeCards(page).first()).toBeVisible()
@@ -305,7 +305,7 @@ test.describe.serial('the option set tracks the live task list', () => {
     await expect(activeCards(page)).toHaveCount(2)
 
     // Any task-dir write rebroadcasts the whole task list, which re-runs
-    // renderDashboard/renderDoneGroups from scratch.
+    // every board view from scratch.
     await createTempTask()
     await expect
       .poll(async () => chipValues(chipRow(page)), { timeout: 15_000 })

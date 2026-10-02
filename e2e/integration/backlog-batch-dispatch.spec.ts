@@ -102,7 +102,7 @@ test.describe('backlog selection UI — no orchestrator interaction', () => {
 // /batch-dispatch request, and a fast double-click must not fire it twice.
 //
 // "Run selected" is one of canonical-dispatch-gate's two proactively-
-// disabled CTAs (see index.html's renderBacklog/updateBacklogBatchBar), so —
+// disabled CTAs (see BacklogView.tsx/BacklogBatchBar.tsx), so —
 // same reasoning as orchestrator-session-self-heal.spec.ts's own dedicated
 // server — these tests need a canonical instance to see it enabled at all,
 // rather than the shared (deliberately non-canonical) webServer every other

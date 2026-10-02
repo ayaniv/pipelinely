@@ -7,7 +7,8 @@
 ### Summary
 
 2–4 sentences: what this plan does and why — pinned at the top of the
-dashboard's Plan tab.
+dashboard's Plan tab. (A Simple task's plan is only this section, 5–10
+lines: what changes, why, how it is verified.)
 
 ### Feature Overview
 

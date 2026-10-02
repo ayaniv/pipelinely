@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { TOKEN, DESKTOP, MOBILE, cssOf } from './fixtures/designTokens'
+import { openWithSnapshot } from './fixtures/snapshotStub'
 
 // M1 of the Claude Design v2 alignment: the top bar's orchestrator context
 // meter and its Handover segment.
@@ -52,17 +53,20 @@ test.describe('orchestrator context pill', () => {
     expect(await cssOf(meter, 'height')).toBe('6px')
   })
 
-  // Pixel-level spacing of the design's ctx pill body (Pipelinely Dashboard
-  // v2.dc.html line 126): `gap:11px; padding:0 14px 0 13px`, meter
-  // `min-width:60px`. The header reuses the card's ctx row, whose own
-  // gap/min-width differ, so these are asserted on the header specifically.
-  test('the ctx body uses the design\'s gap, padding and meter min-width', async ({ page }) => {
+  // Pixel-level spacing of the design's ctx pill (Pipelinely Dashboard
+  // v3.dc.html line 127): `gap:11px; padding:0 14px 0 11px`, meter
+  // `min-width:60px`. The design puts this padding/gap on the one clickable
+  // link that also carries the home icon — not a separate inner "body" div
+  // — so it's asserted on that control (orchestrator-tab-btn) directly. The
+  // header reuses the card's ctx row, whose own gap/min-width differ, so
+  // these are asserted on the header specifically.
+  test('the home+ctx control uses the design\'s gap, padding and meter min-width', async ({ page }) => {
     await page.goto('/')
 
-    const body = page.getByTestId('header-ctx-body')
-    expect(await cssOf(body, 'column-gap')).toBe('11px')
-    expect(await cssOf(body, 'padding-left')).toBe('13px')
-    expect(await cssOf(body, 'padding-right')).toBe('14px')
+    const control = page.getByTestId('orchestrator-tab-btn')
+    expect(await cssOf(control, 'column-gap')).toBe('11px')
+    expect(await cssOf(control, 'padding-left')).toBe('11px')
+    expect(await cssOf(control, 'padding-right')).toBe('14px')
     expect(await cssOf(page.getByTestId('header-ctx-meter'), 'min-width')).toBe('60px')
   })
 
@@ -108,6 +112,141 @@ test.describe('orchestrator context pill', () => {
     expect(res.status()).toBe(200)
     const body = await res.json()
     expect(body.orchestratorContextPct).toBe(ORCHESTRATOR_CTX)
+  })
+})
+
+// The home icon (bring-back-the-orchestrator-tab) used to be a free-standing
+// button beside this pill, colliding with it visually. Per Claude Design v3
+// (Pipelinely Dashboard v3.dc.html lines 127-134) it is now the FIRST CHILD
+// of the very same clickable link that carries "ctx", the meter and the
+// percentage — not a separate segment of its own — so its presence no
+// longer depends on ctx being known, unlike the meter and Handover trio
+// beside it.
+//
+// The header chrome is React-rendered, so these cases drive it the way
+// production does rather than through page globals. The ctx
+// value arrives the way it does in production — through the snapshot —
+// via fixtures/snapshotStub.ts, which serves a mutated copy rather than
+// mutating the shared ORCHESTRATOR_METRICS fixture (that would race every
+// other worker in this fullyParallel suite). Every assertion is unchanged;
+// only what drives the page changed.
+test.describe('merged header control — home affordance', () => {
+  test('the home icon renders inside the ctx pill even when no ctx value is known', async ({ page }) => {
+    await openWithSnapshot(page, '/', (snapshot) => { snapshot.orchestratorContextPct = null })
+
+    const pill = page.getByTestId('header-ctx')
+    await expect(pill).toBeVisible()
+    await expect(pill.getByTestId('orchestrator-tab-btn')).toBeVisible()
+    await expect(page.getByTestId('header-ctx-home-icon')).toBeVisible()
+    await expect(page.getByTestId('header-ctx-body')).toBeHidden()
+    await expect(page.getByTestId('header-handover')).toBeHidden()
+
+    // aria-label overrides the button's accessible name entirely (CR
+    // suggestion) — with no ctx value known it stays the plain navigation
+    // label, not a dangling "(context %)" fragment.
+    await expect(pill.getByTestId('orchestrator-tab-btn')).toHaveAttribute('aria-label', 'Bring back the orchestrator tab')
+  })
+
+  test('a known but cool context shows the meter without Handover, and the home icon stays', async ({ page }) => {
+    const COOL_CTX = 30
+    await openWithSnapshot(page, '/', (snapshot) => { snapshot.orchestratorContextPct = COOL_CTX })
+
+    const pill = page.getByTestId('header-ctx')
+    await expect(pill.getByTestId('orchestrator-tab-btn')).toBeVisible()
+    await expect(pill.getByTestId('header-ctx-home-icon')).toBeVisible()
+    await expect(page.getByTestId('header-ctx-value')).toHaveText(`${COOL_CTX}%`)
+    await expect(page.getByTestId('header-handover')).toBeHidden()
+
+    // With a ctx value known, aria-label folds it in — the button's
+    // accessible name otherwise loses the "ctx N%" text nested inside it.
+    await expect(pill.getByTestId('orchestrator-tab-btn')).toHaveAttribute(
+      'aria-label', `Bring back the orchestrator tab (context ${COOL_CTX}%)`
+    )
+  })
+
+  // Pixel-precision geometry of the merged control itself (Pipelinely
+  // Dashboard v3.dc.html line 128): a 14x14 icon, coloured var(--text3) at
+  // rest and var(--accent) on hover — the same treatment the design gives
+  // the whole home+ctx link, not just the icon glyph.
+  test('the home icon is 14x14 and the control recolours on hover', async ({ page }) => {
+    await page.goto('/')
+
+    const icon = page.getByTestId('header-ctx-home-icon')
+    const box = await icon.boundingBox()
+    expect(box!.width).toBeCloseTo(14, 0)
+    expect(box!.height).toBeCloseTo(14, 0)
+
+    const control = page.getByTestId('orchestrator-tab-btn')
+    expect(await cssOf(control, 'color')).toBe(TOKEN.text3)
+    await control.hover()
+    expect(await cssOf(control, 'color')).toBe(TOKEN.accent)
+  })
+
+  // Regression coverage for a bug the merge itself introduced: restoring a
+  // flashed button's content by reassigning its textContent would wipe the
+  // control's SVG icon (and, when ctx is known, its live meter) the first
+  // time anyone clicked it. A flash must swap in a separate status child and
+  // hide the icon/meter only for the flash's duration. Also covers a CR
+  // finding: the meter's hiding rule (`.is-flashing .header-ctx-body
+  // { display: none }`) must actually hide the meter, not just the icon.
+  // Driven by a real click on a canonical instance (the button is disabled
+  // otherwise) with /orchestrator/tab stubbed to succeed.
+  test('a flash swaps in status text without destroying the icon, then restores it', async ({ page }) => {
+    await page.route('**/orchestrator/tab', (route) => route.fulfill({ status: 200, json: {} }))
+    await openWithSnapshot(page, '/', (snapshot) => { snapshot.isCanonical = true; snapshot.orchestratorContextPct = 30 })
+
+    const btn = page.getByTestId('orchestrator-tab-btn')
+    const icon = page.getByTestId('header-ctx-home-icon')
+    const meterValue = page.getByTestId('header-ctx-value')
+    const status = page.getByTestId('orchestrator-tab-status')
+    await expect(icon).toBeVisible()
+    await expect(meterValue).toBeVisible()
+    await expect(status).toBeHidden()
+
+    await btn.click()
+
+    await expect(btn).toHaveClass(/btn-ok/)
+    await expect(icon).toBeHidden()
+    await expect(meterValue).toBeHidden()
+    await expect(status).toHaveText('✓')
+
+    await expect(icon).toBeVisible({ timeout: 4000 })
+    await expect(meterValue).toBeVisible()
+    await expect(status).toBeHidden()
+    await expect(btn).not.toHaveClass(/btn-ok/)
+  })
+})
+
+// The orchestrator-tab control's failure paths — a non-2xx /orchestrator/tab
+// response, and the fetch throwing outright. The canonical-instance
+// integration suite (orchestrator-session-self-heal.spec.ts) exercises them
+// against a real orchestrator session and is deliberately not run against
+// this repo's own dev session locally, so they are routed through page.route
+// here and run safely against any e2e instance. This e2e webServer is never
+// canonical, so the snapshot is served as canonical (see snapshotStub.ts) to
+// get an enabled button to click — a UI click Playwright would otherwise
+// refuse to send to a disabled control.
+test.describe('orchestrator tab control — failure paths', () => {
+  test('a non-2xx response flashes btn-err with the server\'s own message', async ({ page }) => {
+    await page.route('**/orchestrator/tab', (route) =>
+      route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'orchestrator not running' }) })
+    )
+    await openWithSnapshot(page, '/', (snapshot) => { snapshot.isCanonical = true })
+
+    await page.getByTestId('orchestrator-tab-btn').click()
+
+    await expect(page.getByTestId('orchestrator-tab-btn')).toHaveClass(/btn-err/)
+    await expect(page.getByTestId('orchestrator-tab-status')).toHaveText('orchestrator not running')
+  })
+
+  test('a thrown fetch (no server) flashes btn-err with "no server"', async ({ page }) => {
+    await page.route('**/orchestrator/tab', (route) => route.abort('connectionrefused'))
+    await openWithSnapshot(page, '/', (snapshot) => { snapshot.isCanonical = true })
+
+    await page.getByTestId('orchestrator-tab-btn').click()
+
+    await expect(page.getByTestId('orchestrator-tab-btn')).toHaveClass(/btn-err/)
+    await expect(page.getByTestId('orchestrator-tab-status')).toHaveText('no server')
   })
 })
 

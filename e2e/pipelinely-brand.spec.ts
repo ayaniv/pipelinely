@@ -44,23 +44,32 @@ test.describe('pipelinely rebrand', () => {
 
     // Regex rather than a hardcoded count: the number is the fixture set's
     // waiting-status total, which grows every time another feature adds a
-    // fixture. What must hold is the shape and a non-zero count.
+    // fixture. What must hold is the shape and a non-zero count. The prefix
+    // needs the tasks snapshot, which the React frame fetches after first
+    // paint, so wait for it instead of reading the title right after goto.
+    await expect(page).toHaveTitle(/^\(\d+\) pipelinely\.cc$/)
     const title = await page.title()
-    expect(title).toMatch(/^\(\d+\) pipelinely\.cc$/)
     const waitingCount = Number(title.match(/^\((\d+)\)/)![1])
     expect(waitingCount).toBeGreaterThan(0)
   })
 
-  test('the two design font families are all requested in one stylesheet link', async ({ page }) => {
-    await page.goto('/')
+  test('the two design font families are self-hosted, with no request to a Google host', async ({ page }) => {
+    const googleRequests: string[] = []
+    page.on('request', (request) => {
+      if (/googleapis|gstatic/.test(request.url())) googleRequests.push(request.url())
+    })
 
-    const hrefs = await page.locator('link[rel="stylesheet"]').evaluateAll(
-      (links) => links.map((l) => (l as HTMLLinkElement).href)
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+
+    const stylesheetHrefs = await page.evaluate(() =>
+      Array.from(document.styleSheets, (sheet) => sheet.href).filter((href): href is string => href !== null),
     )
-    const fontHref = hrefs.find((h) => h.includes('fonts.googleapis.com'))
-    expect(fontHref).toBeTruthy()
-    expect(fontHref).toContain('Figtree')
-    expect(fontHref).toContain('JetBrains+Mono')
+    const appCss = (await Promise.all(stylesheetHrefs.map(async (href) => (await page.request.get(href)).text()))).join('\n')
+    for (const family of ['Figtree', 'JetBrains Mono']) {
+      expect(appCss).toMatch(new RegExp(`@font-face\\s*\\{[^}]*font-family:\\s*["']?${family}["']?[^}]*/fonts/`))
+    }
+    expect(googleRequests).toEqual([])
   })
 
   // Requesting the font isn't the same as using it — this closes that gap.

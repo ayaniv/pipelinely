@@ -1,11 +1,11 @@
 // A deliberately small Markdown → HTML renderer for the dashboard's inline
-// tech-design.md view.
+// tech-design.md view and a research task's Result tab. Pure (no node imports),
+// so the React client imports it directly for the Result tab.
 //
-// It lives in src/ rather than in public/index.html for one reason: the
-// dashboard has no build step and the repo takes no new npm dependencies, so
-// a browser-side parser would be the one piece of escaping-sensitive logic
-// the test suite cannot reach. Here, the server hands the browser finished
-// HTML and src/markdown.test.ts covers the escaping rules.
+// It lives in src/ so the server and the React client share one
+// escaping-sensitive implementation that src/markdown.test.ts covers — the
+// repo takes no new npm dependencies, so there is no second parser to keep in
+// step.
 //
 // Everything is escaped FIRST and no raw HTML from the document is ever
 // passed through: a tech-design.md is written by an agent, and a <script> tag
@@ -19,23 +19,47 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;')
 }
 
-// Applied to ALREADY-ESCAPED text. Code spans go first so a ** inside
-// backticks is not mistaken for bold.
-//
-// Link hrefs are allow-listed to http(s), a fragment, or a root-relative
-// path; anything else (javascript:, data:) renders as its label alone. The
-// href is already escaped at this point, so a quote cannot break out of the
-// attribute either.
-function renderInline(escaped: string): string {
+// Bold/italic/code on a run of ALREADY-ESCAPED text that holds no link. Code
+// spans go first so a ** inside backticks is not mistaken for bold.
+function renderEmphasis(escaped: string): string {
   return escaped
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>')
-    .replace(/\[([^\]]+)\]\(([^\s]+)\)/g, (_match, text: string, href: string) =>
-      /^(https?:\/\/|#|\/)/.test(href)
-        ? `<a href="${href}" target="_blank" rel="noopener">${text}</a>`
-        : text
-    )
+}
+
+// Link hrefs are allow-listed to http(s), a fragment, or a root-relative path
+// (a "/" NOT followed by another "/" or a "\", which browsers read as a
+// protocol-relative, i.e. external, URL). Anything else (javascript:, data:,
+// //host) renders as its label alone. The href is already escaped at this
+// point, so a quote cannot break out of the attribute either.
+const SAFE_HREF_RE = /^(https?:\/\/|#|\/(?![\/\\]))/
+
+// One left-to-right scan for a code span or a link, whichever starts first, so
+// a link inside backticks stays code and a link's href is taken verbatim —
+// emphasis only ever runs on the text BETWEEN matches and on link labels, never
+// inside an href. The href stops at whitespace or an unbalanced ")" (one level of
+// parentheses is allowed, as in a wiki URL), so two adjacent links stay two
+// anchors.
+const INLINE_TOKEN_RE = /`[^`]+`|\[([^\]]+)\]\(((?:[^\s()]|\([^\s()]*\))+)\)/g
+
+// Applied to ALREADY-ESCAPED text.
+function renderInline(escaped: string): string {
+  let out = ''
+  let cursor = 0
+  for (const match of escaped.matchAll(INLINE_TOKEN_RE)) {
+    out += renderEmphasis(escaped.slice(cursor, match.index))
+    cursor = match.index + match[0].length
+    const [token, label, href] = match
+    if (label === undefined) {
+      out += renderEmphasis(token)
+    } else if (SAFE_HREF_RE.test(href)) {
+      out += `<a href="${href}" target="_blank" rel="noopener noreferrer">${renderEmphasis(label)}</a>`
+    } else {
+      out += renderEmphasis(label)
+    }
+  }
+  return out + renderEmphasis(escaped.slice(cursor))
 }
 
 const FENCE_RE = /^\s*```/
@@ -95,12 +119,14 @@ export function renderMarkdownToHtml(raw: string): string {
         body.push(cells(lines[i]))
         i++
       }
+      // The wrapper is what scrolls sideways, so a wide table never stretches
+      // the panel it sits in.
       out.push(
-        '<table><thead><tr>' +
+        '<div class="md-table-scroll"><table><thead><tr>' +
         head.map((c) => `<th>${c}</th>`).join('') +
         '</tr></thead><tbody>' +
         body.map((r) => '<tr>' + r.map((c) => `<td>${c}</td>`).join('') + '</tr>').join('') +
-        '</tbody></table>'
+        '</tbody></table></div>'
       )
       continue
     }

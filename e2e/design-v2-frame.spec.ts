@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import { gotoBoardTab, selectBoardTab } from './fixtures/boardTabs'
 import { TOKEN, PAGE_COLUMN, DESKTOP, WIDE, DESKTOP_GUTTER, cssOf } from './fixtures/designTokens'
 
@@ -95,61 +95,60 @@ test.describe('page column is centred', () => {
   })
 })
 
-// Direct coverage for the head script's own sidebar-collapsed-init handoff
-// (this test's own centering check above only covers it indirectly, by not
-// flaking). A MutationObserver installed via addInitScript — so it's wired
-// up before any of the page's own scripts run — records whether #app-sidebar
-// exists in the DOM at the moment the class is each added/removed, which is
-// what actually proves the ordering: added while <head> is still running
-// (the sidebar element doesn't exist yet), removed only after the main
-// script's own applySidebarCollapsed call (the sidebar element now does).
-test.describe('sidebar pre-hydration collapse', () => {
+// A task detail opens with the sidebar already collapsed, and a board route
+// with it expanded — decided once, against the route the page opened on. The
+// regression this guards is a post-paint width change: if the sidebar first
+// painted at its default 240px and only collapsed to 72px afterwards,
+// .app-sidebar's own transition would animate it, and any layout read landing
+// mid-animation (a centring check right after navigation) would see neither
+// width. A MutationObserver installed via addInitScript — wired up before any
+// of the page's own scripts run — records the sidebar's state at the moment it
+// first exists in the DOM, which is what proves it never paints in the other one.
+test.describe('sidebar starting state', () => {
   test.use({ viewport: DESKTOP })
 
-  test('the class is added before the sidebar exists, and removed once it does', async ({ page }) => {
+  async function recordSidebarWhenItFirstExists(page: Page) {
     await page.addInitScript(() => {
-      ;(window as any).__sidebarInitLog = []
-      const recordMutation = () => {
-        ;(window as any).__sidebarInitLog.push({
-          hasClass: document.documentElement.classList.contains('sidebar-collapsed-init'),
-          sidebarExists: !!document.getElementById('app-sidebar'),
-        })
+      const record = () => {
+        const sidebar = document.getElementById('app-sidebar')
+        if (!sidebar) return false
+        ;(window as unknown as { __sidebarFirstSeen: { isCollapsed: boolean } }).__sidebarFirstSeen = { isCollapsed: sidebar.classList.contains('is-collapsed') }
+        return true
       }
-      // addInitScript runs before the document itself has a <html> element
-      // (the parser hasn't reached it yet), so documentElement must be
-      // waited for rather than assumed to exist — same reasoning as the
-      // head script's own note on why the real #app-sidebar can't be
-      // touched this early either.
-      const attachClassObserver = () =>
-        new MutationObserver(recordMutation).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
-      if (document.documentElement) {
-        attachClassObserver()
-      } else {
-        const docObserver = new MutationObserver(() => {
-          if (!document.documentElement) return
-          docObserver.disconnect()
-          attachClassObserver()
-        })
-        docObserver.observe(document, { childList: true })
-      }
+      const observer = new MutationObserver(() => { if (record()) observer.disconnect() })
+      observer.observe(document, { childList: true, subtree: true })
     })
+  }
+  const firstSeen = (page: Page) => page.evaluate(() => (window as unknown as { __sidebarFirstSeen?: { isCollapsed: boolean } }).__sidebarFirstSeen)
 
+  test('a task detail route first paints the sidebar already collapsed', async ({ page }) => {
+    await recordSidebarWhenItFirstExists(page)
     await page.goto('/task/dev-ready')
     await expect(page.getByTestId('task-detail')).toBeVisible()
 
-    const log = await page.evaluate(() => (window as any).__sidebarInitLog)
-    expect(log.length).toBeGreaterThanOrEqual(2)
-    expect(log[0]).toEqual({ hasClass: true, sidebarExists: false })
-    expect(log[log.length - 1]).toEqual({ hasClass: false, sidebarExists: true })
-
-    const stillPresent = await page.evaluate(() => document.documentElement.classList.contains('sidebar-collapsed-init'))
-    expect(stillPresent).toBe(false)
+    expect(await firstSeen(page)).toEqual({ isCollapsed: true })
+    await expect(page.getByTestId('app-sidebar')).toHaveClass(/is-collapsed/)
   })
 
-  test('a non-task route never adds the class at all', async ({ page }) => {
+  test('a board route first paints the sidebar expanded', async ({ page }) => {
+    await recordSidebarWhenItFirstExists(page)
     await page.goto('/')
-    const hasClass = await page.evaluate(() => document.documentElement.classList.contains('sidebar-collapsed-init'))
-    expect(hasClass).toBe(false)
+    await expect(page.getByTestId('app-sidebar')).toBeVisible()
+
+    expect(await firstSeen(page)).toEqual({ isCollapsed: false })
+    await expect(page.getByTestId('app-sidebar')).not.toHaveClass(/is-collapsed/)
+  })
+
+  test('the collapse toggle flips it either way, and the old pre-hydration class is gone', async ({ page }) => {
+    await page.goto('/')
+    const sidebar = page.getByTestId('app-sidebar')
+
+    await page.getByTestId('sidebar-collapse-toggle').click()
+    await expect(sidebar).toHaveClass(/is-collapsed/)
+    await page.getByTestId('sidebar-mark').click()
+    await expect(sidebar).not.toHaveClass(/is-collapsed/)
+
+    expect(await page.evaluate(() => document.documentElement.classList.contains('sidebar-collapsed-init'))).toBe(false)
   })
 })
 
@@ -333,9 +332,7 @@ test.describe('header is not pinned', () => {
 })
 
 test.describe('static art assets', () => {
-  // This repo's server had no static middleware at all before M0 — it served
-  // public/index.html from two explicit routes and nothing else. Shipping the
-  // design's PNGs therefore needs a real route, and a 404 here would leave the
+  // Shipping the design's PNGs needs a real static route, and a 404 here would leave the
   // sidebar and the section headers silently blank rather than erroring.
   test('the design PNGs are served from /art', async ({ request }) => {
     for (const file of ['app-mark-v2.png', 'head-beige-v3.png', 'head-blue-v3.png']) {
@@ -365,9 +362,9 @@ test.describe('static art assets', () => {
   })
 
   test('the art route does not also serve the rest of public/', async ({ request }) => {
-    // The positive control on scope: public/index.html exists and is served
-    // by name from two other routes, so a mount rooted one directory too
-    // high (public/ instead of public/art) would return it 200 here too.
+    // The positive control on scope: the dashboard shell is served by name
+    // from its own routes, so a mount rooted one directory too high (dist/
+    // instead of public/art) would return it 200 here too.
     const res = await request.get('/art/index.html')
     expect(res.status()).not.toBe(200)
   })

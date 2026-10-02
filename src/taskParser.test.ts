@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { execa } from 'execa'
 import {
   parseMilestoneSlug,
@@ -58,6 +59,9 @@ import {
   parseAutoModeOverride,
   computeEffectiveAutoMode,
   computeAutoDispatch,
+  resolveQaSkipReason,
+  recordQaSkipped,
+  appendTimelineLine,
   DEFAULT_SETTINGS,
   MANUAL_ONLY_STAGES,
   parseOrchestratorMetrics,
@@ -67,7 +71,7 @@ import {
   parseSummarySection,
   stripSummarySection,
 } from './taskParser.js'
-import type { MilestoneDecl, MilestoneStatus, StageEvent, Task } from './types.js'
+import type { Finding, MilestoneDecl, MilestoneStatus, StageEvent, Task } from './types.js'
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -79,6 +83,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     worktree: null,
     devUrl: null,
     verifier: null,
+    qaSkipReason: null,
     stageHistory: [],
     stage: null,
     itermSessionId: null,
@@ -100,6 +105,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     qaCasesParseMismatch: [],
     showsOnBoard: true,
     attentionStatus: 'idle',
+    approvalPrompt: null,
     ...overrides,
   }
 }
@@ -314,13 +320,82 @@ describe('findPrNumber', () => {
     expect(findPrNumber(task)).toBe('108')
   })
 
-  it('prefers a PR named in the TIMELINE over the server-resolved prNumber', () => {
+  it('prefers the server-resolved (branch-derived) prNumber over a PR named in a TIMELINE note', () => {
     const task = {
       reviewRef: undefined,
       prNumber: '108',
-      stageHistory: [{ stage: 'dev' as const, at: '2026-08-10T12:00:00Z', note: 'PR #42 open' }],
+      stageHistory: [{ stage: 'dev' as const, at: '2026-08-10T12:00:00Z', note: 'PR #42 opened: something' }],
+    }
+    expect(findPrNumber(task)).toBe('108')
+  })
+
+  it('still prefers reviewRef over the branch-derived prNumber', () => {
+    const task = { reviewRef: '99', prNumber: '108', stageHistory: [] }
+    expect(findPrNumber(task)).toBe('99')
+  })
+
+  it('ignores a bare "#N" mentioned in passing when falling back to notes', () => {
+    const task = {
+      reviewRef: undefined,
+      stageHistory: [{ stage: 'dev' as const, at: '2026-08-10T12:00:00Z', note: 'blocked on #119, see issue #7' }],
+    }
+    expect(findPrNumber(task)).toBeNull()
+  })
+
+  it('skips a note that only mentions a merged dependency PR and finds the task\'s own "PR #N opened" note', () => {
+    const task = {
+      reviewRef: undefined,
+      stageHistory: [
+        { stage: 'dev' as const, at: '2026-08-10T12:00:00Z', note: 'PR #42 opened: my change' },
+        { stage: 'dev' as const, at: '2026-08-10T14:00:00Z', note: 'merged origin/master (PR #119) into branch' },
+      ],
     }
     expect(findPrNumber(task)).toBe('42')
+  })
+
+  it('reads "opened PR #N" phrasing', () => {
+    const task = { reviewRef: undefined, stageHistory: [{ stage: 'dev' as const, at: 'x', note: 're-dispatched, opened PR #77' }] }
+    expect(findPrNumber(task)).toBe('77')
+  })
+
+  it('reads "PR #N is open" and "PR #N (open)" phrasing', () => {
+    const isOpen = { reviewRef: undefined, stageHistory: [{ stage: 'dev' as const, at: 'x', note: 'PR #31 is open' }] }
+    const parenOpen = { reviewRef: undefined, stageHistory: [{ stage: 'dev' as const, at: 'x', note: 'PR #32 (open) ready for CR' }] }
+    expect(findPrNumber(isOpen)).toBe('31')
+    expect(findPrNumber(parenOpen)).toBe('32')
+  })
+
+  it('takes the PR number, not a "#N" in the PR title, when a title contains a hash', () => {
+    const task = { reviewRef: undefined, stageHistory: [{ stage: 'dev' as const, at: 'x', note: 'PR #118 opened: fix #99 in the parser' }] }
+    expect(findPrNumber(task)).toBe('118')
+  })
+
+  it('accepts a note that is only a PR URL (the documented alternate "<PR note>" form)', () => {
+    const task = { reviewRef: undefined, stageHistory: [{ stage: 'dev' as const, at: 'x', note: 'https://github.com/acme/widgets/pull/55' }] }
+    expect(findPrNumber(task)).toBe('55')
+  })
+
+  it('does not let a /pull/N URL to a DIFFERENT PR, mentioned in passing, hijack the card', () => {
+    const task = {
+      reviewRef: undefined,
+      stageHistory: [
+        { stage: 'dev' as const, at: 'x', note: 'PR #42 opened: my change' },
+        { stage: 'dev' as const, at: 'y', note: 'merged origin/master (see https://github.com/acme/widgets/pull/119) into branch' },
+      ],
+    }
+    expect(findPrNumber(task)).toBe('42')
+    expect(findPrNumber({ ...task, stageHistory: [task.stageHistory[1]] })).toBeNull()
+  })
+
+  it.each([
+    ['react-migration-m3', '117'],
+    ['react-migration-m4', '118'],
+    ['react-migration-m6', '116'],
+  ])('resolves %s\'s real hijacked TIMELINE to its own PR #%s, not the merged upstream PR', async (fixture, expectedPr) => {
+    const fixturePath = fileURLToPath(new URL(`./__fixtures__/pr-hijack/${fixture}.TIMELINE`, import.meta.url))
+    const raw = await fs.readFile(fixturePath, 'utf-8')
+    const task = { reviewRef: undefined, stageHistory: parseTimelineContent(raw) }
+    expect(findPrNumber(task)).toBe(expectedPr)
   })
 
   it('is null when neither reviewRef nor any dev note mentions a PR', () => {
@@ -798,6 +873,20 @@ describe('computeStage', () => {
     })).toBe('qa')
   })
 
+  it('a qa TIMELINE line noting a skip puts the task at merge, not at a QA that never ran', () => {
+    expect(computeStage({
+      ...base,
+      stageHistory: [{ stage: 'qa', at: '2026-08-03T10:00:00Z', note: 'skipped — no e2e' }],
+    })).toBe('merge')
+  })
+
+  it('an auto-dispatched qa line is still stage qa', () => {
+    expect(computeStage({
+      ...base,
+      stageHistory: [{ stage: 'qa', at: '2026-08-03T10:00:00Z', note: 'auto-dispatched — auto mode' }],
+    })).toBe('qa')
+  })
+
   it('has no stage for a done task — those cards live on the Done tab', () => {
     expect(computeStage({ ...base, status: 'done' })).toBeNull()
   })
@@ -816,6 +905,14 @@ describe('computeStage', () => {
 
   it('is qa when the review approved', () => {
     expect(computeStage({ ...base, status: 'review', reviewVerdict: 'approved' })).toBe('qa')
+  })
+
+  it('is qa when the review approved with no unresolved comments', () => {
+    expect(computeStage({ ...base, status: 'review', reviewVerdict: 'approved', hasUnresolvedReviewComments: false })).toBe('qa')
+  })
+
+  it('is comment-fix when the review approved but still lists comments', () => {
+    expect(computeStage({ ...base, status: 'review', reviewVerdict: 'approved', hasUnresolvedReviewComments: true })).toBe('comment-fix')
   })
 
   it('a clean QA result advances a TIMELINE pinned at qa to merge', () => {
@@ -893,6 +990,11 @@ describe('computeStage', () => {
 
   it('is plan-review once the design doc exists', () => {
     expect(computeStage({ ...base, mode: 'investigate', hasTechDesign: true })).toBe('plan-review')
+  })
+
+  it('stays dev for an implement task with a design doc once its dev TIMELINE line exists', () => {
+    const stageHistory = [{ stage: 'dev' as const, at: '2026-09-30T00:00:00Z', note: 'plan written' }]
+    expect(computeStage({ ...base, mode: 'implement', hasTechDesign: true, stageHistory })).toBe('dev')
   })
 
   it('is dev for a plain implement task', () => {
@@ -1002,24 +1104,36 @@ describe('countMilestonesInPlan', () => {
     const repoDir = path.join(tmpDir, 'overlap')
     await fs.mkdir(repoDir, { recursive: true })
     await fs.writeFile(path.join(repoDir, 'plan.md'), OVERLAP_PLAN)
-    expect(await countMilestonesInPlan('overlap')).toBe(6)
+    expect(await countMilestonesInPlan('overlap', tmpDir)).toBe(6)
+  })
+
+  it('reads plan.md from the saved root when REPOS_DIR is not exported', async () => {
+    delete process.env.REPOS_DIR
+    const savedRoot = path.join(tmpDir, 'saved-root')
+    await fs.mkdir(path.join(savedRoot, 'overlap'), { recursive: true })
+    await fs.writeFile(path.join(savedRoot, 'overlap', 'plan.md'), OVERLAP_PLAN)
+    const tasksDir = path.join(tmpDir, 'tasks')
+    await fs.mkdir(tasksDir)
+    await fs.writeFile(path.join(tasksDir, 'REPOS_DIR'), `${savedRoot}\n`)
+
+    expect(await countMilestonesInPlan('overlap', tasksDir)).toBe(6)
   })
 
   it('returns null when plan.md is missing', async () => {
     const repoDir = path.join(tmpDir, 'no-plan-repo')
     await fs.mkdir(repoDir, { recursive: true })
-    expect(await countMilestonesInPlan('no-plan-repo')).toBeNull()
+    expect(await countMilestonesInPlan('no-plan-repo', tmpDir)).toBeNull()
   })
 
   it('returns null when the repo directory itself does not exist', async () => {
-    expect(await countMilestonesInPlan('does-not-exist')).toBeNull()
+    expect(await countMilestonesInPlan('does-not-exist', tmpDir)).toBeNull()
   })
 
   it('returns 0 (not a crash) for a garbled plan.md', async () => {
     const repoDir = path.join(tmpDir, 'garbled')
     await fs.mkdir(repoDir, { recursive: true })
     await fs.writeFile(path.join(repoDir, 'plan.md'), 'not a plan file, just prose.')
-    expect(await countMilestonesInPlan('garbled')).toBe(0)
+    expect(await countMilestonesInPlan('garbled', tmpDir)).toBe(0)
   })
 })
 
@@ -1106,7 +1220,7 @@ describe('milestone slug + plan.md combine into current/total (happy path)', () 
   it('overlap-m2 -> current 3 / total 6', async () => {
     const slugInfo = parseMilestoneSlug('overlap-m2')
     expect(slugInfo).not.toBeNull()
-    const total = await countMilestonesInPlan(slugInfo!.projectBase)
+    const total = await countMilestonesInPlan(slugInfo!.projectBase, tmpDir)
     const current = slugInfo!.milestoneNumber + 1
     expect(current).toBe(3)
     expect(total).toBe(6)
@@ -2539,9 +2653,9 @@ describe('computeMilestones', () => {
   // the rest once rather than in every case.
   const task = (slug: string, status: Task['status']): Task => ({
     slug, title: slug, mode: '', repo: 'overlap', branch: '', worktree: null,
-    devUrl: null, verifier: null, itermSessionId: null, tmuxSession: null,
+    devUrl: null, verifier: null, qaSkipReason: null, itermSessionId: null, tmuxSession: null,
     plan: null, stageHistory: [], stage: null, findings: [], findingsParseMismatch: [],
-    qaFailures: [], qaCases: [], qaCasesParseMismatch: [],
+    qaFailures: [], qaCases: [], qaCasesParseMismatch: [], approvalPrompt: null,
     status, updatedAt: new Date(0), completedAt: null, completedAtSource: null,
     totalInputTokens: 0, totalOutputTokens: 0, sessions: [],
     showsOnBoard: true, attentionStatus: 'idle',
@@ -2878,6 +2992,10 @@ describe('computeAttentionStatus', () => {
   })
 })
 
+function reviewComment(severity: Finding['severity'], selected = true): Task['findings'][number] {
+  return { severity, category: 'Bug', description: 'a comment', location: 'a.ts:1', selected }
+}
+
 describe('computeNextStageCta', () => {
   function waitingTask(waitingReason: string): Pick<Task, 'status' | 'waitingReason'> {
     return { status: 'waiting', waitingReason }
@@ -2905,6 +3023,52 @@ describe('computeNextStageCta', () => {
 
   it('offers qa once cr-fixes wrote "comments addressed, ready for QA"', () => {
     expect(computeNextStageCta(waitingTask('comments addressed, ready for QA'))).toEqual({ stage: 'qa' })
+  })
+
+  describe('an approved review that still lists comments', () => {
+    const APPROVED_REASON = 'CR approved, ready for QA'
+
+    it.each(['must', 'should', 'suggestion'] as const)(
+      'offers comment-fix, not qa, when the review has a %s comment',
+      (severity) => {
+        expect(computeNextStageCta({ ...waitingTask(APPROVED_REASON), findings: [reviewComment(severity)] }))
+          .toEqual({ stage: 'comment-fix' })
+      },
+    )
+
+    it('still offers qa when the review found no comments at all', () => {
+      expect(computeNextStageCta({ ...waitingTask(APPROVED_REASON), findings: [] })).toEqual({ stage: 'qa' })
+    })
+
+    it('keeps offering comment-fix once every comment is deselected in triage — the developer has not decided yet', () => {
+      expect(computeNextStageCta({ ...waitingTask(APPROVED_REASON), findings: [reviewComment('suggestion', false)] }))
+        .toEqual({ stage: 'comment-fix' })
+    })
+
+    it('treats an unparseable review (headers declare comments, bullets do not parse) as having comments', () => {
+      expect(computeNextStageCta({
+        ...waitingTask(APPROVED_REASON),
+        findings: [],
+        findingsParseMismatch: ['Should Fix: header says 4, parsed 0'],
+      })).toEqual({ stage: 'comment-fix' })
+    })
+
+    it('leaves a changes-required review on comment-fix', () => {
+      expect(computeNextStageCta({
+        ...waitingTask('CR found 1 must-fix comments, triage and dispatch cr-fixes'),
+        findings: [reviewComment('must')],
+      })).toEqual({ stage: 'comment-fix' })
+    })
+
+    it('does not send a task whose comments were addressed back to comment-fix', () => {
+      expect(computeNextStageCta({ ...waitingTask('comments addressed, ready for QA'), findings: [reviewComment('should')] }))
+        .toEqual({ stage: 'qa' })
+    })
+
+    it('does not divert a QA re-run', () => {
+      expect(computeNextStageCta({ ...waitingTask('fixes pushed, ready to re-run QA'), findings: [reviewComment('should')] }))
+        .toEqual({ stage: 'qa' })
+    })
   })
 
   it('offers qa-fixes once QA wrote "triage and dispatch qa-fixes"', () => {
@@ -3052,8 +3216,34 @@ describe('computeAutoDispatch', () => {
     }
   })
 
+  it('records a skip instead of dispatching QA when QA is not applicable', () => {
+    const result = computeAutoDispatch({ ...waitingTask('CR approved, ready for QA'), qaSkipReason: 'no e2e in VERIFY or diff' })
+    expect(result).toEqual({ stage: 'qa', key: 'qa-skipped:CR approved, ready for QA', skipReason: 'no e2e in VERIFY or diff' })
+  })
+
+  it('still dispatches QA when the task needs it', () => {
+    expect(computeAutoDispatch({ ...waitingTask('CR approved, ready for QA'), qaSkipReason: null })).toEqual({ stage: 'qa', key: 'qa:CR approved, ready for QA' })
+  })
+
   it('is null for the merge phrase, which has no NEXT_STAGE_BY_WAITING_REASON entry', () => {
     expect(computeAutoDispatch(waitingTask('QA passed, ready to merge'))).toBeNull()
+  })
+
+  it('never auto-dispatches QA for an approved review that still lists comments', () => {
+    expect(computeAutoDispatch({ ...waitingTask('CR approved, ready for QA'), findings: [reviewComment('suggestion')] })).toBeNull()
+  })
+
+  it('never auto-dispatches QA for an unparseable review — the gate fails closed', () => {
+    expect(computeAutoDispatch({
+      ...waitingTask('CR approved, ready for QA'),
+      findings: [],
+      findingsParseMismatch: ['Should Fix: header says 4, parsed 0'],
+    })).toBeNull()
+  })
+
+  it('still auto-dispatches QA for an approved review with no comments', () => {
+    expect(computeAutoDispatch({ ...waitingTask('CR approved, ready for QA'), findings: [] }))
+      .toEqual({ stage: 'qa', key: 'qa:CR approved, ready for QA' })
   })
 
   it('is null when status is not waiting', () => {
@@ -3160,60 +3350,6 @@ describe('SKIP_STAGE', () => {
   it('qa-fixes\' nextWaitingReason offers no CTA, matching a real clean QA pass', () => {
     const waitingTask = { status: 'waiting' as const, waitingReason: SKIP_STAGE['qa-fixes']!.nextWaitingReason }
     expect(computeNextStageCta(waitingTask)).toBeNull()
-  })
-})
-
-// public/index.html has no bundler, so it can't import taskParser.ts — its
-// computeNextStageCta and the stage-chain node lists are hand-maintained
-// mirrors of NEXT_STAGE_BY_WAITING_REASON and STAGES respectively (both
-// files' own comments say so). A future edit to the stage graph that
-// touches only one copy would otherwise desync the server-computed stage
-// from what the dashboard renders as the "live" CTA, silently — this
-// extracts both client-side array literals straight out of the real
-// public/index.html source (regex, not eval, so a malformed literal fails
-// the extraction loudly rather than silently matching nothing) and
-// compares them structurally against the real server-side exports.
-describe('client/server stage tables stay in lockstep', () => {
-  async function readIndexHtml(): Promise<string> {
-    return fs.readFile(path.join(import.meta.dirname, '..', 'public', 'index.html'), 'utf-8')
-  }
-
-  function extractBlock(html: string, constName: string): string {
-    const match = html.match(new RegExp(`const ${constName} = \\[([\\s\\S]*?)\\n {4}\\]`))
-    if (!match) throw new Error(`could not find "const ${constName} = [...]" in public/index.html`)
-    return match[1]
-  }
-
-  it('NEXT_STAGE_BY_WAITING_REASON matches its public/index.html mirror exactly', async () => {
-    const block = extractBlock(await readIndexHtml(), 'NEXT_STAGE_BY_WAITING_REASON')
-    const entryRe = /\{\s*marker:\s*'([^']*)',\s*stage:\s*'([^']*)'\s*\}/g
-    const clientEntries = [...block.matchAll(entryRe)].map((m) => ({ marker: m[1], stage: m[2] }))
-
-    expect(clientEntries.length).toBeGreaterThan(0) // the extraction itself must have found something
-    expect(clientEntries).toEqual(NEXT_STAGE_BY_WAITING_REASON)
-  })
-
-  it("FLAT_CHAIN_STAGES' stage order matches STAGES exactly", async () => {
-    const html = await readIndexHtml()
-    // Trailing `[^}]*` tolerates the `hint` field M2 added after `label` on
-    // each entry (see FLAT_CHAIN_STAGES/MILESTONE_CHAIN_STAGES in
-    // public/index.html) — id/stage/label are still captured in order, and
-    // that's all this test asserts on.
-    const entryRe = /\{\s*id:\s*'([^']*)',\s*stage:\s*'([^']*)',\s*label:\s*'([^']*)'[^}]*\}/g
-
-    // FLAT_CHAIN_STAGES is [planning, plan-review, ...MILESTONE_CHAIN_STAGES]
-    // in the source (a spread, which this regex can't follow), so the two
-    // explicit entries and the six spread-in ones are pulled from their own
-    // literal blocks and concatenated in the same order the real spread
-    // produces.
-    const flatOwnEntries = [...extractBlock(html, 'FLAT_CHAIN_STAGES').matchAll(entryRe)]
-      .map((m) => ({ id: m[1], stage: m[2] }))
-    const milestoneEntries = [...extractBlock(html, 'MILESTONE_CHAIN_STAGES').matchAll(entryRe)]
-      .map((m) => ({ id: m[1], stage: m[2] }))
-    const fullChain = [...flatOwnEntries, ...milestoneEntries]
-
-    expect(fullChain.length).toBeGreaterThan(0)
-    expect(fullChain.map((s) => s.stage)).toEqual(STAGES)
   })
 })
 
@@ -3539,6 +3675,7 @@ describe('worktreesDir', () => {
 })
 
 describe('buildDeadSessionMessage', () => {
+  const TASKS_DIR = '/tmp/tasks'
   // The standing message, spelled out rather than derived — the whole point
   // of this suite is that adding the recreate clause did not disturb it.
   const STANDING =
@@ -3563,12 +3700,12 @@ describe('buildDeadSessionMessage', () => {
   })
 
   it('is byte-for-byte the standing message when the worktree is still there', () => {
-    expect(buildDeadSessionMessage('parked-task', { worktree: '/tmp/wt/parked-task', repo: 'cockpit-ai', branch: 'claude/parked-task' }))
+    expect(buildDeadSessionMessage('parked-task', { worktree: '/tmp/wt/parked-task', repo: 'cockpit-ai', branch: 'claude/parked-task' }, TASKS_DIR))
       .toBe(STANDING)
   })
 
   it('splices in a recreate command when the worktree is gone', () => {
-    const message = buildDeadSessionMessage('parked-task', { worktree: null, repo: 'cockpit-ai', branch: 'claude/parked-task' })
+    const message = buildDeadSessionMessage('parked-task', { worktree: null, repo: 'cockpit-ai', branch: 'claude/parked-task' }, TASKS_DIR)
     expect(message).toContain('git -C /tmp/repos/cockpit-ai worktree add /tmp/wt/parked-task claude/parked-task')
     // Spliced into the standing message, never a replacement for it: recreate
     // first, then the unchanged reattach-and-resume instruction.
@@ -3579,7 +3716,297 @@ describe('buildDeadSessionMessage', () => {
   it('names no command when the task dir never gave a repo or a branch', () => {
     // parseTaskMdContent falls back to '' for both — a half-written
     // `git -C /tmp/repos/ worktree add ... ` is worse than nothing.
-    expect(buildDeadSessionMessage('parked-task', { worktree: null, repo: '', branch: '' })).toBe(STANDING)
-    expect(buildDeadSessionMessage('parked-task', { worktree: null, repo: 'cockpit-ai', branch: '' })).toBe(STANDING)
+    expect(buildDeadSessionMessage('parked-task', { worktree: null, repo: '', branch: '' }, TASKS_DIR)).toBe(STANDING)
+    expect(buildDeadSessionMessage('parked-task', { worktree: null, repo: 'cockpit-ai', branch: '' }, TASKS_DIR)).toBe(STANDING)
+  })
+})
+
+describe('parseTask — approved review with comments, on disk', () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pipelinely-cr-comments-gate-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  const APPROVED_STATUS = 'waiting: CR approved, ready for QA'
+  const REVIEW_WITH_COMMENTS = [
+    '### Should Fix (1)',
+    '- [Bug] Something to fix — `a.ts:1`',
+    '',
+    '### Suggestions (1)',
+    '- [Style] Something optional — `b.ts:2`',
+    '',
+    '**Verdict: APPROVED**',
+  ].join('\n')
+  const REVIEW_WITHOUT_COMMENTS = '### Must Fix (0)\n\n**Verdict: APPROVED**\n'
+  // Headers declare comments but the bullets miss the expected shape.
+  const REVIEW_UNPARSEABLE = '### Should Fix (2)\n- a comment with no location at all\n- another one\n\n**Verdict: APPROVED**\n'
+
+  async function taskOnDisk(files: Record<string, string>) {
+    const dir = path.join(tmpDir, 'some-task')
+    await fs.mkdir(dir, { recursive: true })
+    for (const [name, content] of Object.entries({ STATUS: APPROVED_STATUS, ...files })) {
+      await fs.writeFile(path.join(dir, name), content)
+    }
+    const task = await parseTask(dir)
+    if (!task) throw new Error('parseTask returned null')
+    return task
+  }
+
+  it('without TIMELINE or TRIAGE.json: stage and CTA are comment-fix, comments unselected', async () => {
+    const task = await taskOnDisk({ 'task-pr-review.md': REVIEW_WITH_COMMENTS })
+    expect(task.stage).toBe('comment-fix')
+    expect(task.findings.map((f) => f.selected)).toEqual([false, false])
+    expect(computeNextStageCta(task)).toEqual({ stage: 'comment-fix' })
+    expect(computeAutoDispatch(task)).toBeNull()
+  })
+
+  it('with TRIAGE.json: the persisted selection is merged and the CTA stays comment-fix', async () => {
+    const task = await taskOnDisk({ 'task-pr-review.md': REVIEW_WITH_COMMENTS, 'TRIAGE.json': '{"selected":[1]}' })
+    expect(task.findings.map((f) => f.selected)).toEqual([false, true])
+    expect(computeNextStageCta(task)).toEqual({ stage: 'comment-fix' })
+  })
+
+  it('with a TIMELINE: the last entry still wins the stage, while the CTA is comment-fix', async () => {
+    const task = await taskOnDisk({
+      'task-pr-review.md': REVIEW_WITH_COMMENTS,
+      TIMELINE: '2026-09-24T10:00:00Z code-review approved\n',
+    })
+    expect(task.stage).toBe('code-review')
+    expect(computeNextStageCta(task)).toEqual({ stage: 'comment-fix' })
+  })
+
+  it('with no comments at all: stage and CTA are qa, and auto mode may dispatch it', async () => {
+    const task = await taskOnDisk({ 'task-pr-review.md': REVIEW_WITHOUT_COMMENTS })
+    expect(task.stage).toBe('qa')
+    expect(task.findings).toEqual([])
+    expect(computeNextStageCta(task)).toEqual({ stage: 'qa' })
+    expect(computeAutoDispatch(task)).toEqual({ stage: 'qa', key: 'qa:CR approved, ready for QA' })
+  })
+
+  it('with an unparseable review: fails closed on comment-fix and reports the mismatch', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const task = await taskOnDisk({ 'task-pr-review.md': REVIEW_UNPARSEABLE })
+    errorSpy.mockRestore()
+    expect(task.findings).toEqual([])
+    expect(task.findingsParseMismatch).toEqual(['Should Fix: header says 2, parsed 0'])
+    expect(task.stage).toBe('comment-fix')
+    expect(computeNextStageCta(task)).toEqual({ stage: 'comment-fix' })
+    expect(computeAutoDispatch(task)).toBeNull()
+  })
+
+  it('after "comments addressed", the no-TIMELINE stage is qa, not comment-fix', async () => {
+    const task = await taskOnDisk({
+      STATUS: 'waiting: comments addressed, ready for QA',
+      'task-pr-review.md': REVIEW_WITH_COMMENTS,
+    })
+    expect(task.stage).toBe('qa')
+    expect(computeNextStageCta(task)).toEqual({ stage: 'qa' })
+  })
+})
+
+describe('resolveQaSkipReason', () => {
+  const atQa = { status: 'waiting' as const, waitingReason: 'CR approved, ready for QA', hasQaReport: false, worktree: '/wt/x' }
+  const unitOnly = async () => ['src/a.ts', 'src/a.test.ts']
+
+  it('gives the reason when a unit-only task waits at QA', async () => {
+    expect(await resolveQaSkipReason({ ...atQa, verifier: 'npx vitest run' }, unitOnly)).toMatch(/no e2e/i)
+  })
+
+  it('is null when the diff has an e2e spec', async () => {
+    expect(await resolveQaSkipReason({ ...atQa, verifier: 'npx vitest run' }, async () => ['e2e/a.spec.ts'])).toBeNull()
+  })
+
+  it('is null, without reading the diff, when the task is not waiting at a QA-entry marker', async () => {
+    const readDiff = vi.fn(unitOnly)
+    expect(await resolveQaSkipReason({ ...atQa, waitingReason: 'PR open, ready for CR', verifier: 'npx vitest run' }, readDiff)).toBeNull()
+    expect(readDiff).not.toHaveBeenCalled()
+  })
+
+  it('is null once a QA report exists — QA already ran, a re-run is not skippable', async () => {
+    expect(await resolveQaSkipReason({ ...atQa, hasQaReport: true, verifier: 'npx vitest run' }, unitOnly)).toBeNull()
+  })
+
+  it('fails closed when there is no worktree to diff', async () => {
+    expect(await resolveQaSkipReason({ ...atQa, worktree: null, verifier: 'npx vitest run' }, unitOnly)).toBeNull()
+  })
+
+  it('fails closed when the diff cannot be read', async () => {
+    expect(await resolveQaSkipReason({ ...atQa, verifier: 'npx vitest run' }, async () => null)).toBeNull()
+  })
+})
+
+describe('recordQaSkipped', () => {
+  let tasksDir: string
+
+  beforeEach(async () => {
+    tasksDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pipelinely-qa-skip-test-'))
+    await fs.mkdir(path.join(tasksDir, 'demo'))
+  })
+  afterEach(async () => { await fs.rm(tasksDir, { recursive: true, force: true }) })
+
+  it('writes the ready-to-merge STATUS and a qa TIMELINE line naming the reason', async () => {
+    await recordQaSkipped(tasksDir, 'demo', 'no e2e anywhere')
+
+    expect(await fs.readFile(path.join(tasksDir, 'demo', 'STATUS'), 'utf-8')).toBe('waiting: no QA needed, ready to merge\n')
+    const timeline = parseTimelineContent(await fs.readFile(path.join(tasksDir, 'demo', 'TIMELINE'), 'utf-8'))
+    expect(timeline).toHaveLength(1)
+    expect(timeline[0].stage).toBe('qa')
+    expect(timeline[0].note).toBe('skipped — no e2e anywhere')
+  })
+
+  it('the state it leaves behind puts the task at merge with no next-stage CTA', async () => {
+    await recordQaSkipped(tasksDir, 'demo', 'no e2e anywhere')
+    const timeline = parseTimelineContent(await fs.readFile(path.join(tasksDir, 'demo', 'TIMELINE'), 'utf-8'))
+
+    expect(computeStage({ status: 'waiting', mode: '', stageHistory: timeline, hasTechDesign: false, reviewVerdict: null, qaResult: null })).toBe('merge')
+    expect(computeNextStageCta({ status: 'waiting', waitingReason: 'no QA needed, ready to merge' })).toBeNull()
+  })
+
+  it('rejects when the task dir is missing, so the caller can log it', async () => {
+    await expect(recordQaSkipped(tasksDir, 'nope', 'r')).rejects.toThrow()
+  })
+})
+
+describe('appendTimelineLine', () => {
+  it('appends one parseable `<iso> <stage> <note>` line per call', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cockpit-timeline-test-'))
+    try {
+      await appendTimelineLine(dir, 'dev', 'first')
+      await appendTimelineLine(dir, 'qa', 'second')
+      const events = parseTimelineContent(await fs.readFile(path.join(dir, 'TIMELINE'), 'utf-8'))
+      expect(events.map((e) => [e.stage, e.note])).toEqual([['dev', 'first'], ['qa', 'second']])
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects when the task dir is missing', async () => {
+    await expect(appendTimelineLine('/nonexistent-cockpit-dir', 'qa', 'x')).rejects.toThrow()
+  })
+})
+
+// parseTask is where the predicate's inputs (VERIFY, worktree, QA report) are
+// threaded into resolveQaSkipReason; a mis-wire there passes every pure test.
+describe('parseTask qaSkipReason wiring', () => {
+  let root: string
+  let originalWorktreesDir: string | undefined
+
+  beforeEach(async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'pipelinely-qa-wiring-'))
+    originalWorktreesDir = process.env.WORKTREES_DIR
+    process.env.WORKTREES_DIR = path.join(root, 'worktrees')
+  })
+  afterEach(async () => {
+    if (originalWorktreesDir === undefined) delete process.env.WORKTREES_DIR
+    else process.env.WORKTREES_DIR = originalWorktreesDir
+    await fs.rm(root, { recursive: true, force: true })
+  })
+
+  async function makeTask(opts: { changedFile: string; verify: string | null; qaReport?: boolean }): Promise<string> {
+    const slug = 'wired-task'
+    const repo = path.join(root, 'repo')
+    const worktree = path.join(root, 'worktrees', slug)
+    await fs.mkdir(repo, { recursive: true })
+    await execa('git', ['init', '-q', '-b', 'master'], { cwd: repo })
+    await execa('git', ['config', 'user.email', 't@example.com'], { cwd: repo })
+    await execa('git', ['config', 'user.name', 'T'], { cwd: repo })
+    await fs.writeFile(path.join(repo, 'README.md'), 'init\n')
+    await execa('git', ['add', '-A'], { cwd: repo })
+    await execa('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
+    await execa('git', ['worktree', 'add', '-q', '-b', `claude/${slug}`, worktree], { cwd: repo })
+    await fs.mkdir(path.dirname(path.join(worktree, opts.changedFile)), { recursive: true })
+    await fs.writeFile(path.join(worktree, opts.changedFile), 'x\n')
+    await execa('git', ['add', '-A'], { cwd: worktree })
+    await execa('git', ['commit', '-q', '-m', 'work'], { cwd: worktree })
+
+    const dir = path.join(root, 'tasks', slug)
+    await fs.mkdir(dir, { recursive: true })
+    await fs.writeFile(path.join(dir, 'STATUS'), 'waiting: CR approved, ready for QA')
+    if (opts.verify !== null) await fs.writeFile(path.join(dir, 'VERIFY'), opts.verify)
+    if (opts.qaReport) await fs.writeFile(path.join(dir, 'QA_REPORT.md'), 'all 1 cases passed\n')
+    return dir
+  }
+
+  it('sets a skip reason for a unit-only task waiting at QA', async () => {
+    const task = await parseTask(await makeTask({ changedFile: 'src/a.test.ts', verify: 'npx vitest run\n' }))
+    expect(task?.qaSkipReason).toMatch(/no e2e/i)
+  })
+
+  it('leaves it null when the branch adds an e2e spec', async () => {
+    const task = await parseTask(await makeTask({ changedFile: 'e2e/a.spec.ts', verify: 'npx vitest run\n' }))
+    expect(task?.qaSkipReason).toBeNull()
+  })
+
+  it('leaves it null without a VERIFY file', async () => {
+    const task = await parseTask(await makeTask({ changedFile: 'src/a.test.ts', verify: null }))
+    expect(task?.qaSkipReason).toBeNull()
+  })
+
+  it('leaves it null once a QA report exists', async () => {
+    const task = await parseTask(await makeTask({ changedFile: 'src/a.test.ts', verify: 'npx vitest run\n', qaReport: true }))
+    expect(task?.qaSkipReason).toBeNull()
+  })
+})
+
+describe('approvalPrompt derivation', () => {
+  const PROMPT = { session: 'worker-blocked', question: 'Do you want to proceed?', summary: 'Bash command — npm test', options: [{ number: 1, label: 'Yes' }, { number: 2, label: 'No' }], fingerprint: '0123456789abcdef' }
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cockpit-approval-test-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  async function makeTaskDir(slug: string, status: string): Promise<void> {
+    await fs.mkdir(path.join(tmpDir, slug), { recursive: true })
+    await fs.writeFile(path.join(tmpDir, slug, 'STATUS'), status)
+  }
+
+  function attentionTask(overrides: Partial<Task> = {}): Task {
+    return { slug: 'a', status: 'working', itermSessionId: null, qaFailures: [], findings: [], milestones: undefined, approvalPrompt: null, ...overrides } as Task
+  }
+
+  it('computeAttentionStatus is needs-you for a live approval prompt even when the iTerm session is live', () => {
+    expect(computeAttentionStatus(attentionTask({ approvalPrompt: PROMPT, itermSessionId: 's1' }), new Set(['s1']))).toBe('needs-you')
+  })
+
+  it('computeAttentionStatus is needs-you for a live approval prompt on a paused task', () => {
+    expect(computeAttentionStatus(attentionTask({ approvalPrompt: PROMPT, status: 'paused' }), new Set())).toBe('needs-you')
+  })
+
+  it('computeAttentionStatus is unchanged when there is no approval prompt', () => {
+    expect(computeAttentionStatus(attentionTask({ itermSessionId: 's1' }), new Set(['s1']))).toBe('working')
+  })
+
+  it('parseAllTasks stamps the prompt on a working task and makes it needs-you', async () => {
+    await makeTaskDir('blocked', 'working')
+    const tasks = await parseAllTasks(tmpDir, undefined, new Map([['blocked', PROMPT]]))
+    expect(tasks[0].approvalPrompt).toEqual(PROMPT)
+    expect(tasks[0].attentionStatus).toBe('needs-you')
+  })
+
+  it('parseAllTasks drops the prompt for a done task', async () => {
+    await makeTaskDir('finished', 'done')
+    const tasks = await parseAllTasks(tmpDir, undefined, new Map([['finished', PROMPT]]))
+    expect(tasks[0].approvalPrompt).toBeNull()
+  })
+
+  it('parseAllTasks leaves approvalPrompt null when no prompts are passed', async () => {
+    await makeTaskDir('plain', 'working')
+    expect((await parseAllTasks(tmpDir))[0].approvalPrompt).toBeNull()
+  })
+
+  it('never writes STATUS', async () => {
+    await makeTaskDir('blocked', 'working')
+    await parseAllTasks(tmpDir, undefined, new Map([['blocked', PROMPT]]))
+    expect(await fs.readFile(path.join(tmpDir, 'blocked', 'STATUS'), 'utf8')).toBe('working')
   })
 })

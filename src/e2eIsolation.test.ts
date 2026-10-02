@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -7,6 +7,7 @@ import { CANONICAL_REPO_PATH } from './derivePort.js'
 import {
   assertIsolatedEnvironment,
   scanForRealIntegrationLeaks,
+  PUBLIC_ONLY_SPECS,
   findWebServerIsolationViolations,
   IsolationProbe,
   WebServerIsolation,
@@ -150,6 +151,54 @@ describe('scanForRealIntegrationLeaks', () => {
     } finally {
       fs.rmSync(tmpRoot, { recursive: true, force: true })
     }
+  })
+
+  describe('public-only spec exemption', () => {
+    const [exemptSpecName] = PUBLIC_ONLY_SPECS.map((spec) => path.basename(spec))
+    const tmuxTitleSource = `import { test } from '@playwright/test'\ntest('failure path: tmux missing', async () => {})\n`
+    let tmpRoot: string
+
+    beforeEach(() => {
+      tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'e2e-isolation-scan-'))
+    })
+
+    afterEach(() => {
+      fs.rmSync(tmpRoot, { recursive: true, force: true })
+    })
+
+    it('skips the tmux check for an exempt public-only spec whose title merely mentions tmux', () => {
+      fs.writeFileSync(path.join(tmpRoot, exemptSpecName), tmuxTitleSource)
+      expect(scanForRealIntegrationLeaks(tmpRoot)).toEqual([])
+    })
+
+    it('still flags osascript and guarded-fixture imports inside the exempt spec', () => {
+      const exemptSpec = path.join(tmpRoot, exemptSpecName)
+      fs.writeFileSync(exemptSpec, `import { test } from '@playwright/test'\ntest('x', async () => { await execa('osascript', []) })\n`)
+      expect(scanForRealIntegrationLeaks(tmpRoot)).toEqual([exemptSpec])
+      fs.writeFileSync(exemptSpec, `import { openScratchSession } from './fixtures/itermSessions.js'\n`)
+      expect(scanForRealIntegrationLeaks(tmpRoot)).toEqual([exemptSpec])
+    })
+
+    it('still flags the same content in any other spec, so the exemption is not a loophole', () => {
+      const otherSpec = path.join(tmpRoot, 'other.spec.ts')
+      fs.writeFileSync(otherSpec, tmuxTitleSource)
+      expect(scanForRealIntegrationLeaks(tmpRoot)).toEqual([otherSpec])
+    })
+
+    it('flags the exempt spec once it is off the exemption list, so the list is what grants the skip', () => {
+      fs.writeFileSync(path.join(tmpRoot, exemptSpecName), tmuxTitleSource)
+      expect(scanForRealIntegrationLeaks(tmpRoot, [])).toEqual([path.join(tmpRoot, exemptSpecName)])
+    })
+
+    it('master only: the exempt list matches oss/protected-dest-paths.txt and the specs do not exist on master', () => {
+      const protectedPathsFile = path.join(__dirname, '..', 'oss', 'protected-dest-paths.txt')
+      if (!fs.existsSync(protectedPathsFile)) return // published tree: no oss/, nothing to cross-check
+      const protectedPaths = fs.readFileSync(protectedPathsFile, 'utf8').split('\n').map((line) => line.trim())
+      for (const spec of PUBLIC_ONLY_SPECS) {
+        expect(protectedPaths).toContain(path.posix.join('e2e', spec))
+        expect(fs.existsSync(path.join(__dirname, '..', 'e2e', spec))).toBe(false)
+      }
+    })
   })
 
   it('flags a synthetic spec outside integration/ that imports the guarded fixtures', () => {

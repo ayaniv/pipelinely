@@ -1,0 +1,16 @@
+⏺ I'll open the dashboard in the browser to confirm the card renders.
+
+────────────────────────────────────────────────────────────────────────────────
+ Tool use
+
+   playwright - browser_navigate(url: "http://127.0.0.1:3030/") (MCP)
+   Navigate to a URL
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for playwright - browser_navigate commands in /Users/dev/worktrees/demo
+   3. No
+
+ Esc to cancel · Tab to amend
+
+

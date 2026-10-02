@@ -8,6 +8,10 @@ import { isCanonicalRepoPath } from '../src/derivePort.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.join(__dirname, '..')
 const FIXTURE_TASKS_DIR = path.join(__dirname, 'fixtures', 'tasks')
+// Every server this spec spawns serves fixture data, so none may inherit a
+// wider PIPELINELY_HOST from the developer's shell and boot on a tailnet/LAN
+// address — same pin as canonicalServer.ts and playwright.config.ts.
+const LOOPBACK_ONLY_ENV = { PIPELINELY_HOST: '127.0.0.1' }
 
 // M0's two user-visible behaviours (src/e2eIsolation.ts, src/tasksDir.ts) are
 // process-level, not page-level, so this spec asserts them by spawning real
@@ -49,7 +53,7 @@ test.describe('e2e isolation guard', () => {
     // milestone exists to prevent.
     test.skip(isCanonicalRepoPath(REPO_ROOT), 'this case only exercises the worktree failure path')
 
-    const envWithoutTasksDir: Record<string, string | undefined> = { ...process.env }
+    const envWithoutTasksDir: Record<string, string | undefined> = { ...process.env, ...LOOPBACK_ONLY_ENV }
     delete envWithoutTasksDir.TASKS_DIR
     const result = await execa('npx', ['tsx', 'src/server.ts'], {
       cwd: REPO_ROOT,
@@ -71,8 +75,9 @@ test.describe('e2e isolation guard', () => {
   // `python3 -m http.server` on the derived port let a real cockpit server
   // boot "successfully" alongside it, rather than the port conflict
   // playwright.config.ts's own webServer comment promises). Binding
-  // '0.0.0.0' explicitly (see src/server.ts) means this must now be a real,
-  // loud EADDRINUSE crash instead.
+  // '0.0.0.0' explicitly made that a real, loud EADDRINUSE crash. The server
+  // now binds loopback, which macOS lets coexist with a wildcard listener, so
+  // listenOnHosts (src/bindHosts.ts) probes the port itself to keep it one.
   test('src/server.ts refuses to boot when a stray process already holds the port', async () => {
     const strayServer = net.createServer()
     const strayPort = await new Promise<number>((resolve, reject) => {
@@ -85,7 +90,7 @@ test.describe('e2e isolation guard', () => {
     try {
       const result = await execa('npx', ['tsx', 'src/server.ts'], {
         cwd: REPO_ROOT,
-        env: { ...process.env, TASKS_DIR: FIXTURE_TASKS_DIR, PORT: String(strayPort) },
+        env: { ...process.env, ...LOOPBACK_ONLY_ENV, TASKS_DIR: FIXTURE_TASKS_DIR, PORT: String(strayPort) },
         reject: false,
         timeout: 10_000,
       })
@@ -102,7 +107,7 @@ test.describe('e2e isolation guard', () => {
   test('the documented remedy — an explicit fixture TASKS_DIR — actually boots the server', async () => {
     const subprocess = execa('npx', ['tsx', 'src/server.ts'], {
       cwd: REPO_ROOT,
-      env: { ...process.env, TASKS_DIR: FIXTURE_TASKS_DIR, PORT: '0' },
+      env: { ...process.env, ...LOOPBACK_ONLY_ENV, TASKS_DIR: FIXTURE_TASKS_DIR, PORT: '0' },
     })
     let output = ''
     subprocess.stdout?.on('data', (chunk) => (output += chunk.toString()))

@@ -4,7 +4,29 @@ import os from 'node:os'
 import { execa } from 'execa'
 import type { ActiveProjectProgress, AttentionStatus, AutoModeOverride, BacklogItem, DoneDateGroup, Finding, MilestoneDecl, MilestoneStatus, Plan, QaCase, QaFailure, Settings, SessionMetric, Stage, StageEvent, Task } from './types.js'
 import { getLiveSessionIds, getLiveTmuxSessions } from './focusTab.js'
+import { isApprovalPollable, type ApprovalPrompt } from './approvalPrompt.js'
 import { SAFE_TOKEN } from './batchDispatch.js'
+import { findResultDoc, toResultDocMeta } from './resultDoc.js'
+import { listBranchChangedFiles } from './gitOps.js'
+import { parsePrNumberFromReviewRef } from './prNumber.js'
+import { localDateKey } from './dateKey.js'
+import { resolveReposDir } from './reposDir.js'
+import { assessQaNeed, isApprovedReviewAwaitingCommentDecision, isQaNotApplicable, matchTableEntry, matchWaitingReason, QA_SKIPPED_NOTE_PREFIX, QA_SKIPPED_STATUS_REASON, type NextStageInput } from './nextStageCta.js'
+
+// Re-exported so the server routes and their tests keep importing these from
+// the parser; the implementations are shared pure modules the dashboard client
+// imports too.
+export { parsePrNumberFromReviewRef, localDateKey }
+
+export {
+  NEXT_STAGE_BY_WAITING_REASON,
+  computeNextStageCta,
+  hasReviewComments,
+  isApprovedReviewAwaitingCommentDecision,
+  isCrFixSelectionMissing,
+  isMilestoneReadyForDev,
+} from './nextStageCta.js'
+export type { NextStageCta, NextStageInput } from './nextStageCta.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -699,51 +721,47 @@ export function parseVerdict(raw: string): 'approved' | 'changes-required' | nul
   return null
 }
 
-// Task.reviewRef is a PR URL when the worker recorded one via `gh pr
-// create`, but can also be a bare number — mirrors public/index.html's own
-// prNumberFromReviewRef (a plain script with no bundler can't import this
-// module — see computeNextStageCta's client-side counterpart for the same
-// constraint), used there only for the Open-PR link's href. The server-side
-// merge route below needs its own copy since it's the one deciding which PR
-// number actually gets merged.
-export function parsePrNumberFromReviewRef(ref: string | undefined): string | null {
-  if (!ref) return null
-  const urlMatch = ref.match(/\/pull\/(\d+)/)
-  if (urlMatch) return urlMatch[1]
-  return /^\d+$/.test(ref.trim()) ? ref.trim() : null
+// A dev TIMELINE note is untrusted free text (workers write things like
+// "merged origin/master (M2, PR #119) into branch"), so only phrasings that
+// say "this task opened/owns that PR" count: "PR #N opened" / "PR #N (is)
+// open", "opened PR #N", "opened <.../pull/N URL>", or a note that is nothing
+// but a PR URL. A bare "#N", or a /pull/N URL mentioned in passing, never
+// does — that hijacked three cards onto an already-merged upstream PR.
+const OWN_PR_NOTE_PATTERNS: readonly RegExp[] = [
+  /\bPR #(\d+)\s*(?:\(|is\s+)?(?:opened|open)\b/i,
+  /\bopened PR #(\d+)/i,
+  /\bopened:?\s+(?:PR\s+)?https?:\/\/\S+\/pull\/(\d+)/i,
+  /^\s*(?:PR:?\s*)?https?:\/\/\S+\/pull\/(\d+)\S*\s*$/i,
+]
+
+function parseOwnPrNumberFromNote(note: string): string | null {
+  for (const pattern of OWN_PR_NOTE_PATTERNS) {
+    const match = note.match(pattern)
+    if (match) return match[1]
+  }
+  return null
 }
 
-// reviewRef only ever gets set by STATUS's legacy "review: <ref>" line
-// (see parseStatusContent above) — no current skill writes that; cockpit-
-// dev's SKILL.md instead documents the 'dev' stage's TIMELINE note as
-// "<PR note>" (e.g. "PR #42 open", or a full .../pull/42 URL) and moves
-// STATUS straight to "waiting: PR open, ready for CR". That note is the
-// PR number's actual, currently-used source for any task using the modern
-// TIMELINE-driven pipeline — reviewRef is checked first only so a task dir
-// still on the old convention keeps working. Scans 'dev' entries newest to
-// oldest and returns the first PR reference found, rather than only ever
-// checking the single latest note. This still mirrors computeStage/
-// computeNextStageCta's "latest round wins" precedent for the case that
-// matters — a genuinely new dev round that opens its own different PR has
-// its own note with its own PR reference, found first — but a follow-up
-// dev note that's just more work on the same PR (a rebase, a conflict fix)
-// and mentions no PR of its own no longer nulls out the reference an
-// earlier note in the same run already established.
+// Resolution order: reviewRef (legacy, explicit) → task.prNumber (the PR
+// GitHub associates with the task's own branch, set by attachResolvedPrNumbers)
+// → a strict note match on the 'dev' stage, newest note first. The branch is
+// the reliable key, so it beats any note on conflict; notes only matter when
+// GitHub was unavailable or knew of no PR. Newest-first keeps the "latest dev
+// round wins" precedent computeStage/computeNextStageCta use, while a
+// follow-up note that names no PR (a rebase, a conflict fix) doesn't null out
+// the reference an earlier note established. null means "no PR" — better
+// than a wrong one, and the Open PR / Merge actions refuse on it.
 export function findPrNumber(task: Pick<Task, 'reviewRef' | 'stageHistory' | 'prNumber'>): string | null {
   const fromReviewRef = parsePrNumberFromReviewRef(task.reviewRef)
   if (fromReviewRef) return fromReviewRef
+  if (task.prNumber) return task.prNumber
 
   const devEvents = task.stageHistory.filter((e) => e.stage === 'dev' && e.note)
   for (let i = devEvents.length - 1; i >= 0; i--) {
-    const note = devEvents[i].note!
-    const urlMatch = note.match(/\/pull\/(\d+)/)
-    if (urlMatch) return urlMatch[1]
-    const hashMatch = note.match(/#(\d+)/)
-    if (hashMatch) return hashMatch[1]
+    const fromNote = parseOwnPrNumberFromNote(devEvents[i].note!)
+    if (fromNote) return fromNote
   }
-  // Last resort: the dev note named no PR (e.g. "PR opened: <title>"), so
-  // the server asked GitHub by branch — see attachResolvedPrNumbers.
-  return task.prNumber ?? null
+  return null
 }
 
 // QA_REPORT.md's headline result. Recognises "<n> of <m> cases failed" and the
@@ -1014,6 +1032,10 @@ export interface StageInput {
   stageHistory: StageEvent[]
   hasTechDesign: boolean
   reviewVerdict: 'approved' | 'changes-required' | null
+  // True while an approved review's comments still await the developer's
+  // decision (see isApprovedReviewAwaitingCommentDecision). Optional so callers
+  // without a review are unaffected.
+  hasUnresolvedReviewComments?: boolean
   qaResult: { failed: number } | null
 }
 
@@ -1052,11 +1074,13 @@ export function computeStage(input: StageInput): Stage | null {
   const last = input.stageHistory[input.stageHistory.length - 1]
   if (last) {
     if (last.stage === 'qa' && input.qaResult) return stageFromQaResult(input.qaResult)
+    // A skipped QA leaves a `qa` line too, but nothing ran — the task is ready to merge.
+    if (last.stage === 'qa' && last.note?.startsWith(QA_SKIPPED_NOTE_PREFIX)) return 'merge'
     return last.stage
   }
 
   if (input.reviewVerdict === 'changes-required') return 'comment-fix'
-  if (input.reviewVerdict === 'approved') return 'qa'
+  if (input.reviewVerdict === 'approved') return input.hasUnresolvedReviewComments ? 'comment-fix' : 'qa'
 
   if (input.qaResult) return stageFromQaResult(input.qaResult)
 
@@ -1071,61 +1095,6 @@ export function computeStage(input: StageInput): Stage | null {
 // ---------------------------------------------------------------------------
 // Next-step pipeline CTA — which /cockpit-<stage> skill to stage next
 // ---------------------------------------------------------------------------
-
-// Deliberately keyed off waitingReason, not task.stage — see tech-design.md's
-// "Why waitingReason, not task.stage". task.stage (computeStage above) reads
-// TIMELINE's last entry, which a stage only appends once it hands back to the
-// human — so a task mid-stage, waiting on an unrelated clarifying question,
-// would misreport its stage as "just finished the previous one" and offer a
-// CTA that double-dispatches an already-running session. Each STATUS phrase
-// below is unique and written in the same breath as the handoff itself, so
-// matching on it side-steps that staleness entirely.
-//
-// Exported (rather than module-private) solely so taskParser.test.ts can
-// assert it stays in lockstep with its byte-for-byte hand-maintained mirror
-// in public/index.html — the plain-script frontend has no bundler to import
-// this module directly, so the two copies must be kept in sync by hand, and
-// a diverging edit to only one side otherwise fails silently (see the
-// "client/server stage tables stay in lockstep" test).
-export const NEXT_STAGE_BY_WAITING_REASON: { marker: string; stage: Stage }[] = [
-  { marker: 'plan ready for review', stage: 'plan-review' },
-  { marker: 'plan reviewed, ready for dev', stage: 'dev' },
-  { marker: 'PR open, ready for CR', stage: 'code-review' },
-  { marker: 'triage and dispatch cr-fixes', stage: 'comment-fix' },
-  { marker: 'CR approved, ready for QA', stage: 'qa' },
-  { marker: 'comments addressed, ready for QA', stage: 'qa' },
-  { marker: 'triage and dispatch qa-fixes', stage: 'qa-fixes' },
-  { marker: 'fixes pushed, ready to re-run QA', stage: 'qa' },
-  // "QA passed, ready to merge" deliberately has no entry — merge has a
-  // skill (pipelinely-merge) but no staged CTA and no waiting-reason marker:
-  // it stays a decision-waiting state, not a pipeline handoff, on purpose
-  // (see STAGE_SKILL below and pipelinely-merge-skill's tech-design.md,
-  // decision 2 and "The human gate is preserved").
-]
-
-export interface NextStageCta {
-  stage: Stage
-}
-
-// The table entry a task's waitingReason matches, or null. Extracted from
-// computeNextStageCta's body so computeAutoDispatch can see WHICH marker
-// matched without running the search a second time — one search, one meaning.
-function matchWaitingReason(
-  task: Pick<Task, 'status' | 'waitingReason'>,
-): { marker: string; stage: Stage } | null {
-  if (task.status !== 'waiting' || !task.waitingReason) return null
-  return NEXT_STAGE_BY_WAITING_REASON.find((m) => task.waitingReason!.includes(m.marker)) ?? null
-}
-
-// Unchanged behavior and unchanged return SHAPE. The shape matters: existing
-// assertions in taskParser.test.ts are toEqual({ stage: … }) deep equality
-// checks that a new field would fail, and the client's hand-mirrored copy in
-// public/index.html returns { stage } too — adding a `marker` field here
-// would break both for no gain, since only the auto-mode key ever needs it.
-export function computeNextStageCta(task: Pick<Task, 'status' | 'waitingReason'>): NextStageCta | null {
-  const match = matchWaitingReason(task)
-  return match ? { stage: match.stage } : null
-}
 
 // The stages auto mode must never dispatch into, whatever the setting says.
 // Both are triage: a checklist of findings where deciding what is worth
@@ -1149,31 +1118,54 @@ export const MANUAL_ONLY_STAGES: Stage[] = ['comment-fix', 'qa-fixes']
 export interface AutoDispatch {
   stage: Stage
   key: string
+  // Set instead of dispatching: QA is not applicable, so the pass records a
+  // skip (STATUS + TIMELINE) and pastes nothing.
+  skipReason?: string
 }
 
-export function computeAutoDispatch(
-  task: Pick<Task, 'status' | 'waitingReason'>,
-): AutoDispatch | null {
+export function computeAutoDispatch(task: NextStageInput): AutoDispatch | null {
+  if (isQaNotApplicable(task)) {
+    return { stage: 'qa', key: `qa-skipped:${matchTableEntry(task)!.marker}`, skipReason: task.qaSkipReason! }
+  }
   const match = matchWaitingReason(task)
   if (!match || MANUAL_ONLY_STAGES.includes(match.stage)) return null
   return { stage: match.stage, key: `${match.stage}:${match.marker}` }
 }
 
-// A queued milestone has no dispatched Task of its own yet, so
-// computeNextStageCta (which reads a Task's own waitingReason) can't answer
-// "is this one ready to start". Plan review is a required gate before ANY
-// milestone starts, including a root one with no needs: — a project can't
-// reach Dev without it once. Mirrors the "ready" branch already inline in
-// computeAttentionStatus (same file) — reuse the same reasoning rather than
-// duplicating a second copy of it in public/index.html.
-export function isMilestoneReadyForDev(
-  m: Pick<MilestoneStatus, 'needs' | 'state'>,
-  byId: Map<string, MilestoneStatus>,
-  parentStageHistory: StageEvent[],
-): boolean {
-  if (m.state !== 'queued') return false
-  if (!parentStageHistory.some((e) => e.stage === 'plan-review')) return false
-  return m.needs.every((id) => byId.get(id)?.state === 'done')
+export interface QaSkipInput {
+  status: Task['status']
+  waitingReason?: string
+  verifier: string | null
+  worktree: string | null
+  hasQaReport: boolean
+}
+
+// Why QA is not applicable to this task, or null when it is needed or cannot
+// be ruled out. Only looks (and only reads the diff) while the task waits at a
+// QA-entry marker with no QA report yet: a re-run after qa-fixes follows a QA
+// that really ran, and every other state has no QA decision to make.
+export async function resolveQaSkipReason(
+  task: QaSkipInput,
+  readChangedFiles: (worktree: string) => Promise<string[] | null> = listBranchChangedFiles,
+): Promise<string | null> {
+  if (task.hasQaReport || matchTableEntry(task)?.stage !== 'qa') return null
+  const changedFiles = task.worktree ? await readChangedFiles(task.worktree) : null
+  const assessment = assessQaNeed({ verifier: task.verifier, changedFiles })
+  return assessment.needsQa ? null : assessment.reason
+}
+
+// The one place a TIMELINE line's `<iso> <stage> <note>` format is written by
+// the server (workers write it by hand from their skills).
+export async function appendTimelineLine(taskDir: string, stage: Stage, note: string): Promise<void> {
+  await fs.appendFile(path.join(taskDir, 'TIMELINE'), `${new Date().toISOString()} ${stage} ${note}\n`)
+}
+
+// Records a skipped QA the way a worker finishing that stage would: a `qa`
+// TIMELINE line (so the trail says why) and the ready-to-merge STATUS. Shared
+// by auto mode; the pipelinely-qa skill writes the same two lines by hand.
+export async function recordQaSkipped(tasksDir: string, slug: string, reason: string): Promise<void> {
+  await appendTimelineLine(path.join(tasksDir, slug), 'qa', `${QA_SKIPPED_NOTE_PREFIX} — ${reason}`)
+  await fs.writeFile(path.join(tasksDir, slug, 'STATUS'), `waiting: ${QA_SKIPPED_STATUS_REASON}\n`)
 }
 
 // Which session a stage's skill invocation targets — shared by
@@ -1271,10 +1263,12 @@ export function countPlanMilestones(raw: string): number {
 }
 
 // Exported for server.ts's own merge/cleanup routes (gitOps.ts) — the repo
-// checkout a task's git operations run against is "<REPOS_DIR>/<repo>", the
-// same root this file already resolves plan.md against.
-export function reposDir(): string {
-  return process.env.REPOS_DIR ? path.resolve(process.env.REPOS_DIR) : path.join(os.homedir(), 'Dev')
+// checkout a task's git operations run against is "<repos root>/<repo>", the
+// same root this file already resolves plan.md against. The root is
+// REPOS_DIR, else the one saved in "<tasksDir>/REPOS_DIR" (see reposDir.ts),
+// else ~/Dev — re-read on every call so a `repos-dir set` needs no restart.
+export function reposDir(tasksDir: string): string {
+  return resolveReposDir({ envValue: process.env.REPOS_DIR, tasksDir, homeDir: os.homedir() }).reposDir
 }
 
 // Where a task's worktree lives — "<WORKTREES_DIR>/<slug>", the root the
@@ -1306,10 +1300,10 @@ export function worktreesDir(): string {
 // pasting a half-written `git -C <repos>/ worktree add <path> ` into a real
 // terminal is worse than pasting nothing. With the clause empty this is
 // byte-for-byte the message every ordinary dead session has always got.
-export function buildDeadSessionMessage(slug: string, task: Pick<Task, 'worktree' | 'repo' | 'branch'>): string {
+export function buildDeadSessionMessage(slug: string, task: Pick<Task, 'worktree' | 'repo' | 'branch'>, tasksDir: string): string {
   const canNameRecreate = !task.worktree && !!task.repo && !!task.branch
   const recreateClause = canNameRecreate
-    ? ` Its worktree is gone too — first run \`git -C ${path.join(reposDir(), task.repo)} worktree add ${path.join(worktreesDir(), slug)} ${task.branch}\` to recreate it from the branch, which still has everything committed.`
+    ? ` Its worktree is gone too — first run \`git -C ${path.join(reposDir(tasksDir), task.repo)} worktree add ${path.join(worktreesDir(), slug)} ${task.branch}\` to recreate it from the branch, which still has everything committed.`
     : ''
   return `The tmux session for \`${slug}\` is gone — its iTerm tab and tmux session are both dead (likely after a restart).${recreateClause} Recreate a tmux session attached to its existing worktree, launch \`claude\` in it, and prompt it to read TASK.md and resume from wherever its STATUS paused note says to pick up.`
 }
@@ -1317,8 +1311,8 @@ export function buildDeadSessionMessage(slug: string, task: Pick<Task, 'worktree
 // Reads "<REPOS_DIR>/<repo>/plan.md" and counts its milestones. Never throws —
 // returns null when the file is missing, unreadable, or fails to parse, so
 // callers can treat null as simply "no progress bar for this task".
-export async function countMilestonesInPlan(repo: string): Promise<number | null> {
-  const planPath = path.join(reposDir(), repo, 'plan.md')
+export async function countMilestonesInPlan(repo: string, tasksDir: string): Promise<number | null> {
+  const planPath = path.join(reposDir(tasksDir), repo, 'plan.md')
   let content: string
   try {
     content = await fs.readFile(planPath, 'utf-8')
@@ -1831,7 +1825,8 @@ async function resolveCompletionDate(
   slug: string,
   repo: string,
   branch: string,
-  statusMtime: Date
+  statusMtime: Date,
+  tasksDir: string
 ): Promise<{ date: Date; source: 'merge-commit' | 'status-mtime' }> {
   const cacheKey = `${slug}:${branch}`
   if (mergeCommitDateCache.has(cacheKey)) {
@@ -1839,7 +1834,7 @@ async function resolveCompletionDate(
     return cached ? { date: cached, source: 'merge-commit' } : { date: statusMtime, source: 'status-mtime' }
   }
 
-  const mergeDate = repo && branch ? await getMergeCommitDate(path.join(reposDir(), repo), branch) : null
+  const mergeDate = repo && branch ? await getMergeCommitDate(path.join(reposDir(tasksDir), repo), branch) : null
   mergeCommitDateCache.set(cacheKey, mergeDate)
   return mergeDate ? { date: mergeDate, source: 'merge-commit' } : { date: statusMtime, source: 'status-mtime' }
 }
@@ -1851,6 +1846,7 @@ async function resolveCompletionDate(
 export async function parseTask(taskDir: string): Promise<Task | null> {
   const dir = expandHome(taskDir)
   const slug = path.basename(dir)
+  const tasksDir = path.dirname(path.resolve(dir))
 
   // STATUS is required to determine task state; treat missing as 'working'.
   const statusPath = path.join(dir, 'STATUS')
@@ -1895,6 +1891,10 @@ export async function parseTask(taskDir: string): Promise<Task | null> {
     ? parseTaskMdContent(taskMdContent)
     : { title: '', mode: '', repo: '', branch: '' }
 
+  // Needs TASK.md's content for its "## Result" fallback, so it cannot join
+  // the concurrent reads above.
+  const resultDoc = toResultDocMeta(await findResultDoc(dir, taskMdContent, taskMdFields.mode))
+
   const worktree: string | null = worktreeAccess ? worktreePath : null
 
   // Trim once, not twice
@@ -1913,13 +1913,32 @@ export async function parseTask(taskDir: string): Promise<Task | null> {
 
   const stageHistory = timelineRaw ? parseTimelineContent(timelineRaw) : []
 
+  // Parsed once: the stage below, the triage merge and the mismatch check
+  // further down all read the same result.
+  const parsedFindings = reviewRaw ? parseFindings(reviewRaw) : []
+  const findingsParseMismatch = reviewRaw ? findFindingsParseMismatch(reviewRaw, parsedFindings) : []
+
   const stage = computeStage({
     status: statusFields.status,
     mode: taskMdFields.mode,
     stageHistory,
     hasTechDesign,
     reviewVerdict: reviewRaw ? parseVerdict(reviewRaw) : null,
+    hasUnresolvedReviewComments: isApprovedReviewAwaitingCommentDecision({
+      status: statusFields.status,
+      waitingReason: statusFields.waitingReason,
+      findings: parsedFindings,
+      findingsParseMismatch,
+    }),
     qaResult: qaRaw ? parseQaResult(qaRaw) : null,
+  })
+
+  const qaSkipReason = await resolveQaSkipReason({
+    status: statusFields.status,
+    waitingReason: statusFields.waitingReason,
+    verifier,
+    worktree,
+    hasQaReport: !!qaRaw,
   })
 
   // Multi-milestone project progress — only set for slugs like "overlap-m2".
@@ -1932,7 +1951,7 @@ export async function parseTask(taskDir: string): Promise<Task | null> {
     projectBase = milestoneSlug.projectBase
     milestoneCurrent = milestoneSlug.milestoneNumber + 1
     if (taskMdFields.repo) {
-      const total = await countMilestonesInPlan(taskMdFields.repo)
+      const total = await countMilestonesInPlan(taskMdFields.repo, tasksDir)
       if (total !== null && total > 0) {
         milestoneTotal = total
       }
@@ -1979,7 +1998,7 @@ export async function parseTask(taskDir: string): Promise<Task | null> {
   let completedAt: string | null = null
   let completedAtSource: 'merge-commit' | 'status-mtime' | null = null
   if (statusFields.status === 'done') {
-    const resolved = await resolveCompletionDate(slug, taskMdFields.repo, taskMdFields.branch, updatedAt)
+    const resolved = await resolveCompletionDate(slug, taskMdFields.repo, taskMdFields.branch, updatedAt, tasksDir)
     completedAt = resolved.date.toISOString()
     completedAtSource = resolved.source
   }
@@ -2072,14 +2091,13 @@ export async function parseTask(taskDir: string): Promise<Task | null> {
     }
   }
 
-  const findings = reviewRaw ? applyTriageSelection(parseFindings(reviewRaw), triageSelected) : []
+  const findings = applyTriageSelection(parsedFindings, triageSelected)
 
   // A section whose declared "(N)" heading disagrees with how many bullets
   // actually parsed means at least one bullet didn't match the expected
   // shape (even after FINDING_BULLET_RE's bare-location leniency) — logged
   // here so it's never silently lost, and surfaced to the CR tab via
   // findingsParseMismatch on the returned Task.
-  const findingsParseMismatch = reviewRaw ? findFindingsParseMismatch(reviewRaw, findings) : []
   if (findingsParseMismatch.length) {
     console.error(
       `[taskParser] ${slug}: task-pr-review.md bullet count mismatch — ${findingsParseMismatch.join('; ')}`,
@@ -2141,9 +2159,11 @@ export async function parseTask(taskDir: string): Promise<Task | null> {
   return {
     slug,
     ...taskMdFields,
+    resultDoc,
     worktree,
     devUrl,
     verifier,
+    qaSkipReason,
     stageHistory,
     stage,
     findings,
@@ -2161,6 +2181,7 @@ export async function parseTask(taskDir: string): Promise<Task | null> {
     qaSpecFile,
     showsOnBoard,
     attentionStatus,
+    approvalPrompt: null,
     autoModeOverride,
     // The correct standalone answer for a lone parseTask call (global
     // default off) — parseAllTasks recomputes this in its second pass once
@@ -2186,17 +2207,6 @@ export async function parseTask(taskDir: string): Promise<Task | null> {
 
 const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-
-// 'YYYY-MM-DD' in local time (not UTC) — grouping follows the developer's
-// own calendar day, not a timezone offset from it. Exported for
-// POST /shelve/:slug, which dates the BACKLOG.md entry it writes the same
-// way, so a shelved row sorts alongside hand-written ones on the same day.
-export function localDateKey(d: Date): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
 
 function parseDateKey(key: string): Date {
   const [y, m, d] = key.split('-').map(Number)
@@ -2307,6 +2317,10 @@ export function computeAttentionStatus(
   // must run before the liveness check.
   if (task.status === 'waiting') return 'needs-you'
 
+  // A live dialog outranks even 'paused': the session is literally blocked on
+  // a click, whatever STATUS says.
+  if (task.approvalPrompt) return 'needs-you'
+
   // 'paused' means the user deliberately set this task aside — distinct from
   // 'waiting' (blocked on a decision) so the badge/CTA can read "Resume"
   // rather than the more urgent "Needs you". Also wins over liveness: same
@@ -2349,6 +2363,7 @@ export function computeAttentionStatus(
 export async function parseAllTasks(
   tasksDir: string,
   settings: Settings = DEFAULT_SETTINGS,
+  approvalPrompts: Map<string, ApprovalPrompt> = new Map(),
 ): Promise<Task[]> {
   const dir = expandHome(tasksDir)
 
@@ -2448,6 +2463,7 @@ export async function parseAllTasks(
   // just means "can't confirm working", which computeAttentionStatus
   // already degrades through correctly.
   for (const task of tasks) {
+    task.approvalPrompt = isApprovalPollable(task) ? approvalPrompts.get(task.slug) ?? null : null
     task.attentionStatus = computeAttentionStatus(task, liveIds)
   }
 

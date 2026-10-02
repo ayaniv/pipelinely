@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isLoopbackAddress, requestIsRemote } from './remoteAccess.js'
+import { isKnownLoopbackAddress, isLoopbackAddress, requestIsRemote, requestCameThroughProxy, PROXY_HEADERS } from './remoteAccess.js'
 
 // The whole safety design of the auto-submit feature rests on this one
 // predicate, so it is covered exhaustively in both directions — and, most
@@ -76,5 +76,29 @@ describe('requestIsRemote', () => {
   it('fails closed to "not remote" when the socket has no peer address at all', () => {
     expect(requestIsRemote({ socket: {} })).toBe(false)
     expect(requestIsRemote({ socket: { remoteAddress: undefined } })).toBe(false)
+  })
+})
+
+describe('requestCameThroughProxy', () => {
+  it.each(PROXY_HEADERS)('is true when the %s header is present', (header) => {
+    expect(requestCameThroughProxy({ headers: { [header]: '100.64.1.2' } })).toBe(true)
+  })
+
+  it('is false for a request with none of the proxy headers', () => {
+    expect(requestCameThroughProxy({ headers: { host: 'localhost:3030', accept: 'text/html' } })).toBe(false)
+  })
+})
+
+describe('isKnownLoopbackAddress — the fail-closed reading auth uses', () => {
+  it('accepts only addresses that parse as loopback IPs', () => {
+    for (const address of ['127.0.0.1', '127.0.0.53', '::1', '::ffff:127.0.0.1']) {
+      expect(isKnownLoopbackAddress(address), address).toBe(true)
+    }
+  })
+
+  it('refuses a missing, empty, unparseable or non-loopback address', () => {
+    for (const address of [undefined, null, '', '   ', 'localhost', 'not-an-ip', '100.64.1.2']) {
+      expect(isKnownLoopbackAddress(address), String(address)).toBe(false)
+    }
   })
 })

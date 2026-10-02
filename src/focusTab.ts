@@ -464,11 +464,42 @@ export function decideReattachAction(
 // this failure is NOT logged — no tmux server running is an expected
 // steady state (e.g. before this feature was adopted on a given machine),
 // not a signal that something is broken.
-export async function getLiveTmuxSessions(): Promise<Set<string> | null> {
+//
+// `timeoutMs` is opt-in: the approval poll passes one so a hung tmux can't
+// keep its tick in flight forever; orphan detection leaves it unset. A
+// timeout rejects instead of returning null — a hung tmux is a real fault the
+// caller must be able to tell apart from "no server" and log.
+export async function getLiveTmuxSessions(options: { timeoutMs?: number } = {}): Promise<Set<string> | null> {
   try {
-    const { stdout } = await execa('tmux', ['ls', '-F', '#{session_name}'])
+    const { stdout } = await execa('tmux', ['ls', '-F', '#{session_name}'], { timeout: options.timeoutMs })
     return new Set(stdout.split('\n').map((s) => s.trim()).filter(Boolean))
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && 'timedOut' in error && error.timedOut) throw error
+    return null
+  }
+}
+
+export const TMUX_WRITE_TIMEOUT_MS = 2000
+const TMUX_PANE_ID = /^%\d+$/
+
+// The only tmux write in the codebase. argv only (no shell), and it never adds
+// Enter: the caller passes exactly the keys to type, built by keysForChoice.
+// Takes a pinned pane id, never a session name, so the pane that was
+// re-checked is the pane that is typed into.
+export async function sendKeysToPane(paneId: string, keys: readonly string[]): Promise<void> {
+  if (!TMUX_PANE_ID.test(paneId)) throw new Error(`refusing to send keys: ${JSON.stringify(paneId)} is not a tmux pane id`)
+  await execa('tmux', ['send-keys', '-t', paneId, ...keys], { timeout: TMUX_WRITE_TIMEOUT_MS })
+}
+
+// The id (`%N`) of the session's active pane, or null when it can't be read.
+export async function resolveActivePaneId(session: string): Promise<string | null> {
+  if (!SAFE_TMUX_SESSION_NAME.test(session)) return null
+  try {
+    const { stdout } = await execa('tmux', ['display-message', '-p', '-t', `=${session}:`, '#{pane_id}'], { timeout: TMUX_WRITE_TIMEOUT_MS })
+    const paneId = stdout.trim()
+    return TMUX_PANE_ID.test(paneId) ? paneId : null
+  } catch (err) {
+    console.error(`[focusTab] could not resolve the active pane of ${session}:`, err)
     return null
   }
 }

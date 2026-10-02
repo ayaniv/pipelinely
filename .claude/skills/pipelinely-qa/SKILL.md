@@ -9,7 +9,15 @@ What this stage tests and reports is fully owned here — the mechanical *how a 
 
 ## Step 1 — Confirm there's something to test
 
-Check `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>/DEV_URL` exists (the running dev server the PR stood up) and that e2e test files exist (written during `pipelinely-planning`). If either is missing, report exactly what's missing and stop.
+First decide whether QA applies, by the rule `assessQaNeed` implements in `src/nextStageCta.ts` (read its comment — it is the single source, and the dashboard's Merge gate and auto mode use the same function): QA is needed when `VERIFY` names an e2e/Playwright command or the PR's diff touches an e2e spec. Anything you cannot establish (a missing `VERIFY`, or one that does not start with a runnable test command, a diff you cannot read) means QA is **needed** — never skip on a guess. To check the diff, list the branch's changed files the way `listBranchChangedFiles` in `src/gitOps.ts` does, from `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>`.
+
+**QA not applicable** (neither condition holds): do not stop with an error, and do not open a tab. Say `QA not applicable: <reason>` (`no e2e command in VERIFY and the PR changes no e2e spec`), then write, by absolute path:
+- `echo "waiting: no QA needed, ready to merge" > ${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>/STATUS`
+- `echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) qa skipped — <reason>" >> ${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>/TIMELINE` (the note **must** start with `skipped` — the dashboard reads that to put the task at merge)
+
+and exit. Merging stays the developer's click.
+
+**QA needed**: check `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>/DEV_URL` exists (the running dev server the PR stood up) and that e2e test files exist (written during `pipelinely-planning`). If either is missing, report exactly what's missing and stop.
 
 ## Step 2 — Write `TASK.md`
 

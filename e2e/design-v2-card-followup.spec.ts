@@ -195,6 +195,9 @@ test.describe('the card button row', () => {
     await page.goto('/')
 
     const row = card(page, LEAF_CTA_SLUG).locator('.card-header-right')
+    // evaluateAll does not auto-wait: under load it read the row before the
+    // card painted and compared an empty list, so wait for the row first.
+    await expect(row.getByTestId('card-time')).toBeVisible()
     const testids = await row.locator('> *').evaluateAll(els =>
       els.map(el => (el as HTMLElement).dataset.testid ?? el.className)
     )
@@ -468,6 +471,9 @@ test.describe('the inner page\'s Back control', () => {
   test('it draws the design\'s back chevron', async ({ page }) => {
     await page.goto(`/task/${LEAF_CTA_SLUG}`)
 
+    // The pill mounts into the header slot once the task resolves; read its
+    // glyph only after it is there.
+    await expect(backPill(page)).toBeVisible()
     expect(await pathsOf(backPill(page))).toContain('M19 12H6M11.5 18l-6-6 6-6')
   })
 

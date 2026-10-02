@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -11,6 +11,7 @@ import {
   buildSessionWriteScript,
   buildPasteIntoSessionWriteScript,
   pasteIntoTrackedSession,
+  getLiveTmuxSessions,
 } from './focusTab.js'
 
 describe('decideReattachAction', () => {
@@ -258,5 +259,40 @@ describe('pasteIntoTrackedSession', () => {
       'irrelevant message',
     )
     expect(result).toEqual({ status: 'no-session', hadRecordedSession: false })
+  })
+})
+
+describe('getLiveTmuxSessions', () => {
+  let binDir: string
+  let originalPath: string | undefined
+
+  beforeEach(async () => {
+    binDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cockpit-fake-tmux-'))
+    originalPath = process.env.PATH
+    process.env.PATH = `${binDir}:${originalPath}`
+  })
+
+  afterEach(async () => {
+    process.env.PATH = originalPath
+    await fs.rm(binDir, { recursive: true, force: true })
+  })
+
+  async function installFakeTmux(script: string): Promise<void> {
+    await fs.writeFile(path.join(binDir, 'tmux'), `#!/bin/sh\n${script}\n`, { mode: 0o755 })
+  }
+
+  it('returns the live session names', async () => {
+    await installFakeTmux('printf "worker-a\\nworker-b\\n"')
+    expect(await getLiveTmuxSessions({ timeoutMs: 2000 })).toEqual(new Set(['worker-a', 'worker-b']))
+  })
+
+  it('rejects when tmux hangs past the timeout, so the caller can log it', async () => {
+    await installFakeTmux('sleep 5')
+    await expect(getLiveTmuxSessions({ timeoutMs: 100 })).rejects.toMatchObject({ timedOut: true })
+  })
+
+  it('returns null when tmux fails', async () => {
+    await installFakeTmux('exit 1')
+    expect(await getLiveTmuxSessions()).toBeNull()
   })
 })

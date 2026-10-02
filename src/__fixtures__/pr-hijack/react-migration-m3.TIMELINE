@@ -1,0 +1,12 @@
+2026-09-23T15:20:57Z dev PR #117 opened: react-migration M3: pipeline graph with React Flow
+2026-09-23T19:21:34.701Z code-review auto-dispatched — auto mode
+2026-09-23T19:24:51Z code-review approved with 4 should-fix, 4 suggestions (PR #117)
+2026-09-23T19:24:53.523Z qa auto-dispatched — auto mode
+2026-09-23T21:26:20Z comment-fix all 8 CR comments addressed (no base-branch merge needed)
+2026-09-23T21:26:22.563Z qa auto-dispatched — auto mode
+2026-09-23T22:06:24Z qa 0 of 542 cases failed
+2026-09-24T07:39:21Z dev merged origin/master (M2, PR #119) into branch; 6 conflicts resolved (app.js, legacyGlobals.d.ts, taskDetailBridge + test, TaskDetail + test); unit/tsc/build only, e2e not run
+2026-09-24T07:47:18Z qa 3 of 579 cases failed
+2026-09-24T07:48:51Z qa-fixes react-stage-panels.spec.ts retargeted from removed .wave-grid to milestone-flow testid (4 assertions); spec 37/37, unit + tsc green
+2026-09-24T07:48:53.312Z qa auto-dispatched — auto mode
+2026-09-24T08:09:21Z qa all 578 cases passed

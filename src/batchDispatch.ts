@@ -1,3 +1,5 @@
+import path from 'node:path'
+
 // Composing and validating a batch-dispatch message is a self-contained
 // concern with its own unit-test file — own module rather than another
 // export on taskParser.ts (already 2173 lines), matching derivePort.ts /
@@ -26,6 +28,17 @@ export type BatchDispatchRequest =
 // POST /batch-dispatch and POST /stage-skill/:slug's orchestrator branch
 // (server.ts), which needs the identical guard for its own slug arg.
 export const SAFE_TOKEN = /^[a-zA-Z0-9_.-]+$/
+
+// A CLI's slug argument -> that task's dir, refusing anything that is not
+// directly one of tasksDir's own children. SAFE_TOKEN allows dots, so a slug
+// of exactly '..' still needs the dirname check: path.join alone would
+// happily resolve outside tasksDir.
+export function resolveTaskDirArg(tasksDir: string, slug: string): string {
+  if (!SAFE_TOKEN.test(slug)) throw new Error(`'${slug}' is not a safe task slug`)
+  const taskDir = path.join(tasksDir, slug)
+  if (path.dirname(taskDir) !== tasksDir) throw new Error(`Refusing '${slug}': resolves outside ${tasksDir}`)
+  return taskDir
+}
 
 const BATCH_NOUN = { wave: 'milestones', backlog: 'backlog items' } as const
 const BATCH_SINGULAR = { wave: 'milestone', backlog: 'backlog item' } as const

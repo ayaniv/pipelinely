@@ -154,7 +154,7 @@ test.describe('milestone stage rail', () => {
   // Sage, not accent — the milestone rail's completed treatment is its own.
   //
   // The ring is authored at the design's own 1.5px (see .stepper-wide.is-
-  // milestone .stage-chain-check in index.html — the same value the 16px
+  // milestone .stage-chain-check in app.css — the same value the 16px
   // mini-rail already uses). That is what a real, headed browser renders:
   // verified directly against this exact Chromium build with
   // `chromium.launch({ headless: false })`, which reports
