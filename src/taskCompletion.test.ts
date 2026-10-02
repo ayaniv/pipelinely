@@ -33,7 +33,7 @@ function readyResult(overrides: Record<string, unknown> = {}) {
 }
 
 function blockedResult(kind = 'conflicts') {
-  return { ready: false as const, blockers: [{ kind, detail: `blocked: ${kind}` }] }
+  return { ready: false as const, blockers: [{ kind, detail: `blocked: ${kind}` }], headRefName: branch }
 }
 
 function task(overrides: Partial<Task> = {}): Pick<Task, 'slug' | 'repo' | 'branch' | 'worktree' | 'reviewRef' | 'stageHistory'> {
@@ -121,6 +121,37 @@ describe('mergeTask / markTaskDone', () => {
       expect(await readStatus()).toBe('waiting: QA passed, ready to merge\n')
       expect(await readTimeline()).toBe(timelineBefore)
       await expect(fs.access(worktreePath)).resolves.toBeUndefined()
+    })
+
+    it('refuses with branch-mismatch, merging and touching nothing, when the ready PR\'s head branch is not the task\'s own branch', async () => {
+      const timelineBefore = await readTimeline()
+      checkMergeReadinessMock.mockResolvedValueOnce({ ok: true, readiness: readyResult({ headRefName: 'claude/some-other-task' }) })
+      const result = await mergeTask(tasksDir, task({ worktree: worktreePath }))
+      expect(result).toEqual({ outcome: 'branch-mismatch', prNumber: '42', expectedBranch: branch, actualBranch: 'claude/some-other-task' })
+      expect(mergePullRequestMock).not.toHaveBeenCalled()
+      expect(deleteRemoteBranchMock).not.toHaveBeenCalled()
+      expect(await readStatus()).toBe('waiting: QA passed, ready to merge\n')
+      expect(await readTimeline()).toBe(timelineBefore)
+    })
+
+    it('reports branch-mismatch, not the misleading "not open", when a wrong PR is MERGED', async () => {
+      checkMergeReadinessMock.mockResolvedValueOnce({
+        ok: true,
+        readiness: { ...blockedResult('not-open'), headRefName: 'claude/some-other-task' },
+      })
+      const result = await mergeTask(tasksDir, task())
+      expect(result).toEqual({ outcome: 'branch-mismatch', prNumber: '42', expectedBranch: branch, actualBranch: 'claude/some-other-task' })
+      expect(mergePullRequestMock).not.toHaveBeenCalled()
+    })
+
+    it('still reports the gate\'s own blockers when the not-ready PR is the task\'s own branch', async () => {
+      checkMergeReadinessMock.mockResolvedValueOnce({ ok: true, readiness: blockedResult('conflicts') })
+      expect((await mergeTask(tasksDir, task())).outcome).toBe('blocked')
+    })
+
+    it('falls through to blocked when a malformed read gives no head branch to compare', async () => {
+      checkMergeReadinessMock.mockResolvedValueOnce({ ok: true, readiness: { ...blockedResult('malformed'), headRefName: null } })
+      expect((await mergeTask(tasksDir, task())).outcome).toBe('blocked')
     })
 
     it('returns merge-failed and touches nothing when gh pr merge itself fails', async () => {

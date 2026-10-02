@@ -26,7 +26,7 @@ function card(page, slug: string) {
 }
 
 // Open PR and Mark done both moved into the card's own 3-dot menu in the
-// Pipelinely Pipeline redesign (see cardMenuItemsHtml in public/index.html)
+// Pipelinely Pipeline redesign (see CardMenu.tsx)
 // — every case that clicks one now opens that menu first.
 async function openCardMenu(page, slug: string) {
   await card(page, slug).getByTestId('card-menu-btn').click()
@@ -52,10 +52,9 @@ test.describe('Open PR', () => {
     // merge-ready-followup-dev-note's TIMELINE has an earlier 'dev' note
     // "PR #42 open" followed by a later 'dev' note "rebased on master,
     // pushed fixes" with no PR reference of its own — regression coverage
-    // for findPrNumber's walk-backward fix (client-side copy in
-    // public/index.html; server-side is covered directly in
-    // src/taskParser.test.ts). Before the fix, the button would be absent
-    // because the client mirror only checked the single latest dev note.
+    // for findPrNumber's walk-backward fix (the server resolves it into task.prNumber;
+    // covered directly in src/taskParser.test.ts). Before the fix, the button
+    // would be absent because only the single latest dev note was checked.
     await page.goto('/')
     await openCardMenu(page, 'merge-ready-followup-dev-note')
     const btn = card(page, 'merge-ready-followup-dev-note').getByTestId('open-pr-btn')

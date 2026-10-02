@@ -133,9 +133,10 @@ async function withOrchestratorTmuxSession(fn: () => Promise<void>): Promise<voi
 //  - That config's `webServer.env` pins TASKS_DIR/REPOS_DIR/WORKTREES_DIR to
 //    e2e/fixtures/*, and Playwright merges `options.env` last, so an
 //    inherited env var cannot override it.
-//  - src/server.ts binds an explicit '0.0.0.0' with no port fallback, so a
-//    conflict is a loud EADDRINUSE crash rather than a dashboard flakily
-//    served by whichever process the OS routed to first.
+//  - src/server.ts has no port fallback, and listenOnHosts (src/bindHosts.ts)
+//    probes the port before binding loopback, so a conflict is a loud
+//    EADDRINUSE crash rather than a dashboard flakily served by whichever
+//    process the OS routed to first.
 //  - src/tasksDir.ts's resolveTasksDir throws when a worktree starts a server
 //    with no explicit TASKS_DIR — draining the reservoir of stray servers
 //    silently armed on the real tasks dir that the incident drew from.
@@ -487,7 +488,7 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
 // (canonical-dispatch-gate CR fix) — every case below runs against the
 // shared file's own canonicalUrl instance for the same reason "Start CTA"
 // does, and the button itself renders disabled on a non-canonical instance
-// (see index.html's updateReadOnlyBanner), so a direct page.request.post is
+// (see ReadOnlyBanner.tsx / OrchestratorPill.tsx), so a direct page.request.post is
 // used wherever a test needs to reach the route without going through a
 // (now conditionally disabled) button click.
 test.describe('"bring back the orchestrator tab" button', () => {

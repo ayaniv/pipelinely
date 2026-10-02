@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { defaultPortForCwd } from './src/derivePort.js'
-import { FIXTURE_REPOS_DIR, FIXTURE_TASKS_DIR, FIXTURE_WORKTREES_DIR } from './e2e/fixtures/fixtureDirs.js'
+import { FIXTURE_REMOTE_TOKEN_FILE, FIXTURE_REPOS_DIR, FIXTURE_TASKS_DIR, FIXTURE_WORKTREES_DIR } from './e2e/fixtures/fixtureDirs.js'
 import { fakeGhEnv } from './e2e/fixtures/fakeGh.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -40,7 +40,7 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   use: {
-    baseURL: `http://localhost:${PORT}`,
+    baseURL: `http://127.0.0.1:${PORT}`,
     trace: 'on-first-retry',
   },
   // Always starts its own fixture-scoped server and hard-errors on a port
@@ -50,17 +50,28 @@ export default defineConfig({
   // reach the developer's live orchestrator session. A port answering is
   // not proof of identity.
   webServer: {
-    command: 'npx tsx src/server.ts',
-    url: `http://localhost:${PORT}/api/tasks`,
+    // Builds the web bundle before starting Express — server.ts's
+    // sendDashboardShell 500s without one, so a stale/missing public/dist
+    // would otherwise fail the e2e run's very first navigation instead of
+    // this command's own build step (react-migration M0).
+    command: 'npm run build:web && npx tsx src/server.ts',
+    timeout: 120_000,
+    url: `http://127.0.0.1:${PORT}/api/tasks`,
     reuseExistingServer: false,
     env: {
       TASKS_DIR: FIXTURE_TASKS_DIR,
       REPOS_DIR: FIXTURE_REPOS_DIR,
       WORKTREES_DIR: FIXTURE_WORKTREES_DIR,
+      // The fixture server must never read the developer's real token.
+      PIPELINELY_REMOTE_TOKEN_FILE: FIXTURE_REMOTE_TOKEN_FILE,
       // `gh` resolves to e2e/fixtures/bin/gh for this server — no e2e run can
       // reach a real GitHub PR, and the merge gate's PR states are canned.
       ...fakeGhEnv(),
       PORT: String(PORT),
+      // The server binds IPv4 loopback only by default (baseURL/url above
+      // use 127.0.0.1 for that reason); pin it so a PIPELINELY_HOST in the
+      // developer's shell can't make the fixture server network-reachable.
+      PIPELINELY_HOST: '127.0.0.1',
       // See orchestratorLock.ts's own comment: without this, the "lock
       // already held" e2e test costs 15s of wall clock to prove a timeout
       // the same logic proves just as well at 10. This value is shared by
@@ -72,6 +83,12 @@ export default defineConfig({
       // shorter than that real critical section alone, which is exactly
       // what the "two dispatches" test waits out.
       COCKPIT_ORCH_LOCK_TIMEOUT_MS: '10000',
+      // The blocked-on-approval pane poll (dashboard-show-blocked-workers).
+      // Its production default is seconds apart; dashboard-blocked-workers.spec.ts
+      // rewrites a fixture pane and waits for the card to follow, so a short
+      // interval keeps that wait well under its 10s assertion timeout.
+      // Reads only fixture panes: tmux resolves to e2e/fixtures/bin/tmux here.
+      COCKPIT_APPROVAL_POLL_MS: '500',
       // Browser auto-open is opt-in (COCKPIT_AUTO_OPEN_BROWSER, see
       // server.ts's own comment) and nothing here sets it, so this webServer
       // never pops a real browser tab without needing to say so explicitly.

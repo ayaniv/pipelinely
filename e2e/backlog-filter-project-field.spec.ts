@@ -299,8 +299,7 @@ test.describe('filtering hides rows without renumbering them', () => {
 
   test('the play button under a filter dispatches its own row, not the row at that position', async ({ page }) => {
     // backlog-play-btn is one of canonical-dispatch-gate's proactively-
-    // disabled CTAs on a non-canonical instance (see index.html's
-    // renderBacklog) — this suite's own shared webServer deliberately never
+    // disabled CTAs on a non-canonical instance (see BacklogView.tsx) — this suite's own shared webServer deliberately never
     // sets COCKPIT_DISPATCH_ENABLED, so this one test runs its own
     // dedicated, canonical instance to see the button enabled at all. Every
     // other case in this file never clicks it and stays on the shared

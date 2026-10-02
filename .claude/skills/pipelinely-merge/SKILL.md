@@ -20,7 +20,7 @@ The slug argument is required. If it's missing, **ask** — never infer "the cur
 ## Step 2 — Run the CLI, inline, in this session
 
 ```
-npm --prefix ${REPOS_DIR:-$HOME/Dev}/pipelinely run --silent pipelinely-merge -- <slug>
+npm --prefix $HOME/Dev/pipelinely run --silent pipelinely-merge -- <slug>
 ```
 
 This runs `src/pipelinelyMergeCli.ts` against the real tasks dir — the same `mergeTask()` (`src/taskCompletion.ts`) the dashboard's Merge button calls. No new tab, no TASK.md, no worktree.

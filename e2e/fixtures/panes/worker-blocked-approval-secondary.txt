@@ -1,0 +1,11 @@
+⏺ Reading src/taskParser.ts to find where attention status is derived.
+
+⏺ Read(src/taskParser.ts)
+  ⎿  Read 2476 lines
+
+✻ Pondering… (42s · ↓ 1.2k tokens · esc to interrupt)
+
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle)

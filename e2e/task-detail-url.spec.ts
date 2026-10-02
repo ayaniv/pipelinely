@@ -53,7 +53,7 @@ test.describe('task detail URL', () => {
 
   // Failure path: a stale or mistyped link must not crash the page — it
   // should just fall back to showing the list, the same way any other
-  // not-found slug degrades (see openTaskDetail's `if (!task) return`).
+  // not-found slug degrades (TaskDetail renders nothing for a slug with no task).
   test('loading an unknown task slug falls back to the list view without erroring', async ({ page }) => {
     const pageErrors: string[] = []
     page.on('pageerror', (err) => pageErrors.push(err.message))
@@ -69,7 +69,7 @@ test.describe('task detail URL', () => {
   // throw an uncaught URIError out of decodeURIComponent. A real navigation
   // to a malformed path 400s at the Express route layer before ever
   // reaching the client — confirmed directly: `curl /task/%ZZ` returns 400
-  // from Express's own `:slug` param decoding, never our index.html — so
+  // from Express's own `:slug` param decoding, never the client — so
   // the realistic way this reaches the client is a browser back/forward
   // through a history entry, which fires popstate without a network
   // round trip. This drives that path directly via the History API.
@@ -105,19 +105,16 @@ test.describe('task detail URL', () => {
     await expect(page.getByTestId('l2-cta')).toBeEnabled()
   })
 
-  // Root cause: renderDashboard's "keep an open overlay live as SSE updates
-  // arrive" reconciliation (see index.html) trusted a single currentTasks
-  // snapshot missing the open task as proof it was gone, and closed the
-  // panel via closeTaskDetail's default push:true — resetting the URL to
-  // '/'. Task directories are never deleted by this app's own routes, so in
-  // practice every real firing of that branch was actually just the /events
-  // broadcast racing a refreshTasks() triggered by some OTHER task's file
-  // write (this dashboard watches dozens of concurrently active tasks) —
-  // the /api/tasks response and the next SSE broadcast can momentarily
-  // disagree even though the task never stopped existing. A cold
-  // `/task/<slug>` load is exactly when this bites: the very first
-  // post-open broadcast is the one most likely to still be in flight from
-  // before the task existed in this session's view of currentTasks.
+  // Root cause: a single snapshot missing the open task must not be trusted
+  // as proof it was deleted and close the panel (resetting the URL). Task
+  // directories are never deleted by this app's own routes, so in practice
+  // every real firing was the /events broadcast racing a refresh triggered by
+  // some OTHER task's file write (this dashboard watches dozens of
+  // concurrently active tasks) — the /api/tasks response and the next SSE
+  // broadcast can momentarily disagree even though the task never stopped
+  // existing. A cold `/task/<slug>` load is exactly when this bites: the very
+  // first post-open broadcast is the one most likely to still be in flight
+  // from before the task existed in this session's view of the snapshot.
   //
   // Reproducing the real race (an actual concurrent file write elsewhere in
   // TASKS_DIR landing mid-load) would be flaky by nature, so this fakes

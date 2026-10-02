@@ -1,0 +1,2306 @@
+    /* Self-hosted Figtree + JetBrains Mono (SIL OFL 1.1, licenses beside the
+       files) so the dashboard makes no request to Google Fonts. Latin subset
+       only, matching the unicode-range Google served; Hebrew and symbol glyphs
+       fall through to the system fallback stacks on each font-family below,
+       exactly as they did before. Files live in web/public/fonts/ and reach
+       the browser via Vite's public/ passthrough + server.ts's /fonts route. */
+    @font-face {
+      font-family: 'Figtree'; font-style: normal; font-weight: 400; font-display: swap;
+      src: url('/fonts/figtree-latin-400-normal.woff2') format('woff2');
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+    @font-face {
+      font-family: 'Figtree'; font-style: normal; font-weight: 500; font-display: swap;
+      src: url('/fonts/figtree-latin-500-normal.woff2') format('woff2');
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+    @font-face {
+      font-family: 'Figtree'; font-style: normal; font-weight: 600; font-display: swap;
+      src: url('/fonts/figtree-latin-600-normal.woff2') format('woff2');
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+    @font-face {
+      font-family: 'Figtree'; font-style: normal; font-weight: 700; font-display: swap;
+      src: url('/fonts/figtree-latin-700-normal.woff2') format('woff2');
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+    @font-face {
+      font-family: 'Figtree'; font-style: normal; font-weight: 800; font-display: swap;
+      src: url('/fonts/figtree-latin-800-normal.woff2') format('woff2');
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+    @font-face {
+      font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400; font-display: swap;
+      src: url('/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+    @font-face {
+      font-family: 'JetBrains Mono'; font-style: normal; font-weight: 500; font-display: swap;
+      src: url('/fonts/jetbrains-mono-latin-500-normal.woff2') format('woff2');
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+    @font-face {
+      font-family: 'JetBrains Mono'; font-style: normal; font-weight: 600; font-display: swap;
+      src: url('/fonts/jetbrains-mono-latin-600-normal.woff2') format('woff2');
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+    @font-face {
+      font-family: 'JetBrains Mono'; font-style: normal; font-weight: 700; font-display: swap;
+      src: url('/fonts/jetbrains-mono-latin-700-normal.woff2') format('woff2');
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:            #f1f4f4;
+      --panel:         #ffffff;
+      --panel2:        #eceff0;
+      --sel:           #eceff0;
+      --border:        #dee4e4;
+      --border-soft:   #dee4e4;
+      --sel-border:    #cfd7d7;
+      --text:          #1c2426;
+      --text2:         #5d6a6d;
+      --text3:         #667375;
+      --muted:         #667375;
+      --muted2:        #8b9698;
+      --faint:         #a3adae;
+      --faintest:      #c2cbcb;
+      --am:            #bd9a63;
+      --bl:            #6d94a8;
+      --sg:            #94a98d;
+      --gr:            #667375;
+      --rd:            #b0718b;
+      --am-t:          #f3ebdd;
+      --bl-t:          #e3ecf0;
+      --sg-t:          #e6ece3;
+      --rd-t:          #f7e6ec;
+      --neutral-t:     #eceff0;
+      --sel-tint:      #e3ecf0;
+      --sel-tint-border: #cfd7d7;
+      --on-accent:     #ffffff;
+
+      /* Design's own token names (README's Design Tokens table), aliased to
+         the values above wherever they're identical — one literal source per
+         color, never two that can drift apart. Genuinely new concepts the
+         pre-redesign system never named (surfaceMute, the *Ink text-on-soft
+         tones, grid) get their own literal value instead of a fake alias. */
+      --surface:       var(--panel);
+      --surface2:      var(--panel2);
+      --surfaceMute:   #f1f4f4;
+      --border2:       var(--sel-border);
+      --ink:           var(--text);
+      --accent:        var(--bl);
+      --accentSoft:    var(--bl-t);
+      --accentInk:     #33566a;
+      --sage:          var(--sg);
+      --sageSoft:      var(--sg-t);
+      --sageInk:       #46603f;
+      --amber:         var(--am);
+      --amberSoft:     var(--am-t);
+      --amberInk:      #6d5326;
+      --drift:         var(--rd);
+      --driftSoft:     var(--rd-t);
+      --driftInk:      #8a3f5c;
+      --grid:          #e2e8e8;
+    }
+
+    /* OS-driven dark default — used only when the user hasn't made an
+       explicit choice via the toggle (see the data-theme overrides below). */
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg:            #151b1d;
+        --panel:         #1b2325;
+        --panel2:        #202a2c;
+        --sel:           #202a2c;
+        --border:        #2b3537;
+        --border-soft:   #2b3537;
+        --sel-border:    #374345;
+        --text:          #e9eeee;
+        --text2:         #9caaac;
+        --text3:         #8b9a9c;
+        --muted:         #8b9a9c;
+        --muted2:        #75868a;
+        --faint:         #5c6e71;
+        --faintest:      #445254;
+        --am:            #c8a672;
+        --bl:            #8fb2c4;
+        --sg:            #9db396;
+        --gr:            #8b9a9c;
+        --rd:            #cc8fa6;
+        --am-t:          #332b1e;
+        --bl-t:          #22323a;
+        --sg-t:          #232f27;
+        --rd-t:          #35232b;
+        --neutral-t:     #202a2c;
+        --sel-tint:      #22323a;
+        --sel-tint-border: #374345;
+        --on-accent:     #1b2325;
+
+        --surface:       var(--panel);
+        --surface2:      var(--panel2);
+        --surfaceMute:   #1e2729;
+        --border2:       var(--sel-border);
+        --ink:           var(--text);
+        --accent:        var(--bl);
+        --accentSoft:    var(--bl-t);
+        --accentInk:     #b6d0dd;
+        --sage:          var(--sg);
+        --sageSoft:      var(--sg-t);
+        --sageInk:       #b9cdb2;
+        --amber:         var(--am);
+        --amberSoft:     var(--am-t);
+        --amberInk:      #e2c795;
+        --drift:         var(--rd);
+        --driftSoft:     var(--rd-t);
+        --driftInk:      #e8b6c8;
+        --grid:          #222c2e;
+      }
+    }
+
+    /* Explicit user choice (localStorage-backed, set via the header toggle)
+       always wins over the OS media query above. */
+    :root[data-theme="dark"] {
+      --bg:            #151b1d;
+      --panel:         #1b2325;
+      --panel2:        #202a2c;
+      --sel:           #202a2c;
+      --border:        #2b3537;
+      --border-soft:   #2b3537;
+      --sel-border:    #374345;
+      --text:          #e9eeee;
+      --text2:         #9caaac;
+      --text3:         #8b9a9c;
+      --muted:         #8b9a9c;
+      --muted2:        #75868a;
+      --faint:         #5c6e71;
+      --faintest:      #445254;
+      --am:            #c8a672;
+      --bl:            #8fb2c4;
+      --sg:            #9db396;
+      --gr:            #8b9a9c;
+      --rd:            #cc8fa6;
+      --am-t:          #332b1e;
+      --bl-t:          #22323a;
+      --sg-t:          #232f27;
+      --rd-t:          #35232b;
+      --neutral-t:     #202a2c;
+      --sel-tint:      #22323a;
+      --sel-tint-border: #374345;
+      --on-accent:     #1b2325;
+
+      --surface:       var(--panel);
+      --surface2:      var(--panel2);
+      --surfaceMute:   #1e2729;
+      --border2:       var(--sel-border);
+      --ink:           var(--text);
+      --accent:        var(--bl);
+      --accentSoft:    var(--bl-t);
+      --accentInk:     #b6d0dd;
+      --sage:          var(--sg);
+      --sageSoft:      var(--sg-t);
+      --sageInk:       #b9cdb2;
+      --amber:         var(--am);
+      --amberSoft:     var(--am-t);
+      --amberInk:      #e2c795;
+      --drift:         var(--rd);
+      --driftSoft:     var(--rd-t);
+      --driftInk:      #e8b6c8;
+      --grid:          #222c2e;
+    }
+
+    :root[data-theme="light"] {
+      --bg:            #f1f4f4;
+      --panel:         #ffffff;
+      --panel2:        #eceff0;
+      --sel:           #eceff0;
+      --border:        #dee4e4;
+      --border-soft:   #dee4e4;
+      --sel-border:    #cfd7d7;
+      --text:          #1c2426;
+      --text2:         #5d6a6d;
+      --text3:         #667375;
+      --muted:         #667375;
+      --muted2:        #8b9698;
+      --faint:         #a3adae;
+      --faintest:      #c2cbcb;
+      --am:            #bd9a63;
+      --bl:            #6d94a8;
+      --sg:            #94a98d;
+      --gr:            #667375;
+      --rd:            #b0718b;
+      --am-t:          #f3ebdd;
+      --bl-t:          #e3ecf0;
+      --sg-t:          #e6ece3;
+      --rd-t:          #f7e6ec;
+      --neutral-t:     #eceff0;
+      --sel-tint:      #e3ecf0;
+      --sel-tint-border: #cfd7d7;
+      --on-accent:     #ffffff;
+
+      --surface:       var(--panel);
+      --surface2:      var(--panel2);
+      --surfaceMute:   #f1f4f4;
+      --border2:       var(--sel-border);
+      --ink:           var(--text);
+      --accent:        var(--bl);
+      --accentSoft:    var(--bl-t);
+      --accentInk:     #33566a;
+      --sage:          var(--sg);
+      --sageSoft:      var(--sg-t);
+      --sageInk:       #46603f;
+      --amber:         var(--am);
+      --amberSoft:     var(--am-t);
+      --amberInk:      #6d5326;
+      --drift:         var(--rd);
+      --driftSoft:     var(--rd-t);
+      --driftInk:      #8a3f5c;
+      --grid:          #e2e8e8;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Figtree', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      font-size: 14px;
+      min-height: 100vh;
+    }
+
+    /* ── App shell (sidebar + main) ──────────────────────────────────────── */
+    .app-shell { display: flex; align-items: stretch; min-height: 100vh; }
+
+    .app-sidebar {
+      position: sticky; top: 0; align-self: flex-start; height: 100vh;
+      flex: 0 0 240px; width: 240px; box-sizing: border-box;
+      display: flex; flex-direction: column;
+      background: var(--panel); border-right: 1px solid var(--border);
+      transition: flex-basis 0.22s ease, width 0.22s ease, transform 0.24s ease;
+      /* Single source of truth for both the real .is-collapsed rule and its
+         pre-hydration equivalent below — one value to keep in sync instead
+         of two independent 72px literals. */
+      --sidebar-collapsed-width: 72px;
+      /* Above .sidebar-scrim's z-index (92): the mobile drawer below is
+         position:fixed and must draw above the scrim that dims the rest of
+         the page while it's open. */
+      z-index: 95;
+    }
+    .app-sidebar.is-collapsed { flex-basis: var(--sidebar-collapsed-width); width: var(--sidebar-collapsed-width); }
+
+    .sidebar-top { display: flex; align-items: center; gap: 8px; min-height: 62px; box-sizing: border-box; padding: 18px 14px 16px 18px; }
+    .app-sidebar.is-collapsed .sidebar-top { padding-left: 14px; }
+    /* The design's own app mark — a real PNG, not a lettered badge — which
+       doubles as a second collapse affordance alongside sidebar-collapse-btn
+       (Dashboard v2 line 44's onClick="{{ toggleNav }}" on the mark itself). */
+    .sidebar-mark {
+      width: 26px; height: 26px; flex: none; border-radius: 8px;
+      background-image: url(/art/app-mark-v2.png);
+      background-repeat: no-repeat;
+      background-position: center;
+      background-size: contain;
+      cursor: pointer;
+    }
+    .sidebar-wordmark {
+      flex: 1 1 auto; margin-left: -2px;
+      font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 15px;
+      letter-spacing: -0.01em; white-space: nowrap; overflow: hidden;
+    }
+    .sidebar-wordmark span { color: var(--bl); }
+    .app-sidebar.is-collapsed .sidebar-wordmark { display: none; }
+    /* Collapsed, only .sidebar-mark (the app logo) should remain as the
+       visible toggle — without this the collapse-toggle button (also a
+       click target, see .sidebar-collapse-btn below) stayed on screen right
+       next to it. */
+    .app-sidebar.is-collapsed .sidebar-mark { margin: 0 auto; }
+    .sidebar-collapse-btn {
+      display: grid; place-items: center; width: 28px; height: 28px; flex: none;
+      margin-left: auto; border-radius: 9px; cursor: pointer;
+      color: var(--text3); border: 1px solid var(--border); background: none;
+    }
+    .sidebar-collapse-btn:hover { border-color: var(--bl); color: var(--bl); }
+    .app-sidebar.is-collapsed .sidebar-collapse-btn { display: none; }
+
+    .sidebar-spacer { flex: 1 1 auto; }
+
+    .sidebar-foot { display: flex; flex-direction: column; gap: 2px; padding: 12px; border-top: 1px solid var(--border); }
+    .sidebar-foot-item {
+      display: flex; align-items: center; gap: 11px; padding: 9px 13px; border-radius: 11px;
+      font-size: 13.5px; font-weight: 600; color: var(--text2); cursor: default;
+    }
+    .sidebar-foot-item:hover { background: var(--panel2); color: var(--text); }
+    .sidebar-foot-icon { display: grid; place-items: center; flex: none; color: inherit; }
+    .app-sidebar.is-collapsed .sidebar-foot-item { justify-content: center; padding: 9px 0; }
+    .app-sidebar.is-collapsed .sidebar-foot-label { display: none; }
+    /* Settings and Help are both real <button>s (navigate to /settings and
+       /help respectively) — reset the browser's default button chrome so
+       they read identically to every other sidebar-foot-item. */
+    button.sidebar-foot-item { width: 100%; border: none; background: none; font: inherit; text-align: left; cursor: pointer; }
+
+    /* ── Full pages (Settings, Help) — deliberately NOT .detail-overlay
+       (that class's 1180px max-width matches task-detail's reading-width
+       prose; these pages are single full-width control rows, not pages of
+       text). ─────────────────────────────────────────────────────────── */
+    #settings-page, #help-page, #docs-page { padding: 14px clamp(16px, 2.6vw, 32px) 64px; }
+    #settings-page[hidden], #help-page[hidden], #docs-page[hidden] { display: none; }
+    #settings-page .detail-title, #help-page .detail-title, #docs-page .detail-title { margin-bottom: 18px; }
+    .docs-error { font-size: 13px; color: var(--rd); }
+    .page-row {
+      display: flex; align-items: flex-start; gap: 18px; width: 100%; box-sizing: border-box;
+      padding: 18px 20px; border-radius: 14px; background: var(--surface); border: 1px solid var(--border);
+    }
+    .page-row-text { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+    .page-row-label { font-size: 14.5px; font-weight: 700; color: var(--text); }
+    .page-row-desc { font-size: 12.5px; line-height: 1.5; color: var(--text3); max-width: 46ch; }
+    .page-row-desc a { color: var(--accent); text-decoration: none; }
+    .page-row-desc a:hover { text-decoration: underline; }
+    .help-support-row { margin-top: 18px; }
+
+    /* Chat-style composer: textarea + Send on one row, explanation below —
+       so the mechanism is visible right where it's used, not read
+       separately beforehand. Not a .page-row: that class's row layout puts
+       explanation text beside the control, not after it. */
+    .help-feedback-panel {
+      display: flex; flex-direction: column; gap: 10px; width: 100%; box-sizing: border-box;
+      padding: 18px 20px; border-radius: 14px; background: var(--surface); border: 1px solid var(--border);
+    }
+    .help-feedback-composer { display: flex; align-items: flex-end; gap: 12px; width: 100%; }
+
+    /* A <textarea>, not a single-line <input> — a typed newline used to be
+       blocked at this layer (see tech-design-help-feedback-tab.md's newline
+       decision), but the server's normalizeWhitespace already collapses any
+       newline before it can reach the orchestrator's session, so the client
+       no longer needs to be the one preventing it. */
+    .help-feedback-input {
+      flex: 1 1 260px; min-width: 0; box-sizing: border-box; resize: vertical;
+      padding: 9px 12px; border-radius: 10px; border: 1px solid var(--border);
+      background: var(--bg); color: var(--text); font: inherit; font-size: 13.5px;
+    }
+    .help-feedback-input:focus-visible { outline: 2px solid var(--bl); outline-offset: 1px; }
+
+    /* A plain accessible checkbox visually restyled as a track + thumb —
+       same on/off semantics as a native checkbox (keyboard, screen reader),
+       just not native chrome. */
+    .switch { position: relative; flex: none; display: inline-block; width: 34px; height: 20px; margin-top: 1px; }
+    .switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+    .switch-track {
+      position: absolute; inset: 0; border-radius: 999px; background: var(--border);
+      transition: background 0.15s; pointer-events: none;
+    }
+    .switch-thumb {
+      position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+      background: var(--surface); box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: transform 0.15s;
+    }
+    .switch input:checked + .switch-track { background: var(--sg); }
+    .switch input:checked + .switch-track .switch-thumb { transform: translateX(14px); }
+    .switch input:focus-visible + .switch-track { outline: 2px solid var(--bl); outline-offset: 2px; }
+
+    .sidebar-account {
+      display: flex; align-items: center; gap: 10px; min-height: 57px; box-sizing: border-box;
+      padding: 12px 14px; border-top: 1px solid var(--border); cursor: pointer;
+    }
+    .sidebar-account:hover { background: var(--surface2); }
+    /* .sidebar-account is a real <button> now (the You tab's trigger), same
+       reset the Settings row already needed — but restating its own border-top,
+       which this rule's element+class specificity would otherwise beat the
+       .sidebar-account rule and take away with it, and clearing the UA's own
+       button background, which would otherwise paint over the rail. */
+    button.sidebar-account {
+      width: 100%; background: none; font: inherit; text-align: left;
+      border: none; border-top: 1px solid var(--border);
+    }
+    .sidebar-account.is-active { background: var(--surface2); }
+    .sidebar-account.is-active .sidebar-account-name { color: var(--ink); }
+    .sidebar-avatar {
+      display: grid; place-items: center; width: 32px; height: 32px; flex: none;
+      border-radius: 999px; background: var(--accentSoft); color: var(--accentInk);
+      font-family: 'JetBrains Mono', monospace; font-size: 11.5px; font-weight: 700;
+    }
+    .sidebar-account-name { flex: 1 1 auto; font-size: 13.5px; font-weight: 600; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sidebar-account-chevron { flex: none; color: var(--text3); }
+    .app-sidebar.is-collapsed .sidebar-account { justify-content: center; padding: 12px 0; }
+    .app-sidebar.is-collapsed .sidebar-account-name,
+    .app-sidebar.is-collapsed .sidebar-account-chevron { display: none; }
+
+    .sidebar-scrim { display: none; position: fixed; inset: 0; z-index: 92; background: rgba(16,22,24,.42); }
+
+    @media (max-width: 860px) {
+      .app-sidebar {
+        position: fixed; top: 0; left: 0; height: 100vh;
+        flex-basis: 260px; width: 260px;
+        transform: translateX(-102%);
+        box-shadow: 0 24px 60px -24px rgba(16,22,24,.5);
+      }
+      .app-sidebar.is-mobile-open { transform: translateX(0); }
+      .app-sidebar.is-collapsed { flex-basis: 260px; width: 260px; }
+      .app-sidebar.is-collapsed .sidebar-wordmark,
+      .app-sidebar.is-collapsed .sidebar-foot-label,
+      .app-sidebar.is-collapsed .sidebar-account-name,
+      .app-sidebar.is-collapsed .sidebar-account-chevron { display: initial; }
+      /* The base .is-collapsed .tab-label/.tab-count rule sits later in the
+         file at equal specificity, so these need the extra .tab-btn to win. */
+      .app-sidebar.is-collapsed .tab-btn .tab-label,
+      .app-sidebar.is-collapsed .tab-btn .tab-count { display: initial; }
+      .app-sidebar.is-collapsed .tab-btn { justify-content: flex-start; padding: 11px 13px; }
+      .app-sidebar.is-collapsed .sidebar-foot-item,
+      .app-sidebar.is-collapsed .sidebar-account { justify-content: flex-start; padding-left: 13px; padding-right: 13px; }
+      .sidebar-collapse-btn { display: none; }
+      .sidebar-scrim.is-visible { display: block; }
+    }
+
+    .app-main { flex: 1 1 auto; min-width: 0; }
+
+    /* ── Header ──────────────────────────────────────────────────────────── */
+    /* Same max-width/margin/padding as .page-column (below), so the pill row
+       lines up with the board's own content grid instead of reading as a
+       separate right-justified strip — matching the horizontal padding
+       formula alone isn't enough once the column caps at 1180px and centres
+       itself. Not `.page-column` itself: that class also carries a bottom
+       padding this row doesn't want. */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 10px;
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 14px clamp(16px, 2.6vw, 32px) 0;
+      background: transparent;
+    }
+
+    .hamburger-btn {
+      display: none; place-items: center; width: 36px; height: 36px; flex: none;
+      margin-right: auto; border-radius: 11px; cursor: pointer;
+      background: var(--surface); border: 1px solid var(--border); color: var(--text2);
+    }
+    .hamburger-btn:hover { border-color: var(--accent); color: var(--accent); }
+    @media (max-width: 860px) { .hamburger-btn { display: grid; } }
+
+    /* On desktop the back pill (inner view only) and the chrome group render
+       inline, one row, with Back leftmost (the design's `order:0` plus
+       `margin-right:auto`, Pipelinely Pipeline.dc.html line 91). On mobile
+       the design gives Back `order:2` so it drops to its own second row while
+       the chrome group (spend/live/theme) stays on the first — achieved by
+       making .header-chrome a plain contents wrapper on desktop and a real
+       flex group only on mobile. */
+    .header-back-slot:empty { display: none; }
+    .header-back-slot { order: 0; flex: none; margin-right: auto; }
+    .header-chrome { display: contents; }
+    @media (max-width: 860px) {
+      .header-back-slot { order: 2; margin-right: 0; }
+      .header-chrome { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; flex: 1 1 auto; justify-content: flex-end; order: 1; }
+    }
+
+    .header-pill {
+      display: flex; align-items: center; gap: 7px;
+      padding: 7px 14px; border-radius: 999px;
+      background: var(--surface); border: 1px solid var(--border);
+      font-size: 12.5px; font-weight: 600; color: var(--text2); white-space: nowrap;
+    }
+    /* The inner view's Back control (Pipelinely Pipeline.dc.html lines
+       91-93). A .header-pill like the spend/live/ctx capsules beside it, but
+       32px tall and box-sized so its border sits on the same line as theirs,
+       with the design's own asymmetric padding — tighter on the chevron side
+       than the label side. */
+    .back-pill {
+      height: 32px; box-sizing: border-box; padding: 0 15px 0 12px; gap: 8px;
+      justify-content: center; cursor: pointer; font-family: inherit;
+    }
+    .back-pill:hover { border-color: var(--accent); color: var(--accent); }
+    .back-pill:focus-visible { outline: 2px solid var(--bl); outline-offset: 2px; }
+
+    .header-spend-value { font-family: 'JetBrains Mono', monospace; font-weight: 500; color: var(--ink); }
+    .header-spend-label { display: inline; }
+    @media (max-width: 860px) { .header-spend-label { display: none; } }
+
+    .header-live { padding: 7px 13px 7px 11px; }
+    @media (max-width: 860px) { .header-live { display: none; } }
+
+    /* The orchestrator's own context meter (M1 of align-cockpit-ui-to-claude-
+       design-v2, restructured to match Claude Design v3's header control) —
+       `⌂ · ctx · <76px meter> · N%` as ONE clickable segment (the design's
+       own <a>, Pipelinely Dashboard v3.dc.html lines 127-134) — NOT a
+       separate home circle fused beside a separate meter row. That was this
+       repo's own earlier guess, made before the design file was readable;
+       the design never gives the home icon its own segment — it's simply
+       the first child inside the same link that carries "ctx", the meter
+       and the percentage. A 32px-tall stretch pill so the Handover segment
+       (below) can sit flush inside its right edge. Reuses
+       .card-ctx-track/.card-ctx-fill/.card-ctx-pct (ctxMeterHtml) and
+       .card-handover-pill (handoverPillHtml) — the hot/cold coloring rule
+       lives in exactly one place, not a fourth copy here. */
+    .header-ctx-slot:empty { display: none; }
+    /* No padding on the pill itself — the Handover segment (below) is
+       flush against .header-ctx's own border-box edge, and a pill-level
+       padding would leave a gap the segment's -1px margin couldn't reach.
+       The inset lives on .header-ctx-home instead. */
+    .header-ctx { height: 32px; align-items: stretch; padding: 0; position: relative; }
+    /* The pill's home+ctx segment: icon, "ctx" label, meter and percentage
+       all inside the one clickable control the design's own <a> wraps them
+       in (line 127: `padding:0 14px 0 11px; gap:11px`). flex:1 1 auto so it
+       claims the pill's full width apart from the Handover segment beside
+       it; align-items:stretch on the parent (above) is what makes this
+       button fill the pill's full 32px height rather than sitting centred
+       within it. */
+    .header-ctx-home {
+      flex: 1 1 auto; min-width: 0; box-sizing: border-box;
+      display: flex; align-items: center; gap: 11px;
+      padding: 0 14px 0 11px; border-radius: 999px;
+      border: none; background: none; color: var(--text3);
+      font-family: inherit; cursor: pointer;
+    }
+    .header-ctx-home-icon { flex: none; }
+    .header-ctx-home:hover { color: var(--accent); }
+    .header-ctx-home:focus-visible { outline: 2px solid var(--bl); outline-offset: 2px; }
+    .header-ctx-home:disabled { opacity: 0.5; cursor: default; }
+    /* Its own stylesheet rule, not an inline style="display:contents" on the
+       markup (CR finding): an inline style always wins over a stylesheet
+       rule regardless of selector specificity, which made the .is-flashing
+       override below dead code — the meter stayed laid out and visible
+       through a flash no matter what .is-flashing said. A plain class
+       selector here lets the more specific .is-flashing compound selector
+       actually win the cascade. */
+    .header-ctx-body { display: contents; }
+    /* flashOrchestratorTabBtn's status text ("✓"/an error) swaps in for the
+       icon+meter rather than smashing them the way the shared flashBtn's
+       textContent assignment would — this button now carries structured
+       children (icon, and when ctx is known the meter trio), not the bare
+       "⌂" glyph flashBtn was written for. */
+    .header-ctx-home.is-flashing .header-ctx-home-icon,
+    .header-ctx-home.is-flashing .header-ctx-body { display: none; }
+    .header-ctx-home-status { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+    /* min-width 60px, not the card row's 30px: the design's header meter
+       (Pipelinely Dashboard v3.dc.html line 130) keeps a wider floor. */
+    .header-ctx .card-ctx-track { flex: none; width: 76px; min-width: 60px; }
+    @media (max-width: 860px) { .header-ctx .card-ctx-track { display: none; } }
+    /* Fused flush into the pill's right edge: nested inside .header-ctx
+       (not a sibling), with its top/right margins pulled negative so its own
+       1px border overlaps the parent pill's, making the two right edges
+       coincide (the card's own Handover pill is free-standing — no such
+       margin there). Needs .header-ctx's own padding to be 0 (above) —
+       against a padded parent the margin only reaches the padding edge, not
+       the pill's actual border.
+       MARGIN ONLY. The design keeps the full 999px capsule here (line 134);
+       squaring the left edge off to read as a "segment" was this repo's own
+       invention and is what made the header copy look like a different
+       button from the card's. */
+    .header-ctx .card-handover-pill { margin: -1px -1px 0 0; }
+    .live-dot-wrap { position: relative; width: 7px; height: 7px; flex: none; }
+    .live-dot, .live-dot-halo { position: absolute; inset: 0; border-radius: 999px; background: var(--muted); }
+    .live-dot.is-live, .live-dot-halo.is-live { background: var(--sage); }
+    .live-dot.is-live { animation: pulseDot 2.6s ease-in-out infinite; }
+    .live-dot-halo.is-live { animation: breathe 2.6s ease-in-out infinite; }
+    .live-dot.is-error, .live-dot-halo.is-error { background: var(--am); animation: none; }
+
+    .header-status-text {
+      font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.06em;
+      color: var(--text2); text-transform: lowercase;
+    }
+    .header-status-text.is-live { color: var(--sage); }
+
+    .header-actions { display: contents; }
+
+    .theme-toggle {
+      width: 32px;
+      height: 32px;
+      flex: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 13px;
+      line-height: 1;
+      color: var(--text3);
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s, border-color 0.12s;
+    }
+    .theme-toggle:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .theme-toggle:focus-visible { outline: 2px solid var(--bl); outline-offset: 2px; }
+
+    .card-auto-badge {
+      display: inline-flex;
+      align-items: center;
+      font-size: 11px;
+      color: var(--sg);
+      flex-shrink: 0;
+    }
+
+    /* ── Read-only banner (non-canonical dashboard instance) ─────────────── */
+    /* A wrapper only: the React banner inside must lay out as a direct child
+       of .app-main, exactly where the static banner used to sit. */
+    .read-only-banner-slot { display: contents; }
+    .read-only-banner {
+      padding: 10px 28px;
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in srgb, var(--rd) 12%, transparent);
+      color: var(--rd);
+      font-size: 12.5px;
+      font-weight: 600;
+    }
+
+    /* ── Focus hero (dashboard) ──────────────────────────────────────────────
+       The design's own hero is a single day's focus; this repo's real,
+       working feature is WEEKLY (persisted server-side) — kept as the same
+       click-to-edit text/textarea pair, restyled into the hero card's exact
+       visual treatment (20px radius, the design's own "Hero card" shadow,
+       and its rise entrance). */
+    .focus-hero {
+      position: relative; overflow: hidden; border-radius: 20px;
+      border: 1px solid var(--border); background: var(--surface);
+      box-shadow: 0 18px 44px -34px rgba(20,30,32,.5);
+      animation: rise 0.5s ease both;
+      cursor: text;
+    }
+    .focus-hero-overlay {
+      position: absolute; inset: 0; pointer-events: none;
+      background-image: radial-gradient(460px 240px at 94% -40%, var(--accentSoft), transparent 70%);
+    }
+    .focus-hero-body { position: relative; display: flex; flex-direction: column; gap: 14px; padding: 20px 22px 18px; }
+    .focus-hero-eyebrow {
+      display: flex; align-items: center; gap: 6px;
+      font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em;
+      text-transform: uppercase; color: var(--text3); white-space: nowrap;
+    }
+    .focus-hero-dates { text-transform: none; letter-spacing: normal; }
+    .focus-hero-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+
+    .weekly-focus-text {
+      flex: 1 1 320px; min-width: 0;
+      font-family: 'Figtree', sans-serif; font-size: clamp(20px,2.4vw,27px); font-weight: 800;
+      letter-spacing: -0.025em; line-height: 1.2; color: var(--ink);
+    }
+    .weekly-focus-text.is-empty { color: var(--text3); font-weight: 700; }
+
+    .weekly-focus-input {
+      flex: 1 1 320px; min-width: 0;
+      background: transparent; border: none; outline: none;
+      font-family: 'Figtree', sans-serif; font-size: clamp(20px,2.4vw,27px); font-weight: 800;
+      letter-spacing: -0.025em; line-height: 1.2; color: var(--ink);
+      resize: vertical; padding: 0;
+    }
+
+    /* ── Global project progress bar ────────────────────────────────────── */
+    .global-progress {
+      display: none;
+      align-items: center;
+      gap: 12px;
+      padding: 9px 28px;
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in srgb, var(--bg) 60%, transparent);
+    }
+
+    .global-progress.is-visible { display: flex; }
+
+    .global-progress-label {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text3);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      flex-shrink: 0;
+    }
+
+    .global-progress-track {
+      flex: 1;
+      max-width: 320px;
+      height: 6px;
+      background: color-mix(in srgb, var(--text) 8%, transparent);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .global-progress-fill {
+      height: 100%;
+      background: var(--bl);
+      border-radius: 3px;
+      transition: width 0.4s ease;
+    }
+
+    .global-progress-ratio {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      flex-shrink: 0;
+    }
+
+    /* The design's own page wrapper (Pipelinely Dashboard v2.dc.html line
+       133, identical in the Pipeline/Milestone screens): one centred column
+       for the whole page, rather than the per-section padding/max-width
+       this repo used to carry piecemeal. header{} carries no bottom padding
+       (see its own rule) so the 14px top value here is also what supplies
+       the design's gap before the hero card.
+
+       Shared by #board and .detail-overlay (below) — one rule for the
+       column's own geometry rather than two copies that can drift apart. */
+    .page-column {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 14px clamp(16px, 2.6vw, 32px) 64px;
+    }
+
+    /* Detail view swaps in for the whole board; the board container and the
+       weekly-focus banner are both hidden while it's open, since neither is
+       usable from inside a detail view. */
+    body.detail-open #board { display: none; }
+    body.detail-open #weekly-focus { display: none; }
+    body.full-page-open #board { display: none; }
+    body.full-page-open #weekly-focus { display: none; }
+
+    /* You is meant to show just the chart, not the rest of the board's
+       chrome (QA caught this live — see the comments on #weekly-focus and
+       #board-filters above). [data-active-tab] is set by the React tab bar (useTabPanelSync), not a
+       body-level class like detail-open/settings-open above, because it has
+       to coexist with those on every other tab. Higher specificity than
+       each element's own base rule (an id/attribute selector beats a bare
+       class), same reason button.sidebar-account has to restate its own
+       border-top elsewhere on this page — so no !important needed. Each
+       element's own hidden/open state (board-filters' `hidden` attribute in
+       particular) is left untouched, so leaving You restores exactly
+       whatever was showing before. */
+    #board[data-active-tab="you"] #weekly-focus,
+    #board[data-active-tab="you"] .board-toolbar,
+    #board[data-active-tab="you"] #board-filters {
+      display: none;
+    }
+
+    /* ── Pulse chips (toolbar, left side) ───────────────────────────────────
+       Supersedes the pre-redesign 4-tile summary strip — matches the
+       design's own pulse row exactly (working / waiting only; Paused and
+       Active spend moved to the header's own spend pill, see
+       renderHeaderSpend/renderPulseChips). */
+    .summary-strip { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 0; }
+
+    .pulse-chip {
+      display: flex; align-items: center; gap: 7px;
+      padding: 6px 12px 6px 10px; border-radius: 999px; background: var(--surface2);
+    }
+    .pulse-dot-wrap { position: relative; width: 7px; height: 7px; flex: none; }
+    .pulse-dot, .pulse-dot-halo { position: absolute; inset: 0; border-radius: 999px; }
+    .pulse-dot.is-live { animation: pulseDot 2.6s ease-in-out infinite; }
+    .pulse-dot-halo.is-live { animation: breathe 2.8s ease-in-out infinite; }
+    .pulse-chip-text { font-size: 12.5px; font-weight: 600; color: var(--text2); white-space: nowrap; }
+    .pulse-chip-value { font-family: 'JetBrains Mono', monospace; font-weight: 500; }
+
+    /* ── Sidebar nav (Backlog / In Progress / Done) ─────────────────────────
+       Lives inside .app-sidebar, matching the Pipelinely Pipeline design's
+       persistent left rail — kept as the same #tab-bar/.tab-btn nodes and
+       class names the pre-sidebar horizontal tab-bar used (only the
+       container and layout direction changed), so every existing
+       testid-based e2e assertion still holds. */
+    .tab-bar {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 14px 12px;
+    }
+
+    .tab-btn {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      width: 100%;
+      box-sizing: border-box;
+      padding: 11px 13px;
+      border: 1px solid transparent;
+      border-radius: 11px;
+      background: none;
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text2);
+      cursor: pointer;
+      text-align: left;
+      transition: background 0.12s, color 0.12s, border-color 0.12s, padding 0.22s ease;
+    }
+    .tab-btn:hover { background: var(--panel2); color: var(--text); }
+    /* The design's own fill/border/ink for the active row — not the
+       accent-tinted sel/sel-border this repo drifted to. */
+    .tab-btn.is-active { background: var(--surface2); border-color: var(--border); color: var(--ink); }
+
+    .tab-icon { display: grid; place-items: center; flex: none; color: var(--text3); }
+    .tab-btn.is-active .tab-icon { color: var(--ink); }
+    .tab-label { flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .tab-count {
+      flex: none;
+      min-width: 22px;
+      text-align: center;
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text2);
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 2px 6px;
+    }
+    /* Inverts the other way from the row: surface (lifts off the filled
+       active row) rather than the row's own surface2. */
+    .tab-btn.is-active .tab-count {
+      color: var(--text2);
+      background: var(--surface);
+      border-color: var(--border);
+    }
+
+    .app-sidebar.is-collapsed .tab-btn { justify-content: center; padding: 11px 0; }
+    .app-sidebar.is-collapsed .tab-label,
+    .app-sidebar.is-collapsed .tab-count { display: none; }
+
+    /* ── Tab panels ──────────────────────────────────────────────────────── */
+    .tab-panel { display: none; }
+    .tab-panel.is-active { display: block; }
+
+    /* ── Toolbar (pulse chips left, filter/standup right) ───────────────────
+       margin:22px 0 16px per the design; the hero card above already carries
+       its own bottom spacing via the board's own gap, so this is the only
+       margin needed between them. */
+    .board-toolbar {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 16px; flex-wrap: wrap; margin: 22px 0 16px;
+    }
+    .board-toolbar-right { display: flex; align-items: center; gap: 8px; }
+
+    .filter-toggle-btn {
+      display: flex; align-items: center; gap: 7px; padding: 7px 13px;
+      border-radius: 999px; cursor: pointer; font-family: inherit;
+      font-size: 12.5px; font-weight: 600;
+      border: 1px solid var(--border); background: var(--surface); color: var(--text2);
+    }
+    .filter-toggle-btn.is-active { border-color: var(--accent); background: var(--accentSoft); color: var(--accent); }
+
+    .standup-btn {
+      display: flex; align-items: center; gap: 8px; padding: 8px 16px;
+      border-radius: 999px; cursor: pointer; border: none; font-family: inherit;
+      font-size: 13px; font-weight: 700; background: var(--ink); color: var(--bg);
+    }
+    .standup-btn:hover { background: var(--accent); }
+    .standup-btn[hidden] { display: none; }
+
+    /* ── Project filter chips ────────────────────────────────────────────── */
+    .board-filters {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 0 0 16px;
+    }
+    .board-filters[hidden] { display: none; }
+    .filter-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .filter-chip {
+      padding: 6px 13px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text2);
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background 0.12s, color 0.12s, border-color 0.12s;
+    }
+    .filter-chip:hover {
+      border-color: var(--border2);
+    }
+    .filter-chip.is-active {
+      background: var(--accentSoft);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* ── Main layout ─────────────────────────────────────────────────────── */
+    /* Two real groups, not the design's own two hardcoded status keys — a
+       task's pillStatusFor result decides which one it lands in, so a
+       paused/idle/orphaned task still lands somewhere (the design's own
+       fixture data has no paused case, so its own two-key grouping quietly
+       drops one; a real board can't afford to). */
+    .active-group { margin-bottom: 32px; }
+    .active-group:last-child { margin-bottom: 0; }
+    .active-group-header { display: flex; align-items: center; gap: 6px; margin: 0 4px 14px; }
+    /* The design's own head illustration opening each group's header row
+       (Dashboard v2 line 217) — set per-group via inline style since the two
+       groups use different PNGs (renderActiveGroups), the same pattern
+       ctxMeterHtml already uses for per-instance data-driven styling. */
+    .active-group-art { width: 36px; height: 36px; flex: none; margin-right: -2px; background-repeat: no-repeat; background-position: center; background-size: contain; }
+    .active-group-label { font-size: 13px; font-weight: 700; letter-spacing: 0.01em; color: var(--text2); white-space: nowrap; }
+    .active-group-count { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; color: var(--text3); }
+    .active-group-rule { flex: 1 1 auto; height: 1px; background: linear-gradient(90deg, var(--border), transparent); }
+    .active-group-grid {
+      display: grid;
+      /* min(100%,300px): the plain 300px minimum overflows a 375px viewport. */
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+      gap: 14px;
+    }
+
+    /* ── Empty state ──────────────────────────────────────────────────────
+       One shared card (renderEmptyState) for every tab and every reason —
+       no tasks at all, or none matching the current filter — replacing the
+       three bespoke .empty-state blocks (Active, Done, filtered-Done) and
+       .backlog-empty this repo used to carry separately. */
+    .board-empty-state {
+      padding: 34px 18px;
+      border-radius: 16px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      text-align: center;
+      font-size: 13.5px;
+      color: var(--text3);
+    }
+
+    /* ── Card base ───────────────────────────────────────────────────────── */
+    /* The accent runs down the card's LEFT edge, full height — the design
+       reference's `grid-template-columns:3px 1fr` (Cockpit Sharpened.dc.html
+       line 92), not the 3px top rule this used to be.
+
+       --card-accent is the single source for that stripe, the status dot's
+       halo and the note callout's border, so each status names its colour
+       once in the variant block below rather than in three parallel rules.
+       A card with no status variant — the backlog card — leaves it
+       transparent and keeps its stripe invisible, exactly as before. */
+    .card {
+      --card-accent: transparent;
+      display: grid;
+      grid-template-columns: 3px 1fr;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+      transition: border-color 0.3s ease, transform 0.25s ease, box-shadow 0.25s ease;
+      box-shadow: 0 10px 26px -22px rgba(20,30,32,.55);
+    }
+    .card:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 22px 40px -26px rgba(20,30,32,.6);
+    }
+
+    .card-stripe {
+      background: var(--card-accent);
+    }
+
+    /* min-width:0 so a long title ellipsises inside its grid column instead
+       of stretching the card past the container. */
+    .card-body {
+      padding: 16px 18px 15px;
+      min-width: 0;
+    }
+
+    /* ── State variants ──────────────────────────────────────────────────── */
+    /* Only a needs-you card is tinted (reference `cardBg`/`cardBorder`);
+       every other status is a plain panel differing by accent alone. */
+    .card-working  { --card-accent: var(--bl); border-color: color-mix(in srgb, var(--bl) 35%, transparent); }
+    .card-paused   { --card-accent: var(--gr); border-color: color-mix(in srgb, var(--gr) 40%, transparent); }
+    .card-review   { --card-accent: var(--bl); border-color: color-mix(in srgb, var(--bl) 40%, transparent); }
+    .card-done     { --card-accent: var(--sg); border-color: color-mix(in srgb, var(--sg) 18%, transparent); }
+    .card-handover { --card-accent: #B0AAA1;  border-color: var(--border); }
+
+    .card-waiting {
+      --card-accent: var(--am);
+      background: color-mix(in srgb, var(--am) 5%, var(--panel));
+      border-color: color-mix(in srgb, var(--am) 35%, var(--border));
+    }
+
+    /* Derived from --card-accent so there is one hover value rather than
+       four. Listed per variant instead of on bare .card because a backlog
+       card's accent is transparent, and mixing that would fade its border. */
+    .card-working:hover,
+    .card-waiting:hover,
+    .card-paused:hover,
+    .card-review:hover {
+      border-color: color-mix(in srgb, var(--card-accent) 55%, var(--border));
+    }
+
+    /* ── Session card (design's exact structure) ─────────────────────────────
+       Overrides .card's shared grid-template-columns:3px 1fr — that layout
+       is the left-edge accent stripe still used by renderPlanCard and the
+       backlog card (neither rewritten here); this card has no stripe at
+       all, matching the design, so it drops straight to a flex column. */
+    .session-card {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      border-radius: 18px;
+    }
+    /* Only a needs-you (or orphaned — same amber "needs a human" read as its
+       own status pill) card pops at full brightness with an amber border;
+       every other active card recedes into the muted surface, per the
+       design's own cardBg/cardBorder rule (Pipelinely Dashboard v2.dc.html)
+       — keyed off the same pillStatusFor grouping the section headers below
+       and the status pill itself already use, not the raw lifecycle status,
+       so a paused/idle card reads the same as a working one here. */
+    .session-card.is-needs-you { border-color: var(--amber); }
+    .session-card:not(.is-needs-you) { background: var(--surfaceMute); }
+    .session-card.is-needs-you:hover,
+    .session-card:not(.is-needs-you):hover { border-color: var(--border2); }
+
+    .card-header-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 16px 18px 0; }
+    .card-status-pill { display: flex; align-items: center; gap: 7px; flex: none; padding: 4px 11px 4px 9px; border-radius: 999px; min-width: 0; }
+    .card-status-dot-wrap { position: relative; width: 7px; height: 7px; flex: none; }
+    .card-status-dot, .card-status-dot-halo { position: absolute; inset: 0; border-radius: 999px; }
+    .card-status-dot.is-live { animation: pulseDot 2.6s ease-in-out infinite; }
+    .card-status-dot-halo.is-live { animation: breathe 2.8s ease-in-out infinite; }
+    .card-status-label { font-size: 11.5px; font-weight: 700; letter-spacing: 0.01em; white-space: nowrap; }
+    .drift-pill { margin-right: auto; padding: 4px 11px; border-radius: 999px; background: var(--driftSoft); color: var(--driftInk); font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+    .card-header-right { display: flex; align-items: center; gap: 8px; flex: none; }
+
+    .card-icon-btn {
+      display: grid; place-items: center; width: 26px; height: 26px; flex: none;
+      border-radius: 8px; background: transparent; border: 1px solid var(--border); color: var(--text3); cursor: pointer;
+    }
+    .card-icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+    .card-menu-wrap { position: relative; flex: none; }
+    .card-menu {
+      position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; min-width: 168px; padding: 6px;
+      border-radius: 12px; background: var(--surface); border: 1px solid var(--border2);
+      box-shadow: 0 12px 32px rgba(20,30,32,.16);
+    }
+    .card-menu-item {
+      display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 10px; border-radius: 8px;
+      border: none; background: none; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 600;
+      color: var(--ink); text-align: left; white-space: nowrap;
+    }
+    .card-menu-item:hover { background: var(--surface2); }
+    .card-menu-item.is-amber { color: var(--amber); }
+    .card-menu-glyph { font-family: 'JetBrains Mono', monospace; font-size: 11px; width: 12px; text-align: center; flex: none; }
+
+    .card-title-block { padding: 10px 18px 0; min-width: 0; }
+    /* Every card title shares the literal href="#" (the click is handled by
+       data-action="open-detail", not real navigation) — the browser's own
+       :visited rule otherwise repaints every title on the board the moment
+       any one of them is ever visited, in every future session, since they
+       all resolve to the exact same URL. */
+    .session-card .card-title,
+    .session-card .card-title:visited {
+      display: block; color: var(--ink); font-size: 16.5px; font-weight: 700; line-height: 1.3;
+      letter-spacing: -0.01em; text-wrap: pretty; text-decoration: none;
+    }
+    .session-card .card-title:hover { color: var(--accent); }
+    .card-slug-row { display: flex; align-items: center; gap: 7px; margin-top: 7px; min-width: 0; }
+    .card-slug-project { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; font-weight: 600; color: var(--text2); white-space: nowrap; flex: none; }
+    .card-slug-sep { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: var(--border2); flex: none; }
+    .card-slug-value { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: var(--text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .card-copy-btn { width: 20px; height: 20px; border-radius: 6px; }
+    .card-copied { font-size: 11px; color: var(--sage); font-weight: 600; }
+    .card-copied[hidden] { display: none; }
+    /* Same shared href="#" :visited landmine as .card-title above — every
+       parent chip on the board points at the same URL. */
+    .card-parent-chip,
+    .card-parent-chip:visited {
+      display: inline-flex; align-items: center; gap: 6px; margin-top: 9px; padding: 4px 10px 4px 8px;
+      border-radius: 999px; background: var(--surface2); border: 1px solid var(--border); color: var(--text2);
+      font-size: 11.5px; font-weight: 600; max-width: 100%; text-decoration: none;
+    }
+    .card-parent-chip:hover { border-color: var(--accent); color: var(--accent); }
+    .card-parent-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .card-rail-row { display: flex; align-items: center; padding: 16px 18px 0; }
+
+    .card-ctx-row { position: relative; z-index: 1; display: flex; align-items: center; gap: 11px; height: 32px; padding: 14px 18px 0; }
+    .card-ctx-label { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; color: var(--text3); white-space: nowrap; flex: none; }
+    .card-ctx-track { flex: 1 1 auto; height: 6px; border-radius: 999px; overflow: hidden; min-width: 30px; }
+    .card-ctx-fill { height: 100%; border-radius: 999px; transition: width 0.3s ease; }
+    .card-ctx-pct { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; font-weight: 600; white-space: nowrap; flex: none; }
+    /* The design's Handover button — ONE definition for both surfaces it
+       appears on: a card's ctx row and the header meter's own right edge
+       (Pipelinely Dashboard v2.dc.html lines 338 and 134 are the same
+       declaration twice). Nothing here is scoped to either surface, and
+       nothing below re-opens it per surface — the two drifting apart was the
+       whole finding. */
+    .card-handover-pill {
+      display: flex; align-items: center; flex: none; height: 30px; padding: 0 15px; border-radius: 999px;
+      border: 1px solid var(--amber); cursor: pointer; background: var(--amberSoft); color: var(--amberInk);
+      font-size: 11.5px; font-weight: 700; letter-spacing: -0.01em; white-space: nowrap; font-family: inherit;
+      outline: none; transition: background 0.18s ease;
+    }
+    .card-handover-pill:hover { background: var(--amber); color: var(--surface); }
+    .card-handover-pill:active { opacity: 0.9; }
+    /* The design's focus treatment is an INSET ring (`box-shadow:inset 0 0 0
+       2px var(--amber)`), not an outline — an outline would paint outside the
+       header copy's own border, which deliberately overlaps the meter pill's. */
+    .card-handover-pill:focus-visible { box-shadow: inset 0 0 0 2px var(--amber); }
+    .card-handover-pill:disabled { cursor: default; }
+
+    .session-card .card-footer {
+      display: flex; align-items: center; gap: 8px; margin-top: 16px; padding: 14px 18px;
+      border-top: 1px solid var(--border); background: var(--surface2); border-radius: 0 0 17px 17px;
+    }
+    /* Shared box model for EVERY footer button, primary or not. Two fixes
+       met on this rule and both are kept:
+
+       - The selector is `.card-footer .btn`, not `.btn-primary`. Scoping the
+         geometry to the primary left a non-primary CTA falling back to the
+         base .btn's own `display:inline-block`, so it shrank to fit and
+         hugged the footer's left edge — reachable by any card whose
+         attentionStatus is neither needs-you nor paused (an idle task, a
+         working fanout parent). The design varies only `ctaBg`/`ctaFg`/
+         `ctaBorder` between the two states (Pipelinely Dashboard v2.dc.html
+         lines 649-651) and gives both the same full-width geometry (line
+         345). This selector subsumes the `.card-footer.card-footer-merge
+         .btn` arm that fix (#104) added — a merge footer IS a card footer —
+         so Open PR still picks the box model up here, it just no longer
+         needs naming separately.
+       - The basis is 0, not auto (#104): with two buttons of differing
+         label/icon content (Merge's arrow icon vs. Open PR's plain label),
+         an auto basis lets each item's own content width survive the split,
+         so equal flex-grow alone doesn't equalize the final widths. A lone
+         CTA still fills its footer either way — one growing item takes all
+         the free space whatever its basis — so this costs the single-button
+         case nothing. */
+    .session-card .card-footer .btn {
+      flex: 1 1 0%; min-width: 0; justify-content: center; display: flex; align-items: center; gap: 8px;
+      padding: 10px 14px; border-radius: 10px; font-size: 13px;
+    }
+    .session-card .card-footer .btn-primary {
+      background: var(--ink); border-color: var(--ink); color: var(--bg);
+    }
+    .session-card .card-footer .btn-primary:hover { background: var(--accent); border-color: var(--accent); }
+    /* The base row above is a single non-wrapping flex row, so the merge
+       banner would otherwise sit inline beside the buttons — this modifier
+       lets it wrap onto its own line above them instead. */
+    .session-card .card-footer.card-footer-merge { flex-wrap: wrap; }
+    .session-card .card-footer.card-footer-merge .merge-banner { flex: 1 1 100%; }
+
+    /* ── Card header (still used by the plan card and the backlog card) ──── */
+    /* flex-start, not center: a title long enough to wrap should leave the
+       dot, timestamp and chevron on the first line (reference line 104). */
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    /* 8px with a permanent accent halo, board cards only — a Done row's own
+       tick dot keeps the 6px base size. */
+    .card-header .status-dot {
+      width: 8px;
+      height: 8px;
+      margin-top: 6px;
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--card-accent) 22%, transparent);
+    }
+
+    .card-title {
+      font-weight: 650;
+      font-size: 15px;
+      color: var(--text);
+      flex: 1;
+      min-width: 0;
+      line-height: 1.3;
+      letter-spacing: -0.01em;
+    }
+
+    .card-time {
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+      flex-shrink: 0;
+      padding-top: 3px;
+    }
+
+    /* ── Branch ──────────────────────────────────────────────────────────── */
+    .card-branch {
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 11.5px;
+      color: var(--muted2);
+    }
+
+    .ms-parent-link {
+      display: block; font-size: 11px; font-weight: 600; color: var(--muted);
+      text-decoration: none; margin-top: 8px;
+    }
+    .ms-parent-link:hover { color: var(--bl); text-decoration: underline; }
+
+    .branch-icon {
+      width: 1em;
+      height: 1em;
+      vertical-align: -0.15em;
+    }
+
+    /* ── Pills ───────────────────────────────────────────────────────────── */
+    .card-pills {
+      display: flex;
+      gap: 5px;
+      align-items: center;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 9px;
+      border-radius: 20px;
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+    }
+
+    .pill-waiting, .pill-needs-you  { background: color-mix(in srgb, var(--am) 12%, transparent); color: var(--am);  border: 1px solid color-mix(in srgb, var(--am) 30%, transparent); }
+    .pill-paused   { background: color-mix(in srgb, var(--gr) 12%, transparent);   color: var(--gr);   border: 1px solid color-mix(in srgb, var(--gr) 30%, transparent); }
+    .pill-review   { background: color-mix(in srgb, var(--bl) 12%, transparent);  color: var(--bl);  border: 1px solid color-mix(in srgb, var(--bl) 30%, transparent); }
+    .pill-working  { background: color-mix(in srgb, var(--bl) 10%, transparent);   color: var(--bl);   border: 1px solid color-mix(in srgb, var(--bl) 25%, transparent); }
+    .pill-done     { background: color-mix(in srgb, var(--sg) 10%, transparent);   color: var(--sg);  border: 1px solid color-mix(in srgb, var(--sg) 25%, transparent); }
+    .pill-handover { background: rgba(176,170,161,0.25); color: var(--text3); border: 1px solid rgba(176,170,161,0.4); }
+    .pill-idle { color: var(--muted); }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      display: inline-block;
+      flex-shrink: 0;
+    }
+    /* Only a working dot animates (reference `dotAnim`, which is "none" for
+       every status but `working`). A needs-you card is already the loudest
+       thing on the board — tinted, amber-striped, sorted to the top — and
+       pulsing it too just made three states compete for the same signal. */
+    .dot-waiting, .dot-needs-you  { background: var(--am); }
+    .dot-paused   { background: var(--gr); }
+    .dot-review   { background: var(--bl); }
+    .dot-working  { background: var(--bl); animation: pulse-dot 2s ease-in-out infinite; }
+    .dot-done     { background: var(--sg); }
+    .dot-handover { background: #B0AAA1; }
+    .dot-idle { background: color-mix(in srgb, var(--text) 30%, transparent); }
+
+    /* Opacity only — a scaling dot fights the halo drawn around it. */
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.7; }
+    }
+
+    @keyframes breathe {
+      0%, 100% { transform: scale(1); opacity: 0.5; }
+      50%      { transform: scale(1.55); opacity: 0; }
+    }
+
+    /* The design's own dot-pulse (distinct from pulse-dot above): opacity
+       1 → .28 → 1, used on the live indicator, working status dots, and the
+       stage rail's current-node halo partner. */
+    @keyframes pulseDot {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.28; }
+    }
+
+    /* ── Stats grid ──────────────────────────────────────────────────────── */
+    .card-stats {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 12px;
+    }
+
+    /* ── Donut ───────────────────────────────────────────────────────────── */
+    .donut-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
+    .donut-bg {
+      fill: none;
+      stroke: color-mix(in srgb, var(--text) 10%, transparent);
+      stroke-width: 6;
+    }
+
+    .donut-progress {
+      fill: none;
+      stroke-width: 6;
+      stroke-linecap: round;
+    }
+
+    .donut-text {
+      font-size: 15px;
+      font-weight: 700;
+      fill: var(--text);
+    }
+
+    .donut-label {
+      font-size: 10px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .card-plan .card-body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      padding: 12px 18px;
+    }
+
+    .plan-card-title {
+      font-weight: 600;
+      font-size: 14px;
+      color: var(--text);
+      text-align: center;
+    }
+
+    .card-plan .card-branch {
+      text-align: center;
+      margin-bottom: 0;
+    }
+
+    .stat-cell {
+      background: color-mix(in srgb, var(--text) 3.5%, transparent);
+      padding: 10px 13px 9px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .stat-label {
+      font-size: 9px;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+
+    .stat-value {
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text);
+      line-height: 1;
+      letter-spacing: -0.025em;
+    }
+
+    .stat-value.model-opus    { color: var(--rd); font-size: 14px; font-weight: 700; letter-spacing: 0.02em; }
+    .stat-value.model-sonnet  { color: var(--bl);   font-size: 14px; font-weight: 700; letter-spacing: 0.02em; }
+    .stat-value.model-haiku   { color: var(--sg);  font-size: 14px; font-weight: 700; letter-spacing: 0.02em; }
+    .stat-value.model-unknown { color: var(--muted); font-size: 12px; }
+
+    .stat-value.cost-green { color: var(--sg); }
+    .stat-value.cost-yellow { color: var(--am); }
+    .stat-value.cost-red   { color: var(--rd); }
+    .stat-value.cost-dash  { color: var(--muted); font-size: 16px; }
+
+    /* CTX sub-elements inside a stat cell */
+    .ctx-stat-value {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text);
+      line-height: 1;
+      letter-spacing: -0.025em;
+    }
+    .ctx-stat-value.ctx-high { color: var(--rd); }
+
+    .ctx-bar {
+      width: 100%;
+      height: 4px;
+      background: color-mix(in srgb, var(--text) 8%, transparent);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .ctx-bar-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.4s ease;
+    }
+    .ctx-normal { background: var(--bl); }
+    .ctx-high   { background: var(--rd); }
+
+    .stat-sub { font-size: 9px; color: var(--muted); letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* ── Card footer (board card only — inline CTX meter + TOK/COST) ──────── */
+    /* No top rule: the reference separates the footer by space alone
+       (line 134), and a divider inside an already-bordered card reads as a
+       second box. */
+    .card-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .card-footer-stats {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 12px;
+      color: var(--text3);
+    }
+
+    /* Each metric is a label + value pair, so the 18px gap above separates
+       metrics while the label hugs its own number. */
+    .card-metric {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .card-metric-label {
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+
+    .ctx-meter {
+      display: inline-block;
+      width: 56px;
+      height: 5px;
+      border-radius: 3px;
+      background: color-mix(in srgb, var(--text) 10%, transparent);
+      overflow: hidden;
+    }
+    .ctx-meter-fill {
+      display: block;
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.4s ease;
+    }
+    .ctx-meter-value { font-weight: 600; color: var(--text3); }
+    /* Self-sufficient font — this used to rely on inheriting mono from its
+       .card-footer-stats parent, which the session card's own ctx row (see
+       renderCard) no longer wraps it in. */
+    .footer-stat { font-family: 'JetBrains Mono', ui-monospace, monospace; color: var(--text3); }
+    .cost-high { color: var(--rd); font-weight: 600; }
+
+    /* ── Warning ─────────────────────────────────────────────────────────── */
+    /* margin-top, not -bottom: everything below the header row now spaces
+       itself off the element above it (see .card-note). */
+    .ctx-warning {
+      font-size: 12px;
+      color: var(--am);
+      padding: 7px 11px;
+      background: color-mix(in srgb, var(--am) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--am) 22%, transparent);
+      border-radius: 6px;
+      margin-top: 12px;
+    }
+
+    /* The label stays whole; the summary takes the rest and wraps, since it is
+       the command being approved and must be readable without hovering. */
+    .approval-callout { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; min-width: 0; }
+    .approval-callout-label { font-weight: 600; white-space: nowrap; }
+    .approval-callout-summary { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+
+    /* The answer row drops under the label/summary line. The buttons stay equal
+       in size and weight on purpose: Cancel must be as easy to reach as Yes. */
+    .approval-answer { flex: 1 0 100%; display: flex; flex-direction: column; gap: 6px; min-width: 0; color: var(--text2); }
+    .approval-answer-question { font-weight: 600; overflow-wrap: anywhere; }
+    .approval-answer-options { display: flex; flex-wrap: wrap; gap: 6px; }
+    .approval-answer-option { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; max-width: 100%; text-align: left; cursor: pointer; }
+    .approval-answer-option[aria-disabled="true"] { cursor: not-allowed; opacity: 0.6; }
+    .approval-answer-key { font: inherit; font-size: 11px; padding: 0 5px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); }
+    /* Wraps in full: a persistent grant's scope sits at the end of its label. */
+    .approval-answer-label { min-width: 0; overflow-wrap: anywhere; }
+    .approval-answer-result { padding: 0; font-size: 12.5px; }
+
+    /* The Merge tab's persistent failure banner (Design §7) — reuses
+       .ctx-warning's own tokens/shape for its `warning` tone (a merge that
+       landed with a cleanup refusal); `error` (a gate refusal, or gh itself
+       rejecting the merge) swaps in the same --rd color-mix recipe .btn-err
+       already uses, so no new colors are introduced either way. */
+    .merge-banner ul {
+      margin: 0;
+      padding-left: 18px;
+    }
+    .merge-banner[data-tone="error"] {
+      color: var(--rd);
+      background: color-mix(in srgb, var(--rd) 14%, transparent);
+      border-color: color-mix(in srgb, var(--rd) 40%, transparent);
+    }
+
+    .card-divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 10px 0;
+    }
+
+    /* ── Note callout (a waiting or paused reason) ───────────────────────── */
+    /* Plain paragraph text, no box — Pipelinely Dashboard v2.dc.html's own
+       card summary (hasSummary/{{c.summary}}) has no per-status accent
+       treatment at all, verified against its own live renderer. Replaces an
+       earlier bordered/tinted callout built against a different, since-
+       superseded reference file (a stale comment here used to cite it). */
+    .card-note {
+      font-size: 13.5px;
+      line-height: 1.5;
+      color: var(--text2);
+      padding: 14px 18px 0;
+      text-wrap: pretty;
+    }
+
+    /* ── Actions ─────────────────────────────────────────────────────────── */
+    .card-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+      margin-top: 12px;
+    }
+    /* Already a flex item in the footer row — its own top margin would push
+       it out of line with the metrics beside it. */
+    .card-footer .card-actions { margin-top: 0; flex-wrap: wrap; }
+
+    .btn {
+      padding: 7px 13px;
+      border-radius: 9px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text3);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s, border-color 0.12s;
+      font-family: inherit;
+      text-decoration: none;
+      display: inline-block;
+    }
+    .btn:hover {
+      border-color: var(--bl);
+      color: var(--bl);
+    }
+    .btn-ok {
+      background: color-mix(in srgb, var(--sg) 16%, transparent);
+      border-color: color-mix(in srgb, var(--sg) 40%, transparent);
+      color: var(--sg);
+    }
+    .btn-err {
+      background: color-mix(in srgb, var(--rd) 14%, transparent);
+      border-color: color-mix(in srgb, var(--rd) 40%, transparent);
+      color: var(--rd);
+    }
+    .btn-primary {
+      background: var(--text);
+      border-color: var(--text);
+      color: var(--bg);
+      font-weight: 700;
+    }
+    .btn-primary:hover {
+      background: var(--bl);
+      border-color: var(--bl);
+      color: var(--bg);
+    }
+    .btn-icon {
+      padding: 5px 8px;
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+    }
+    .btn-icon:hover {
+      background: color-mix(in srgb, var(--rd) 14%, transparent);
+      border-color: color-mix(in srgb, var(--rd) 40%, transparent);
+      color: var(--rd);
+    }
+
+    /* ── Done section (per-date rows) ─────────────────────────────────────── */
+    .date-group {
+      margin-bottom: 22px;
+    }
+    .date-group:last-child { margin-bottom: 0; }
+
+    .date-group-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 4px 9px;
+    }
+    .date-group-label { font-size: 13px; font-weight: 700; color: var(--text2); }
+    .date-group-total { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11.5px; color: var(--text3); }
+
+    .done-rows {
+      border-radius: 16px; background: var(--surface); border: 1px solid var(--border); overflow: hidden;
+    }
+    .done-row + .done-row { border-top: 1px solid var(--border); }
+
+    .done-row-link {
+      display: flex;
+      align-items: center;
+      column-gap: 14px;
+      padding: 14px 18px;
+      color: inherit;
+      text-decoration: none;
+    }
+    .done-row-link:hover { background: var(--surface2); }
+
+    .done-row-check {
+      display: grid; place-items: center; width: 18px; height: 18px; flex: none;
+      border-radius: 999px; background: var(--sageSoft); color: var(--sage);
+      font-size: 10px; font-weight: 800;
+    }
+
+    .done-row-chevron {
+      display: inline-flex;
+      color: var(--text3);
+      flex-shrink: 0;
+    }
+
+    .done-row-main { flex: 1 1 auto; min-width: 0; }
+
+    .done-row-title {
+      font-weight: 600;
+      font-size: 14.5px;
+      line-height: 1.35;
+      color: var(--ink);
+    }
+
+    .done-row-meta {
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 11px;
+      color: var(--text3);
+      margin-top: 3px;
+    }
+    .done-row-project { font-weight: 600; color: var(--text2); }
+
+    .done-row-cost {
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 12px;
+      color: var(--text2);
+      white-space: nowrap;
+      flex: none;
+    }
+
+    /* ── Work density (session-activity calendar) ─────────────────────────── */
+    .work-density { margin-top: 44px; }
+    .work-density-head {
+      display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+      margin-bottom: 12px; padding: 0 4px;
+    }
+    .work-density-head span:first-child { font-size: 13px; font-weight: 700; color: var(--text2); }
+    .work-density-label { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; color: var(--text3); }
+    .work-density-card { border-radius: 16px; background: var(--surface); border: 1px solid var(--border); padding: 18px; }
+    .work-density-scroll { overflow-x: auto; }
+    .work-density-grid { min-width: 420px; }
+    .work-density-months { display: flex; gap: 3px; }
+    .work-density-body { display: flex; gap: 6px; margin-top: 6px; }
+    .work-density-daylabels { display: flex; flex-direction: column; gap: 3px; width: 28px; flex: none; }
+    .work-density-weeks { display: flex; gap: 3px; flex: 1 1 auto; min-width: 0; }
+    .work-density-legend { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 14px; font-size: 11.5px; color: var(--text3); }
+    .work-density-swatch { width: 11px; height: 11px; border-radius: 2px; box-sizing: border-box; }
+
+    /* ── Backlog section ────────────────────────────────────────────────── */
+    .backlog-list {
+      list-style: none; margin: 0; padding: 0;
+    }
+    /* The card chrome only wraps real rows — the empty state (renderEmptyState)
+       is its own card, so applying this unconditionally would nest one card
+       inside another when the list has nothing to show. */
+    .backlog-list:has(.backlog-row-item) {
+      border-radius: 16px; background: var(--surface); border: 1px solid var(--border); overflow: hidden;
+    }
+    .backlog-row-item + .backlog-row-item .backlog-card { border-top: 1px solid var(--border); }
+    .backlog-card {
+      display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+      padding: 15px 18px;
+    }
+    .backlog-card.is-done .backlog-row-title { color: var(--text3); text-decoration: line-through; }
+    /* A real native checkbox (native focus/keyboard/change-event behavior,
+       not a click-tracked span) reshaped into the design's own circle mark
+       via appearance:none — shared with the CR/QA findings checklist rows'
+       own checkboxes (.finding-row input[type="checkbox"]) below, one
+       recipe for both rather than two copies. */
+    .backlog-select-checkbox,
+    .finding-row input[type="checkbox"] {
+      appearance: none; -webkit-appearance: none; margin: 0; flex: none; cursor: pointer;
+      width: 18px; height: 18px; border-radius: 999px; border: 1.5px solid var(--border2); background: var(--surface);
+    }
+    .backlog-select-checkbox:checked,
+    .finding-row input[type="checkbox"]:checked {
+      background: var(--accent); border-color: var(--accent);
+      display: grid; place-items: center;
+    }
+    .backlog-select-checkbox:checked::after,
+    .finding-row input[type="checkbox"]:checked::after {
+      content: '✓'; font-family: 'JetBrains Mono', monospace; font-size: 9.5px; font-weight: 800; color: var(--surface);
+    }
+    .backlog-row-date { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text3); white-space: nowrap; flex: none; width: 64px; }
+    .backlog-row-main { flex: 1 1 240px; min-width: 0; }
+    .backlog-row-title-line { display: flex; align-items: baseline; gap: 8px; }
+    .backlog-row-title { flex: 1 1 auto; min-width: 0; font-size: 14.5px; font-weight: 600; line-height: 1.35; color: var(--ink); }
+    .backlog-row-project { flex: none; }
+    .backlog-row-context { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text3); margin-top: 3px; }
+    .backlog-row-actions { display: flex; align-items: center; gap: 8px; flex: none; margin-left: auto; }
+    .backlog-icon-btn { width: 32px; height: 32px; }
+    .backlog-row-run {
+      display: flex; align-items: center; gap: 7px; padding: 8px 13px 8px 11px; border-radius: 9px;
+      border: none; cursor: pointer; background: var(--accentSoft); color: var(--accent);
+      font-family: inherit; font-size: 12.5px; font-weight: 700; white-space: nowrap;
+    }
+    .backlog-row-run:hover { background: var(--accent); color: var(--surface); }
+
+    /* A height collapse rather than a `hidden`-attribute snap: the bar sits
+       above the card list, so popping it in/out at display:none would shove
+       every card below it in a single frame — a jarring layout jump the
+       instant the first checkbox is checked. */
+    .backlog-batch-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      position: sticky; top: 0; z-index: 30;
+      background: var(--surface);
+      border: 1px solid var(--border2);
+      border-radius: 14px;
+      box-shadow: 0 8px 22px rgba(20,30,32,.10);
+      box-sizing: border-box;
+      max-height: 0;
+      padding: 0 16px;
+      margin-bottom: 0;
+      opacity: 0;
+      overflow: hidden;
+      visibility: hidden;
+      transition: max-height 0.2s ease, opacity 0.15s ease, padding 0.2s ease,
+                  margin-bottom 0.2s ease, visibility 0s linear 0.2s;
+    }
+    .backlog-batch-bar.is-open {
+      max-height: 56px; /* generous upper bound for this one-line toolbar */
+      padding: 12px 16px;
+      margin-bottom: 12px;
+      opacity: 1;
+      visibility: visible;
+      transition: max-height 0.2s ease, opacity 0.15s ease, padding 0.2s ease,
+                  margin-bottom 0.2s ease;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .backlog-batch-bar { transition: none; }
+    }
+    .backlog-batch-bar [data-testid="backlog-selected-count"] { font-size: 13.5px; font-weight: 600; color: var(--text2); }
+    .backlog-batch-clear {
+      margin-left: auto; padding: 9px 14px; border-radius: 9px; border: none; background: none; cursor: pointer;
+      color: var(--text3); font-family: inherit; font-size: 13px; font-weight: 600;
+    }
+    .backlog-batch-clear:hover { color: var(--ink); }
+    .backlog-batch-run {
+      display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 9px;
+      border: none; cursor: pointer; background: var(--ink); color: var(--bg);
+      font-family: inherit; font-size: 13px; font-weight: 700; white-space: nowrap;
+    }
+    .backlog-batch-run:hover { background: var(--accent); }
+    .backlog-batch-run:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    .backlog-delete-btn {
+      display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 9px;
+      border: 1px solid var(--border); cursor: pointer; background: none; color: var(--text3);
+      font-family: inherit; font-size: 13px; font-weight: 600; white-space: nowrap;
+    }
+    .backlog-delete-btn:hover { border-color: var(--drift); color: var(--driftInk); }
+    .backlog-delete-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    .backlog-edit-form { flex: 1 1 auto; width: 100%; display: flex; flex-direction: column; gap: 8px; }
+
+    /* ── Confirm modal (backlog batch/row delete today; generic enough for a
+       future destructive confirmation to reuse) ───────────────────────────── */
+    .confirm-modal-scrim {
+      position: fixed; inset: 0; z-index: 120; background: rgba(16,22,24,.5);
+      display: flex; align-items: center; justify-content: center; padding: 16px;
+    }
+    .confirm-modal-scrim[hidden] { display: none; }
+    .confirm-modal-card {
+      max-width: 400px; width: 100%; box-sizing: border-box; border-radius: 16px;
+      background: var(--surface); border: 1px solid var(--border);
+      box-shadow: 0 12px 32px rgba(20,30,32,.16); padding: 20px; display: flex; flex-direction: column; gap: 14px;
+    }
+    .confirm-modal-headline { font-size: 16.5px; font-weight: 700; color: var(--ink); }
+    .confirm-modal-body { font-size: 13.5px; color: var(--text2); }
+    .confirm-modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+    .confirm-modal-cancel-btn {
+      padding: 10px 16px; border-radius: 9px; border: none; background: none; cursor: pointer;
+      color: var(--text3); font-family: inherit; font-size: 13px; font-weight: 600;
+    }
+    .confirm-modal-cancel-btn:hover { color: var(--ink); }
+    .confirm-modal-confirm-btn {
+      display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 9px;
+      border: none; cursor: pointer; background: var(--driftInk); color: #fff;
+      font-family: inherit; font-size: 13px; font-weight: 700; white-space: nowrap;
+    }
+    .confirm-modal-confirm-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    /* Names the task dir a shelved entry points back at — sits in the
+       checkbox's own slot (mutually exclusive with it: a shelved item can't
+       be batch-run the normal dispatch-fresh way, so it never gets one).
+       Same muted-green treatment as .pill-paused, the attention status a
+       shelved task already maps onto. */
+    .backlog-shelved-badge {
+      flex: none;
+      padding: 3px 9px;
+      border-radius: 20px;
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 11px;
+      font-weight: 600;
+      background: color-mix(in srgb, var(--gr) 12%, transparent);
+      color: var(--gr);
+      border: 1px solid color-mix(in srgb, var(--gr) 30%, transparent);
+    }
+
+    /* A shelved row's body opens the task's detail overlay — the same
+       affordance an active card already has, so it gets the same cursor. */
+    .backlog-row-item[data-shelved-slug] .backlog-card { cursor: pointer; }
+    .backlog-edit-form textarea.weekly-focus-input { min-height: 44px; }
+    .backlog-edit-error { font-size: 12px; color: var(--rd); }
+
+    /* ── Task detail view (a page, not a dialog — see body.detail-open) ───── */
+    /* Geometry lives in .page-column (shared with #board, above) — see the
+       task-detail markup, which carries both classes. */
+    .detail-overlay[hidden] { display: none; }
+    .detail-panel { display: flex; flex-direction: column; }
+    .detail-head {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+      padding: 22px clamp(18px, 2.4vw, 26px);
+    }
+    .detail-head-text { min-width: 0; flex: 1 1 380px; }
+    .detail-title-row { display: flex; align-items: center; gap: 8px; }
+    .detail-status-line { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+    .detail-status-dot { width: 7px; height: 7px; border-radius: 999px; flex: none; }
+    .detail-status-dot.is-live { animation: pulseDot 2.6s ease-in-out infinite; }
+    .detail-status-label { font-size: 12px; font-weight: 700; white-space: nowrap; }
+    .detail-tag-pill { padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .detail-title { margin: 0; font-size: clamp(22px, 2.4vw, 27px); font-weight: 800; line-height: 1.22; letter-spacing: -0.02em; text-wrap: pretty; }
+    .detail-slug-row { display: flex; align-items: center; gap: 8px; margin-top: 11px; min-width: 0; }
+    .detail-slug-value { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .detail-slug-row .card-copy-btn { width: 22px; height: 22px; }
+    /* The design's head also has a "returned to backlog" banner
+       (isBacklogMode's head.banner) — no real analog exists here: this
+       repo's Backlog tab holds plain BACKLOG.md description/context lines,
+       never a Task with a slug/stage/session history, so a Task detail
+       page can never actually be in that state. Not built — see "Move to
+       backlog (shelve)" in cardMenuItemsHtml's own comment for the same
+       gap on the stub action that would produce it. */
+    .detail-ctx-row {
+      display: flex; align-items: center; gap: 11px; height: 32px;
+      margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border);
+    }
+    .detail-ctx-row:empty { display: none; }
+    .detail-ctx-row .card-ctx-label { flex: none; }
+    .detail-ctx-row .card-ctx-track { min-width: 80px; }
+    .detail-ctx-row .card-handover-pill { height: 30px; }
+    /* The design's own header meta line (D9): four mono label/value pairs —
+       tok · cost · sessions · model — replacing the pills row, `.detail-sub`
+       and the stats grid (see renderDetailMetaRow). The stage/no-verifier/
+       mode/repo pills, branch and PR number this used to also carry are not
+       lost — PR access already lives in the header's own 3-dots menu
+       (open-pr-btn), which is the design's own answer to the same need. */
+    .detail-meta {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 14px;
+      margin-top: 14px; font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 11.5px; color: var(--text3);
+    }
+    .detail-meta-pair { display: flex; align-items: center; gap: 7px; }
+    .detail-meta-pair [data-testid="detail-meta-value"] { color: var(--text2); }
+    .detail-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+    .detail-actions .btn {
+      min-width: 120px; justify-content: center; display: inline-flex; align-items: center; gap: 8px;
+      padding: 10px 15px; border-radius: 10px; font-size: 13px;
+    }
+    .detail-actions .btn:hover { border-color: var(--accent); color: var(--accent); }
+    .detail-actions .card-menu-wrap .card-icon-btn { width: 38px; height: 38px; border-radius: 10px; }
+
+    /* .l2-head/.l2-title (the one-line back-chevron strip the milestone
+       drill-down used to open on) are gone — M5 replaced them with a real
+       header card (renderMilestoneDetail); .l2-slug survives, repurposed
+       for that card's own mono milestone id (milestone-detail-id). */
+    .l2-slug {
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 11px; color: var(--muted);
+    }
+
+    /* The milestone drill-down's own back link, above its header card
+       (renderMilestoneDetail) — the design's own treatment, replacing the
+       old l2-head chevron strip. Reuses the l2-back click hook
+       ([data-l2-back]) via a plain data attribute rather than a testid, so
+       the existing delegated click handler needs no change. */
+    .milestone-parent-link {
+      display: inline-flex; align-items: center; gap: 7px;
+      margin: 6px 0 18px; padding: 0; border: none; background: none;
+      font-size: 13px; font-weight: 600; color: var(--text2); cursor: pointer;
+    }
+    .milestone-parent-link:hover { color: var(--text); }
+    .milestone-parent-link:focus-visible { outline: 2px solid var(--bl); outline-offset: 2px; border-radius: 4px; }
+
+    /* One notch below .detail-title's own clamp (Screen 2's h1) — the
+       design's own deliberate sizing, not a mistake (see
+       design-v2-milestone-view.spec.ts). */
+    .milestone-title { margin: 0; font-size: clamp(20px, 2.2vw, 25px); font-weight: 800; line-height: 1.22; letter-spacing: -0.02em; text-wrap: pretty; }
+
+    /* The 3-dots menu opened from the milestone header card is wider than
+       the board's own card menu (210px vs 168px) — the design's own value
+       for this specific menu. */
+    .card-menu-wrap.ms-head-menu .card-menu { min-width: 210px; }
+
+    /* The design's mono two-row block a milestone's Dev tab opens on
+       (renderL2Panel's 'dev' branch) — needs: / verifier:, under an
+       uppercase eyebrow carrying the milestone's own dispatch state. */
+    .milestone-dispatch {
+      display: flex; flex-direction: column; gap: 8px;
+      font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px; color: var(--text3);
+    }
+    .milestone-dispatch-label { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .14em; color: var(--text3); }
+    .milestone-dispatch-row { display: flex; gap: 8px; }
+    .milestone-dispatch-row span:first-child { color: var(--text3); }
+    .milestone-dispatch-row span:last-child { color: var(--text2); }
+
+    /* "What this stage covers" — parsed live from the stage's own SKILL.md
+       (see stageScopeHtml/tech-design-stage-scope-summary.md). Sits right
+       under the panel header, always visible (no <details> disclosure: an
+       SSE re-render would just snap a collapsed state shut again), styled
+       small and muted so it reads as reference material, not a headline. */
+    .stage-scope {
+      display: flex; flex-direction: column; gap: 8px;
+      padding: 10px clamp(18px, 2.4vw, 26px) 0;
+    }
+    .stage-scope-label { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .14em; color: var(--text3); }
+    .stage-scope-steps { margin: 0; padding: 0 0 0 18px; display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: var(--text2); }
+    .stage-scope-constraints { display: flex; flex-wrap: wrap; gap: 6px; }
+    .stage-scope-constraint {
+      padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border);
+      background: var(--surface2); color: var(--text2); font-size: 11.5px; font-weight: 600;
+    }
+
+    /* The design's shared "nothing recorded for this stage yet" panel
+       (renderStageEmptyPanel) — one style for any stage tab with no
+       TIMELINE history, rather than each tab inventing its own sentence. */
+    .milestone-stage-empty {
+      background: var(--surface2); border-radius: 12px; padding: 16px 18px;
+      font-size: 13.5px; color: var(--text3);
+    }
+
+    /* The milestone rail's OWN treatment — 92px columns (not 82px), 1.5px
+       rings (not 2px), sage completes (not accent), dashed upcoming rings.
+       Scoped under .is-milestone rather than a second copy of
+       .stage-chain-node/.stage-chain-check fighting the Pipeline rail's own
+       rules over the same classes (see renderStageChain's `milestone` opt). */
+    .stepper-wide.is-milestone .stage-chain-node { width: 92px; }
+    .stepper-wide.is-milestone .stage-chain-check { border-width: 1.5px; }
+    .stepper-wide.is-milestone .stage-chain-node.is-done .stage-chain-check {
+      background: var(--sageSoft); border-color: var(--sage); color: var(--sageInk);
+    }
+    .stepper-wide.is-milestone .stage-chain-node:not(.is-done):not(.is-current) .stage-chain-check {
+      border-style: dashed;
+    }
+    .stepper-wide.is-milestone .stage-chain-data {
+      font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10.5px;
+    }
+
+    /* The stage stepper — a panel of its own, above the stage body panel.
+       Two renderings of the same computed node list (see renderStageChain):
+       .stepper-wide (circles + connectors, every node's own state line) is
+       the default; @media flips to .stepper-compact below 641px. Both are
+       always in the DOM — no matchMedia listener, no resize-triggered
+       re-render. The design gives .stepper-wide its own card geometry
+       (margin/padding/columns); .stepper-compact is cockpit's own answer to
+       small screens (DRIFT-2, docs/design-drift.md) and keeps its own. */
+    .stepper-wide {
+      margin: 26px 0 0; padding: 26px clamp(18px, 2.4vw, 26px);
+      border-radius: 16px; background: var(--surface); border: 1px solid var(--border);
+    }
+    .stepper-compact {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
+      padding: 18px 20px; display: none;
+    }
+    @media (max-width: 640px) {
+      .stepper-wide { display: none; }
+      .stepper-compact { display: flex; }
+    }
+
+    /* The 8px/2px bleed (negative margin cancelling the row's own padding)
+       keeps the current node's `inset:-5px` breathing halo from being
+       clipped by this row's own overflow-x — without it only the first and
+       last nodes show a half-drawn ring. */
+    .stage-chain {
+      display: flex; align-items: flex-start; gap: 0; overflow-x: auto;
+      padding: 8px 8px 2px; margin: -8px -8px -2px;
+    }
+    /* The rail is a React Flow canvas (StageChainGraph) — the
+       connectors are its edges, drawn between the same node-edge points the old
+       flex:1 spans covered. The handles only anchor those edges. */
+    .stage-flow-canvas { flex: none; }
+    .stage-flow .stage-flow-handle.react-flow__handle {
+      top: 18px; width: 1px; height: 1px; min-width: 0; opacity: 0; pointer-events: none;
+    }
+    /* Scoped under .stage-flow to outrank React Flow's own .react-flow__edge-path
+       (its stylesheet loads after this one). */
+    .stage-flow .stage-chain-edge { fill: none; stroke: var(--sel-border); stroke-width: 2; }
+    .stage-flow .react-flow__edge.is-traversed .stage-chain-edge { stroke: var(--accent); }
+    .stage-chain-node {
+      display: flex; flex-direction: column; align-items: center; gap: 9px;
+      width: 82px; flex: none; padding: 4px; border: none; background: none;
+      font-family: inherit; text-align: center; cursor: pointer;
+      border-radius: 10px; transition: opacity 0.12s;
+    }
+    .stage-chain-node:focus-visible { outline: 2px solid var(--bl); outline-offset: 2px; }
+    .stage-chain-check {
+      width: 28px; height: 28px; flex: none; border-radius: 50%; position: relative;
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; font-weight: 800;
+      background: transparent; border: 2px solid var(--border2); color: var(--muted2);
+      transition: border-color 0.12s, background-color 0.12s, color 0.12s;
+    }
+    .stage-chain-name { font-size: 12px; font-weight: 600; color: var(--muted2); line-height: 1.25; }
+    .stage-chain-data { font-size: 11px; color: var(--muted); line-height: 1.3; }
+    .stage-chain-node.is-done .stage-chain-check { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+    .stage-chain-node.is-done .stage-chain-name { color: var(--text3); }
+    .stage-chain-node.is-current .stage-chain-check { background: var(--accentSoft); border-color: var(--accent); color: var(--accentInk); }
+    .stage-chain-node.is-current .stage-chain-check::after {
+      content: ""; position: absolute; inset: -5px; border-radius: 50%;
+      border: 1.5px solid var(--accent); animation: breathe 2.8s ease-in-out infinite;
+    }
+    .stage-chain-node.is-current .stage-chain-name { color: var(--ink); font-weight: 700; }
+    .stage-chain-node.is-selected .stage-chain-check { box-shadow: 0 0 0 4px var(--sel); }
+    /* A finished task's un-reached stages: distinct from a genuine future
+       stage on an active task, so "not recorded" doesn't read as "still
+       coming". No colour cue either way — this state means "no data", not
+       "didn't happen" — but lower opacity still marks it apart. */
+    .stage-chain-node.is-unrecorded { opacity: 0.4; }
+    .stage-chain-node.is-unrecorded .stage-chain-check { color: var(--muted); }
+
+    /* Compact — prev/tile/next, the one genuinely new behaviour this
+       milestone adds (see tech-design.md). */
+    .stepper-compact { align-items: center; gap: 12px; }
+    .stepper-nav-btn {
+      width: 34px; height: 34px; flex: none; display: flex; align-items: center; justify-content: center;
+      border-radius: 9px; border: 1px solid var(--border); background: var(--panel2);
+      color: var(--text3); font-size: 15px; cursor: pointer;
+    }
+    .stepper-nav-btn:hover { border-color: var(--sel-border); color: var(--text); }
+    .stepper-nav-btn:focus-visible { outline: 2px solid var(--bl); outline-offset: 2px; }
+    .stepper-nav-btn[disabled] { color: var(--faintest); cursor: not-allowed; }
+    .stepper-tile {
+      flex: 1; min-width: 0; display: flex; align-items: center; gap: 11px;
+      padding: 10px 14px; border-radius: 11px; background: var(--panel2); border: 1px solid var(--border);
+    }
+    .stepper-tile.is-selected { background: var(--sel); border-color: var(--sel-border); }
+    .stepper-tile .stage-chain-check { width: 26px; height: 26px; font-size: 11.5px; }
+    .stepper-tile-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .stepper-tile-text .stage-chain-name { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .stepper-tile-text .stage-chain-data { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .stepper-position { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10.5px; color: var(--muted2); flex: none; }
+
+    /* The only remaining .detail-stepper user is a milestone-declaring
+       parent's own Planning/Plan Review/Dev stepper: its other five stages
+       happen per milestone, in the child task dirs. Every other task
+       renders its chain into .detail-fanout instead, leaving this empty. */
+    .detail-stepper { display: grid; grid-template-columns: repeat(3, minmax(88px, 1fr)); gap: 0; overflow-x: auto; }
+    .detail-stepper:empty { display: none; }
+
+    .detail-fanout { display: flex; flex-direction: column; gap: 14px; }
+    .detail-fanout:empty { display: none; }
+
+    /* Level 1 only (Plan / Plan Review / Dev) — level 2 is a stage chain,
+       not tabs, and gets its own CSS in Task 13. */
+    .l1-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); }
+    .l1-tab {
+      display: flex; align-items: center; gap: 6px;
+      padding: 9px 13px; border: none; border-bottom: 2px solid transparent;
+      background: none; font-family: inherit; font-size: 12.5px; font-weight: 600;
+      color: var(--text3); cursor: pointer;
+      transition: color 0.12s, border-color 0.12s;
+    }
+    .l1-tab:hover { color: var(--text); }
+    .l1-tab.is-active { color: var(--bl); border-bottom-color: var(--bl); }
+    .l1-tab:focus-visible { outline: 2px solid var(--bl); outline-offset: -2px; }
+    .l1-round {
+      font-size: 10px; font-weight: 700; color: var(--muted);
+      background: color-mix(in srgb, var(--text) 6%, transparent);
+      border-radius: 20px; padding: 1px 6px;
+    }
+    .l1-tab.is-active .l1-round { color: var(--bl); background: color-mix(in srgb, var(--bl) 12%, transparent); }
+    .l1-panel { display: flex; flex-direction: column; gap: 14px; }
+    /* The Pipeline design's own single bordered card per stage tab — header,
+       body and the footer CTA bar all inside one .l2-panel, per its own
+       detail.title/meta/pill + body + primary/secondary structure. The
+       design's own UNEVEN per-section padding (header 22px<gutter>0, body
+       18px<gutter>0, footer full-bleed) — see l2-panel-header/l2-panel-body/
+       detail-panel-footer below — rather than one uniform inset, so the
+       footer can reach the card's own edges. */
+    .l2-panel {
+      display: flex; flex-direction: column;
+      margin-top: 18px;
+      border-radius: 16px; background: var(--surface); border: 1px solid var(--border);
+    }
+
+    .plan-tab-head { display: flex; align-items: center; gap: 12px; }
+    .plan-tab-head .btn { margin-left: auto; }
+
+    .plan-overview { display: flex; flex-direction: column; gap: 10px; }
+    .plan-tests-group + .plan-tests-group { margin-top: 10px; }
+
+
+    .project-summary {
+      display: flex; flex-direction: column; gap: 10px;
+      padding-bottom: 14px; margin-bottom: 4px; border-bottom: 1px solid var(--border);
+    }
+    .milestone-progress { display: flex; align-items: center; gap: 9px; }
+    .ms-dots { display: inline-flex; gap: 4px; }
+    .ms-dot { width: 9px; height: 9px; border-radius: 50%; background: color-mix(in srgb, var(--text) 12%, transparent); flex-shrink: 0; }
+    .ms-dot-dispatched { background: var(--bl); }
+    .ms-dot-done { background: var(--sg); }
+    .ms-progress-label { font-size: 11px; color: var(--muted); }
+
+    .wave { display: flex; flex-direction: column; gap: 14px; }
+    .wave-header {
+      display: flex; align-items: center; gap: 12px;
+      padding-bottom: 10px; border-bottom: 1px solid var(--border);
+    }
+    .wave-name {
+      font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11.5px; font-weight: 700;
+      letter-spacing: 0.06em; color: var(--text);
+    }
+    .wave-rule { font-size: 12px; color: var(--text2); font-weight: 500; }
+    .wave-batch-btn { margin-left: auto; border-radius: 8px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
+    .wave-complete-pill {
+      margin-left: auto; padding: 3px 9px; border-radius: 999px;
+      background: var(--sageSoft); color: var(--sageInk); font-size: 11px; font-weight: 700; white-space: nowrap;
+    }
+    /* The wave graph is a React Flow canvas (MilestoneGraph).
+       The 280px minimum track and 12px gap live in milestoneGraphLayout.ts now
+       (a canvas can't use a CSS grid); the frame just gives it the row's width.
+       touch-action is loosened from React Flow's `none` so a finger dragging over
+       the graph still scrolls the page — the graph has no pan or zoom of its own. */
+    .milestone-flow-frame { width: 100%; }
+    .milestone-flow .react-flow__pane,
+    .milestone-flow .react-flow__renderer { touch-action: pan-y; }
+    .milestone-flow .milestone-flow-handle.react-flow__handle {
+      width: 1px; height: 1px; min-width: 0; opacity: 0; pointer-events: none;
+    }
+    .milestone-flow .react-flow__edge-path { fill: none; stroke: var(--border2); stroke-width: 1.5; }
+    .milestone-flow .react-flow__edge.is-satisfied .react-flow__edge-path { stroke: var(--sage); }
+
+    /* A wrapper that must not become a layout box of its own. */
+    .slot-contents { display: contents; }
+
+    /* .card.session-card already supplies the base surface/radius/shadow/
+       hover-lift this card needs (see renderMilestoneCard) — only the
+       keyboard focus ring is added here, since this card (unlike a session
+       card) carries tabindex="0". */
+    .ms-card:focus-visible { outline: 2px solid var(--bl); outline-offset: 2px; }
+    .ms-dispatch-status:empty { display: none; }
+    .ms-card-id { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; font-weight: 700; letter-spacing: 0.05em; color: var(--text3); }
+    .ms-card-meta { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 11px; color: var(--muted); margin-top: 9px; }
+
+    .step-col { padding-top: 14px; position: relative; padding-right: 10px; }
+    .step-col::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: var(--border); }
+    .step-col.is-done::before { background: var(--sg); }
+    .step-col.is-at::before { background: var(--bl); }
+    .step-col.is-unrecorded { opacity: 0.4; }
+    .step-name { font-size: 10px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); }
+    .step-col.is-at .step-name { color: var(--text); }
+    .step-when { font-size: 10.5px; color: var(--muted); }
+
+    .detail-row-note { font-size: 13px; color: var(--text3); }
+
+    /* Findings/QA-failure checklists render inside a chain node's own
+       .l2-panel (the CR-fixes / QA-fixes stage panel), not a separate
+       section, so they're not nested in anything with a column span to
+       inherit. Always visible when data exists; not a collapse/expand
+       toggle. */
+    .detail-row-checklist { grid-column: auto; display: flex; flex-direction: column; gap: 8px; margin-top: 0; }
+    .detail-row-checklist-header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+    .findings-count { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; color: var(--muted); margin-left: auto; }
+    .finding-list { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .finding-row { display: grid; grid-template-columns: auto auto 1fr auto; gap: 10px; align-items: start; padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--border); font-size: 12.5px; }
+    .finding-row.no-severity, .finding-row.read-only { grid-template-columns: auto 1fr auto; }
+    .finding-row.planned-qa-row { grid-template-columns: auto 1fr; }
+    .finding-row:last-child { border-bottom: none; }
+    .finding-row input[type="checkbox"] { margin-top: 1px; }
+    .pill-must       { align-self: start; background: rgba(166,74,64,0.1);   color: var(--rd);           border: 1px solid rgba(166,74,64,0.3); }
+    .pill-should     { align-self: start; background: rgba(51,47,43,0.04);  color: var(--text3); border: 1px solid rgba(51,47,43,0.08); }
+    .pill-suggestion { align-self: start; background: color-mix(in srgb, var(--am) 12%, transparent); color: var(--am); border: 1px solid color-mix(in srgb, var(--am) 30%, transparent); }
+    .qa-case-icon { align-self: start; font-weight: 700; }
+    .qa-case-row[data-passed="true"] .qa-case-icon  { color: var(--sg); }
+    .qa-case-row[data-passed="false"] .qa-case-icon { color: var(--rd); }
+    .qa-case-icon.planned { color: var(--muted); font-weight: 400; }
+    .finding-body { display: flex; flex-direction: column; gap: 3px; }
+    .finding-category { font-weight: 700; color: var(--text); }
+    .finding-description { color: var(--text3); }
+    .finding-location { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; color: var(--muted); white-space: nowrap; }
+
+    .sess-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 2px; }
+    .sess-head h3 { font-size: 13px; font-weight: 650; margin: 0; letter-spacing: -0.01em; color: var(--text); }
+    .sess-note { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; color: var(--muted); }
+
+    .session-row { display: grid; grid-template-columns: 92px 1fr 70px 62px; gap: 12px; align-items: center; padding: 7px 12px; border: 1px solid var(--border); border-radius: 7px; margin-bottom: 7px; font-size: 11.5px; }
+    .session-row > span:last-child { text-align: right; color: var(--text3); font-variant-numeric: tabular-nums; }
+    .session-bar { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+    .session-bar span { display: block; height: 100%; background: var(--muted); }
+    .session-row.is-current .session-bar span { background: var(--bl); }
+
+    .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+
+    /* The panel header strip every L1/L2 stage body shares — title + the
+       selected stage's own recorded outcome (see panelHeaderHtml/D15) on the
+       left, the status pill on the right. The design's own padding: this is
+       the panel's topmost section, so it alone carries the card's top inset. */
+    .l2-panel-header {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap;
+      padding: 22px clamp(18px, 2.4vw, 26px) 0;
+    }
+    .l2-panel-header-text { min-width: 0; }
+    .l2-panel-title { font-size: 16px; font-weight: 800; letter-spacing: -0.01em; }
+    .l2-panel-subtitle { font-size: 13px; color: var(--text3); margin-top: 4px; }
+    .l2-panel-pill { flex: none; padding: 5px 11px; border-radius: 999px; font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+
+    /* The slot every stage panel's middle content sits in, between the
+       header above and the full-bleed footer below (see l2BodyHtml) — the
+       design's own uneven rhythm continued: 0 bottom padding, since a real
+       footer always supplies its own margin-top next. `:last-child` (a
+       panel with no footer — nothing dispatched yet) closes the card off
+       properly instead of leaving its content flush against the border. */
+    .l2-panel-body {
+      display: flex; flex-direction: column; gap: 14px;
+      padding: 18px clamp(18px, 2.4vw, 26px) 0;
+    }
+    .l2-panel-body:last-child { padding-bottom: 20px; }
+
+    /* The full-bleed footer band every stage panel ends on (see
+       panelFooterHtml) — reaches the panel card's own edges and bottom
+       corners, unlike the body above it. `.l2-panel`'s own 1px border sits
+       inside its (border-box) content edge, so a plain 0-margin child would
+       land 1px short of the card's true outer edge on the left/right/bottom
+       — the -1px bleed on those three sides cancels exactly that, which is
+       also why this radius is 17px, one more than the panel's own 16px. */
+    .detail-panel-footer {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      margin: 20px -1px -1px; padding: 16px clamp(18px, 2.4vw, 26px);
+      border-top: 1px solid var(--border); background: var(--surface2);
+      border-radius: 0 0 17px 17px;
+    }
+    /* `display:contents` on the two slot wrappers unwraps them from layout —
+       their buttons become direct flex items of the footer itself (so
+       flex-wrap and gap apply to the buttons, not to two enclosing divs) —
+       while the class still scopes which treatment applies to which button,
+       with no change needed at any of stageCta/skipCta/panelFooterHtml's
+       other callers. */
+    .l2-footer-primary, .l2-footer-secondary { display: contents; }
+    .l2-footer-primary .btn {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      flex: 1 1 auto; min-width: 160px; padding: 11px 18px; border-radius: 10px;
+      background: var(--ink); border-color: var(--ink); color: var(--bg);
+      font-size: 13px; font-weight: 700;
+    }
+    .l2-footer-primary .btn:hover { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+    .l2-footer-secondary .btn {
+      flex: 1 1 auto; min-width: 140px; text-align: center;
+      padding: 11px 16px; border-radius: 10px;
+      background: var(--surface); border: 1px solid var(--border); color: var(--text2);
+      font-size: 13px; font-weight: 600;
+    }
+    .l2-footer-secondary .btn:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* The React tab bar's account row and standup button portal into these.
+       display: contents keeps the portalled button the
+       direct flex child of its old parent, so layout is unchanged. */
+    .sidebar-account-slot,
+    .standup-slot { display: contents; }

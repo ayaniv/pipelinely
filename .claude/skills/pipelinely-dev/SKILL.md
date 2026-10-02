@@ -18,13 +18,20 @@ If the slug matches `<parent>-m<N>` (a milestone child):
 
 If the slug does **not** match `<parent>-m<N>`, treat it as an ordinary flat task. Skip the dependency check. If a `tech-design.md` already exists at this slug (written by `pipelinely-planning`), reuse it as the source of the implementation plan — **this is the common case**: for a flat task, `pipelinely-dev` is invoked on the exact same slug `pipelinely-planning` already used, not a new one.
 
-**Weekly-focus check — only when `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>` doesn't exist yet at all** (a brand-new flat task dispatched straight to dev, skipping `pipelinely-planning` entirely — a milestone child or a flat task continuing an existing dir was already gated when its parent/earlier stage was dispatched, so don't repeat this for those): read `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/WEEKLY_FOCUS`. If empty or missing, skip this check. If it has content and the task doesn't obviously fit that focus, **stop and ask the developer to confirm** — run it anyway, or backlog it instead (in `orchestrator-prompt.md`'s Backlog Entry format, tagged with this task's repo, which is known at this point). Don't silently proceed and don't silently backlog it either.
+**Weekly-focus check — only when `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>` doesn't exist yet at all** (a brand-new flat task dispatched straight to dev, skipping `pipelinely-planning` entirely — a milestone child or a flat task continuing an existing dir was already gated when its parent/earlier stage was dispatched, so don't repeat this for those): read `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/WEEKLY_FOCUS`. If empty or missing, skip this check. If it has content and the task doesn't obviously fit that focus, **stop and ask the developer to confirm** — run it anyway, or backlog it instead (in `orchestrator-prompt.md`'s Backlog Entry format, tagged with this task's repo, which is known at this point). Don't silently proceed and don't silently backlog it either. Then run `orchestrator-prompt.md`'s **Onboarding offer** for this task's repo (one line at most; never blocks the dispatch). Only this brand-new flat-task branch does — never a milestone child, and never ahead of the `needs:` gate above.
 
-Before writing anything, check whether `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>` already exists. If it does and `STATUS` reads `done`, this is a re-dispatch — append a `## ⚠️ NEW REQUEST (<date>)` section to its `TASK.md`, retire the old session (`tmux kill-session -t =worker-<slug> 2>/dev/null; exit 0`), reset `STATUS` to `working`. If it exists with any other `STATUS` (e.g. `waiting: plan ready for review` from `pipelinely-planning`, or `waiting: plan reviewed, ready for dev` from `pipelinely-plan-review`), that's expected for a flat task continuing the pipeline — proceed.
+Before writing anything, check whether `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>` already exists. If it does and `STATUS` reads `done`, this is a re-dispatch — append a `## ⚠️ NEW REQUEST (<date>)` section to its `TASK.md`, record the new words with `scripts/write-intent.sh --amend --source "NEW REQUEST <date>"` (or `--create` if the dir has no `INTENT.md` yet; Step 2's heredoc form), retire the old session (`tmux kill-session -t =worker-<slug> 2>/dev/null; exit 0`), reset `STATUS` to `working`. If it exists with any other `STATUS` (e.g. `waiting: plan ready for review` from `pipelinely-planning`, or `waiting: plan reviewed, ready for dev` from `pipelinely-plan-review`), that's expected for a flat task continuing the pipeline — proceed.
 
 **Separately, check whether the worktree already exists**, regardless of milestone-vs-flat: `[ -d "${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>" ]`. This is what actually decides new-vs-reuse in Steps 2-3 below — a milestone child's worktree never exists yet (first dispatch for that exact slug), so it's always new; a flat task's worktree was already created by `pipelinely-planning`, so it must be reused, never re-created. Do not assume "milestone = new, flat = new" — check the filesystem, since a milestone slug re-dispatched after a `git worktree remove` (post-merge cleanup) would also need a new one, and a flat task always needs a reuse.
 
 ## Step 2 — Write `TASK.md`
+
+**First, only when the task dir is new, record the intent, before writing `STATUS` and before the tab opens.** Run `bash ~/Dev/pipelinely/scripts/write-intent.sh --tasks-dir <resolved-tasks-dir> --slug <slug> --create --title "<title>" --repo <repo> --created-by pipelinely-dev --source <milestone|free-text>`, with the request on stdin through a quoted `<<'INTENT_EOF'` heredoc, verbatim:
+- A `<parent>-m<N>` milestone child uses `--source milestone` with empty stdin (or the developer's own words, if they gave any). The script copies the milestone's bullet from the parent's `tech-design.md` itself.
+- A brand-new flat task dispatched straight to dev uses `--source free-text` with what the developer asked for.
+- A flat task continuing from `pipelinely-planning` already has an `INTENT.md`, so skip the call.
+
+Handle its exit codes as `orchestrator-prompt.md` step 3 defines them (exit 3 means already recorded, carry on; exit 1 or 2 means show the stderr line and stop with no `STATUS` and no tab).
 
 Write `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>/TASK.md`:
 
@@ -49,7 +56,7 @@ Work test-driven. Do not mark STATUS done when finished — see Status reporting
 4. Once green, open a PR.
 
 ## Engineering Constraints (required)
-Before writing `TASK.md`, read `${REPOS_DIR:-$HOME/Dev}/pipelinely/docs/engineering-constraints.md` and copy its bullet list verbatim into this section — that file is the single source of truth for what every dispatch expects; don't hardcode the bullets here or let this copy drift from it.
+Before writing `TASK.md`, read `$HOME/Dev/pipelinely/docs/engineering-constraints.md` and copy its bullet list verbatim into this section — that file is the single source of truth for what every dispatch expects; don't hardcode the bullets here or let this copy drift from it.
 
 ## Output
 The PR. `DEV_URL`.

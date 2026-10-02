@@ -6,7 +6,9 @@ export type MergeBlocker =
 
 export type MergeReadiness =
   | { ready: true; headSha: string; headRefName: string; isCrossRepository: boolean }
-  | { ready: false; blockers: MergeBlocker[] }
+  // headRefName survives a refusal so callers can tell whose PR was refused
+  // (null only when the read itself was malformed).
+  | { ready: false; blockers: MergeBlocker[]; headRefName: string | null }
 
 // One `gh pr view` read carries everything the gate needs: conflict-free
 // (mergeable/mergeStateStatus), green (statusCheckRollup), and the exact
@@ -23,6 +25,7 @@ const FAILED_STATUS_STATES = new Set(['FAILURE', 'ERROR'])
 const MALFORMED: MergeReadiness = {
   ready: false,
   blockers: [{ kind: 'malformed', detail: "gh pr view returned data in an unexpected shape — refusing rather than guessing it's ready" }],
+  headRefName: null,
 }
 
 // Pure. Takes `unknown` (parsed gh JSON, or literally anything checkMergeReadiness
@@ -88,7 +91,7 @@ export function evaluateMergeReadiness(prView: unknown): MergeReadiness {
     }
   }
 
-  if (blockers.length > 0) return { ready: false, blockers }
+  if (blockers.length > 0) return { ready: false, blockers, headRefName: v.headRefName }
   return { ready: true, headSha: v.headRefOid, headRefName: v.headRefName, isCrossRepository: v.isCrossRepository }
 }
 
@@ -97,6 +100,12 @@ export function evaluateMergeReadiness(prView: unknown): MergeReadiness {
 // (each splits this back apart on '\n').
 export function formatMergeBlockers(blockers: MergeBlocker[]): string {
   return blockers.map((b) => b.detail).join('\n')
+}
+
+// The wording shared by the route's 409 `error` and the CLI's stderr when the
+// resolved PR belongs to some other branch than the task's own.
+export function formatBranchMismatch(mismatch: { prNumber: string; expectedBranch: string; actualBranch: string }): string {
+  return `PR #${mismatch.prNumber} is for branch ${mismatch.actualBranch}, not this task's branch ${mismatch.expectedBranch} — refusing to merge the wrong PR`
 }
 
 const MERGEABILITY_READ_ATTEMPTS = 3

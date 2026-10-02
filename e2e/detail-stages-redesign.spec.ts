@@ -12,9 +12,9 @@ import { test, expect } from '@playwright/test'
 //
 // dev-ready is the fixture used throughout: a flat task. Its stepper folds
 // Plan Review into Planning, CR fixes into CR and QA fixes into QA (see
-// STAGE_CHAIN_GROUPS/renderStageChain in public/index.html), so its visible
+// STAGE_CHAIN_GROUPS in web/src/pipelineStages.ts), so its visible
 // chain has five nodes — Planning, Dev, CR, QA, Merge — not eight, and it
-// defaults to the Dev tab on a fresh open (see defaultL2Tab), which is node
+// defaults to the Dev tab on a fresh open (see defaultStageTab), which is node
 // 2 of 5 — far enough from either end that prev and next are both live.
 //
 // Fixture data lives in e2e/fixtures/tasks (see playwright.config.ts).

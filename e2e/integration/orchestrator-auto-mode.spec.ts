@@ -386,15 +386,16 @@ test.describe('settings scope — a global default with per-task overrides', () 
       // Written against the plan's original header toggle (`auto-mode-toggle`,
       // `data-auto-mode`), before e0c8b73 replaced it with a real /settings
       // page — this spec was quarantined at the time and never updated. The
-      // switch (`settings-auto-mode-switch`) is a plain checkbox, always
-      // present in the DOM (its parent `#settings-page` is only visually
-      // `hidden`), so `checked` is the state to assert, not a data attribute
-      // that no longer exists.
-      await page.goto('/')
+      // switch (`settings-auto-mode-switch`) is a plain checkbox, so
+      // `checked` is the state to assert, not a data attribute that no longer
+      // exists. Since react-migration M6 the Settings page is mounted by its
+      // route rather than sitting hidden in the static markup, so this loads
+      // /settings itself instead of `/`.
+      await page.goto('/settings')
       await expect(page.getByTestId('settings-auto-mode-switch')).toBeChecked()
 
       await setGlobalAutoMode(request, false)
-      await page.goto('/')
+      await page.goto('/settings')
       await expect(page.getByTestId('settings-auto-mode-switch')).not.toBeChecked()
     })
   })

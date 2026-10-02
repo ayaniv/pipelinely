@@ -46,6 +46,9 @@ export async function startCanonicalServer(): Promise<string> {
       REPOS_DIR,
       WORKTREES_DIR,
       PORT: '0',
+      // Never inherit a wider bind from the developer's shell: a fixture
+      // server serving fixture data must not become network-reachable.
+      PIPELINELY_HOST: '127.0.0.1',
     },
     reject: false, // a kill() on teardown must not surface as an unhandled rejection
   })
@@ -78,9 +81,11 @@ async function waitForBoundUrl(proc: ResultPromise, timeoutMs = 20_000): Promise
   const deadline = Date.now() + timeoutMs
   try {
     while (Date.now() < deadline) {
-      const match = stdout.match(/Pipelinely running at (http:\/\/localhost:\d+)/)
+      const match = stdout.match(/Pipelinely running at http:\/\/localhost:(\d+)/)
       if (match) {
-        const baseUrl = match[1]
+        // 127.0.0.1, not the logged "localhost": the server binds IPv4
+        // loopback only, and Node's fetch may try ::1 first.
+        const baseUrl = `http://127.0.0.1:${match[1]}`
         const res = await fetch(`${baseUrl}/api/tasks`).catch(() => null)
         if (res?.ok) return baseUrl
       }

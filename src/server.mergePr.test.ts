@@ -66,3 +66,22 @@ it('still responds 500 (not a hung request) when refreshTasks fails again inside
   vi.mocked(parseAllTasks).mockReset()
   logSpy.mockRestore()
 })
+
+it('refuses with 409 and a clear message when mergeTask reports the PR belongs to a different branch', async () => {
+  mergeTaskMock.mockResolvedValueOnce({
+    outcome: 'branch-mismatch',
+    prNumber: '119',
+    expectedBranch: `claude/${slug}`,
+    actualBranch: 'claude/some-other-task',
+  })
+  const logSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+  const res = await fetch(`http://127.0.0.1:${handle.boundPort}/merge-pr/${slug}`, { method: 'POST' })
+
+  expect(res.status).toBe(409)
+  const body = await res.json()
+  expect(body.error).toContain('PR #119')
+  expect(body.error).toContain('claude/some-other-task')
+  expect(logSpy).toHaveBeenCalled()
+  logSpy.mockRestore()
+})

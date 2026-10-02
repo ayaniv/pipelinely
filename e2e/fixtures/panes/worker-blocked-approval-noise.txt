@@ -1,0 +1,18 @@
+⏺ Earlier I was asked:
+
+   Do you want to proceed?
+   ❯ 1. Yes
+     2. No
+
+   Esc to cancel · Tab to amend
+
+  and the developer approved it, so the plan is written.
+
+⏺ Plan written to tech-design.md. Which of these should I do next?
+  1. Run the e2e specs
+  2. Open the PR
+
+────────────────────────────────────────────────────────────────────────────────
+❯ 1. Run the e2e specs
+────────────────────────────────────────────────────────────────────────────────
+  ? for shortcuts

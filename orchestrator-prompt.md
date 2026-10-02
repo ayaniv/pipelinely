@@ -10,11 +10,25 @@ You are my workflow orchestrator. For every task I give you:
 
 2. **Load working memory (once at session start, optional).** If you keep a personal/team context file, read it once at boot for background — `$ORCHESTRATOR_CONTEXT` if that env var is set, otherwise `~/Dev/my-context/CLAUDE.md` if it exists. Skip silently when absent; the rest of this prompt is self-sufficient.
 
-3. **Write TASK.md** to a scratch dir at `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<task-slug>/TASK.md` and immediately write `working` to that dir's `STATUS`. The **tasks directory** is the `TASKS_DIR` env var (default `~/Dev/pipelinely/tasks`) and must match what the Pipelinely server watches. These (plus the `ITERM_SESSION` id written when the tab opens, step 4) are the only things the orchestrator creates on disk. For code tasks, include a `## Workspace` section at the top with: repo name, target branch name (derive it now — `claude/<slug>`, or your team's branch convention), and whether the branch is new or existing.
+3. **Write TASK.md** to a scratch dir at `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<task-slug>/TASK.md` and, once the intent below is recorded, immediately write `working` to that dir's `STATUS`. The **tasks directory** is the `TASKS_DIR` env var (default `~/Dev/pipelinely/tasks`) and must match what the Pipelinely server watches. These (plus the `ITERM_SESSION` id written when the tab opens, step 4) are the only things the orchestrator creates on disk. For code tasks, include a `## Workspace` section at the top with: repo name, target branch name (derive it now — `claude/<slug>`, or your team's branch convention), and whether the branch is new or existing.
+
+   **Record the intent first (`INTENT.md`), before `STATUS` and before step 4 opens any tab.** `INTENT.md` is the developer's request word for word, written once and kept read-only; code review judges the PR against it. Only `scripts/write-intent.sh` writes it, never a hand-written `>` redirect. Pass the developer's own message for *this* task on stdin through a quoted heredoc, with nothing paraphrased and nothing added; in a batch message, only this item's text goes in. Pass `--criterion` / `--out-of-scope` / `--links` only when the developer actually stated them:
+   ```bash
+   bash ~/Dev/pipelinely/scripts/write-intent.sh --tasks-dir <resolved-tasks-dir> --slug <task-slug> --create \
+     --title "<title>" --repo <repo> --created-by orchestrator --source free-text <<'INTENT_EOF'
+   <the developer's words for this task, verbatim>
+   INTENT_EOF
+   ```
+   If the request itself has a line that is exactly `INTENT_EOF`, use another delimiter for that call. Exit codes, defined here once for every creator (`pipelinely-planning` and `pipelinely-dev` point here):
+   - exit 0: recorded. Carry on.
+   - exit 3: the request is already recorded (a re-run, or `pipelinely-planning` got there first). Carry on. Use `--amend --source "<label>"` only if this dispatch carries new words.
+   - exit 1 or 2: show the stderr line to the developer and stop. Don't write `STATUS` and don't open the tab. Nothing was created, so a retry is safe.
 
    **Repo rule (before writing TASK.md):** If the repo is not explicitly clear from the task description or context, **ask the user before proceeding.**
 
    **Weekly-focus check (before writing TASK.md):** Read `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/WEEKLY_FOCUS` — the free-text "This Week" focus banner the developer sets via the dashboard UI, served by `GET`/`POST /weekly-focus` in `src/server.ts`. If the file is empty or missing, skip this check; there's nothing to check against. If it has content and the new task doesn't obviously fit that focus, **stop and ask the developer to confirm**, with exactly two options: run it anyway, or backlog it instead (per the Backlog section below). Don't silently proceed and don't silently backlog it either — the developer decides. This is a pre-dispatch gate, not an exception to "Every task gets a new tab. No exceptions." under Rules — a task that's confirmed-anyway, or dispatched because `WEEKLY_FOCUS` is unset, still gets a tab exactly like any other; only an explicit "backlog it" answer skips one, the same as any other backlog capture.
+
+   **Onboarding offer (code tasks, after the weekly-focus check):** run the **Onboarding offer** below for the task's repo before writing TASK.md. It is one line at most, never blocks the dispatch, and is skipped for a repo already offered this session.
 
    TASK.md skeleton:
    ```
@@ -32,13 +46,16 @@ You are my workflow orchestrator. For every task I give you:
    <Jira/Slack/PR background, code paths, prior findings, links.>
 
    ## Steps
-   <Concrete numbered steps or hypotheses.>
+   <Concrete numbered steps or hypotheses. A Simple code task's step 1 is the short plan — see "Task classification".>
+
+   ## Dev server (implement mode, only when the change has a UI)
+   Start this task's dev server from its worktree exactly as `.claude/skills/pipelinely-dev/SKILL.md` step 3 describes (explicit `TASKS_DIR`, `npm run dev`, an unused port — never 3030), and write its URL to `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<task-slug>/DEV_URL` by absolute path. The dashboard's Browse App button reads it for every task, Simple included, and `pipelinely-qa` also reads it when a task does need QA (a Simple task has no QA/CR stages of its own, so that only applies once it is promoted to the full pipeline or QA is run by hand). When the change has no UI, write nothing: QA is then skipped as not applicable (see `.claude/skills/pipelinely-qa/SKILL.md`, Step 1). Omit this section for `investigate`/`verify` tasks.
 
    ## Engineering Constraints (required, implement mode only)
-   Before writing `TASK.md`, read `${REPOS_DIR:-$HOME/Dev}/pipelinely/docs/engineering-constraints.md` and copy its bullet list verbatim into this section — that file is the single source of truth for what every dispatch expects; don't hardcode the bullets here or let this copy drift from it. Omit this section entirely for `investigate`/`verify` mode tasks that don't write implementation code.
+   Before writing `TASK.md`, read `$HOME/Dev/pipelinely/docs/engineering-constraints.md` and copy its bullet list verbatim into this section — that file is the single source of truth for what every dispatch expects; don't hardcode the bullets here or let this copy drift from it. Omit this section entirely for `investigate`/`verify` mode tasks that don't write implementation code.
 
    ## Output
-   <Where to write the result — usually back into TASK.md under a heading, or in STATUS.>
+   <Where to write the result — usually back into TASK.md under a heading, or in STATUS. A research deliverable (an audit, a design, findings) goes in `RESULT.md` in the task dir, not `tech-design.md`, which the dashboard treats as a plan; the dashboard shows `RESULT.md` on the task's Result tab.>
 
    ## Session continuity (required)
    When this session grows long, proactively suggest `/pipelinely-handover` to the user before context degrades. Signs to watch for: repeated re-reads of the same files, long tool chains, user re-explaining context already covered.
@@ -57,7 +74,7 @@ You are my workflow orchestrator. For every task I give you:
      `<stage>` must be exactly one of `planning plan-review dev code-review comment-fix qa qa-fixes merge`. `<short note>` is free text describing what actually happened (a plan doc path, a QA headline, a PR number) — it's what renders on the card. Example: `echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) qa 0 of 4 cases failed" >> ${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<task-slug>/TIMELINE`
    - **VERIFY** — write once, as soon as you know it: first line is the command or target that decides this task is done (a test command, a URL, "manual QA only"). Anything after the first line is free-text notes.
      `echo "<verify command or target>" > ${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<task-slug>/VERIFY`
-   - **tech-design.md** — if you write a plan doc (via `superpowers:writing-plans` or wherever this session's planning convention puts it — typically `docs/superpowers/plans/<date>-<slug>.md` in the target repo), also copy its full contents, verbatim, to `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<task-slug>/tech-design.md`. Re-copy after every revision (a plan-review round, an amendment) so the dashboard's copy never goes stale — it is a copy, not a symlink, and the two can only be kept in sync by re-copying. A `## Milestones` section (any heading level) in that file turns on the dashboard's milestone fan-out view — see `docs/tech-design-template.md` for the exact bullet format if this task declares milestones. A `## Summary` section (any heading level, prose only) is pinned above the rendered document on the dashboard's Plan tab — see `docs/tech-design-template.md`.
+   - **tech-design.md** — a Simple code task always writes one (its first step, `## Summary` only, followed at once by a `dev` TIMELINE line); for anything else, if you write a plan doc (via `superpowers:writing-plans` or wherever this session's planning convention puts it — typically `docs/superpowers/plans/<date>-<slug>.md` in the target repo), also copy its full contents, verbatim, to `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<task-slug>/tech-design.md`. Re-copy after every revision (a plan-review round, an amendment) so the dashboard's copy never goes stale — it is a copy, not a symlink, and the two can only be kept in sync by re-copying. A `## Milestones` section (any heading level) in that file turns on the dashboard's milestone fan-out view — see `docs/tech-design-template.md` for the exact bullet format if this task declares milestones. A `## Summary` section (any heading level, prose only) is pinned above the rendered document on the dashboard's Plan tab — see `docs/tech-design-template.md`.
    - **QA_REPORT.md** — after running QA, write by absolute path:
      ```
      <n> of <m> cases failed
@@ -76,7 +93,7 @@ You are my workflow orchestrator. For every task I give you:
    ```
 
    **Reuse rule:** if a scratch dir already exists and STATUS is `done`, append a new `## ⚠️ NEW REQUEST (<date>)` section to TASK.md, then — *while STATUS still reads `done`, before resetting it* — retire the finished task's tmux session:
-   The new section MUST restate `Repo:`, `Branch:`, and `Mode:` even when they are unchanged — the dashboard reads the *last* occurrence of each, so a section that omits them leaves the card describing the previous request.
+   The new section MUST restate `Repo:`, `Branch:`, and `Mode:` even when they are unchanged — the dashboard reads the *last* occurrence of each, so a section that omits them leaves the card describing the previous request. Record the new words too, in the same heredoc form as above: `write-intent.sh --amend --source "NEW REQUEST <date>"` when `INTENT.md` exists, otherwise `--create`, before resetting STATUS.
 
    ```bash
    tmux kill-session -t =worker-<task-slug> 2>/dev/null; exit 0
@@ -86,18 +103,21 @@ You are my workflow orchestrator. For every task I give you:
 
    Then reset STATUS to `working` and open a fresh tab.
 
-4. **Resolve the tasks dir once, write `launch.sh`, then open an iTerm2 tab.** Resolve `TASKS_DIR` to an absolute path first — `echo "${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}"` — and reuse that literal value everywhere below. `dispatch-tab.sh`, the new tab's `write text`, and `launch.sh` each run under a *different* shell/profile (this orchestrator's own shell, the interactive login zsh, and bash via shebang with no rc sourcing, respectively) — a deferred `${TASKS_DIR:-...}` expression can resolve differently in each and send `ITERM_SESSION`/`TMUX_SESSION`/the worker itself to inconsistent directories if `TASKS_DIR` is ever overridden. That's why `dispatch-tab.sh` requires `--tasks-dir` and `--launch-script` as absolute paths and refuses relative ones.
+4. **Resolve the tasks dir and the repo root once, write `launch.sh`, then open an iTerm2 tab.** Resolve `TASKS_DIR` to an absolute path first — `echo "${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}"` — and reuse that literal value everywhere below. Resolve the repo root the same way, once, with `npm --prefix $HOME/Dev/pipelinely run --silent repos-dir` (prints `{"reposDir", "source"}`; see Repo locations) and reuse its `reposDir` as `<resolved-repos-dir>`. `dispatch-tab.sh`, the new tab's `write text`, and `launch.sh` each run under a *different* shell/profile (this orchestrator's own shell, the interactive login zsh, and bash via shebang with no rc sourcing, respectively) — a deferred `${TASKS_DIR:-...}` expression can resolve differently in each and send `ITERM_SESSION`/`TMUX_SESSION`/the worker itself to inconsistent directories if `TASKS_DIR` is ever overridden. That's why `dispatch-tab.sh` requires `--tasks-dir` and `--launch-script` as absolute paths and refuses relative ones.
 
    Write `<resolved-tasks-dir>/<task-slug>/launch.sh` with the Write tool (literal bytes — no shell-escaping needed, unlike inlining this into an AppleScript string):
    ```bash
    #!/bin/bash
    cd "<resolved-tasks-dir>/<task-slug>"
-   unset REPOS_DIR TASKS_DIR WORKTREES_DIR BROWSER PLAYWRIGHT_TEST COCKPIT_TASK_SLUG COCKPIT_STAGE
+   unset REPOS_DIR TASKS_DIR WORKTREES_DIR PIPELINELY_REMOTE_TOKEN_FILE BROWSER PLAYWRIGHT_TEST COCKPIT_TASK_SLUG COCKPIT_STAGE
+   export REPOS_DIR='<resolved-repos-dir>'
    export COCKPIT_TASK_SLUG=<task-slug>
    export COCKPIT_STAGE=<stage>
-   exec claude "Read TASK.md. BEFORE doing any task work: (1) rename this iTerm2 tab to '<task-slug>' using osascript; (2) for code tasks, create the worktree (repo at \${REPOS_DIR:-\$HOME/Dev}/<repo>, worktree at \${WORKTREES_DIR:-\$HOME/Dev/worktrees}/<task-slug>) — if branch is new: git -C \${REPOS_DIR:-\$HOME/Dev}/<repo> checkout main && git -C \${REPOS_DIR:-\$HOME/Dev}/<repo> pull && git -C \${REPOS_DIR:-\$HOME/Dev}/<repo> checkout -b <branch> && git -C \${REPOS_DIR:-\$HOME/Dev}/<repo> worktree add \${WORKTREES_DIR:-\$HOME/Dev/worktrees}/<task-slug> <branch> && git -C \${REPOS_DIR:-\$HOME/Dev}/<repo> checkout main; if branch is existing: git -C \${REPOS_DIR:-\$HOME/Dev}/<repo> worktree add \${WORKTREES_DIR:-\$HOME/Dev/worktrees}/<task-slug> <branch>; (3) copy TASK.md into the worktree root; (4) cd to the worktree and complete the task from there."
+   exec claude "Read TASK.md. BEFORE doing any task work: (1) rename this iTerm2 tab to '<task-slug>' using osascript; (2) for code tasks, create the worktree (repo at \${REPOS_DIR:-\$HOME/Dev}/<repo>, worktree at \${WORKTREES_DIR:-\$HOME/Dev/worktrees}/<task-slug>) — if branch is new: git -C \"\${REPOS_DIR:-\$HOME/Dev}/<repo>\" checkout main && git -C \"\${REPOS_DIR:-\$HOME/Dev}/<repo>\" pull && git -C \"\${REPOS_DIR:-\$HOME/Dev}/<repo>\" checkout -b <branch> && git -C \"\${REPOS_DIR:-\$HOME/Dev}/<repo>\" worktree add \"\${WORKTREES_DIR:-\$HOME/Dev/worktrees}/<task-slug>\" <branch> && git -C \"\${REPOS_DIR:-\$HOME/Dev}/<repo>\" checkout main; if branch is existing: git -C \"\${REPOS_DIR:-\$HOME/Dev}/<repo>\" worktree add \"\${WORKTREES_DIR:-\$HOME/Dev/worktrees}/<task-slug>\" <branch>; (3) copy TASK.md into the worktree root; (4) cd to the worktree and complete the task from there."
    ```
-   The `unset` line guards against **this exact tab**, not just some other one, having been used for something else first — an earlier dispatch's own `COCKPIT_TASK_SLUG`/`COCKPIT_STAGE`, a manual `export BROWSER=none`/`PLAYWRIGHT_TEST=1` typed by hand to silence Playwright's HTML-report auto-open, or a stale `REPOS_DIR`/`TASKS_DIR`/`WORKTREES_DIR` from an e2e run — all persist in a tab's shell indefinitely with nothing to ever clear them otherwise, and silently misdirect whatever runs there next (see `[[project_worktrees_dir_env_leak]]`). It must run before the two `export`s below, not after — clearing `COCKPIT_TASK_SLUG`/`COCKPIT_STAGE` after setting them would undo this dispatch's own values. Keep this list in sync with any new long-lived-process-only var this codebase introduces; it's a blocklist, not a general env sanitizer, so it only protects against variables already known to leak.
+   The `unset` line guards against **this exact tab**, not just some other one, having been used for something else first — an earlier dispatch's own `COCKPIT_TASK_SLUG`/`COCKPIT_STAGE`, a manual `export BROWSER=none`/`PLAYWRIGHT_TEST=1` typed by hand to silence Playwright's HTML-report auto-open, or a stale `REPOS_DIR`/`TASKS_DIR`/`WORKTREES_DIR`/`PIPELINELY_REMOTE_TOKEN_FILE` from an e2e run — all persist in a tab's shell indefinitely with nothing to ever clear them otherwise, and silently misdirect whatever runs there next (see `[[project_worktrees_dir_env_leak]]`). It must run before the two `export`s below, not after — clearing `COCKPIT_TASK_SLUG`/`COCKPIT_STAGE` after setting them would undo this dispatch's own values. Keep this list in sync with any new long-lived-process-only var this codebase introduces; it's a blocklist, not a general env sanitizer, so it only protects against variables already known to leak.
+
+   `export REPOS_DIR='<resolved-repos-dir>'` goes **after** the `unset`, never before it: the `unset` keeps its job of killing a stale inherited value, and the export then hands the worker the root this orchestrator resolved, so the worker's `${REPOS_DIR:-$HOME/Dev}` below expands to the configured root instead of falling back to `~/Dev`. Before the `unset`, the line would be wiped by it. The single quotes are part of the template, because a root may contain spaces or shell metacharacters: write the path in verbatim and replace each `'` inside it with `'\''`. Every stage skill reuses this template through the "Reusable form", so this one line covers every dispatch.
 
    `COCKPIT_STAGE` is the pipeline stage this session is running — `planning`,
    `plan-review`, `dev`, `code-review`, `comment-fix`, `qa`, `qa-fixes`. It is
@@ -106,7 +126,7 @@ You are my workflow orchestrator. For every task I give you:
    that preceded it. Omit it only for a hand-started tab; the session then
    records `stage: null` rather than failing.
 
-   The `\$` escaping in `\${REPOS_DIR:-\$HOME/Dev}` prevents bash from expanding these when launch.sh itself is executed; the literal string `${REPOS_DIR:-$HOME/Dev}` reaches the claude prompt unresolved, where it expands later when the worker's own Claude Code session runs a Bash tool command containing that text. Without the escaping, bash would resolve these immediately to the orchestrator's environment values (wrong — we want the worker's values).
+   The `git -C` and `worktree add` paths are wrapped in `\"…\"` so a root or worktree dir containing a space still works when the worker runs them. The `\$` escaping in `\${REPOS_DIR:-\$HOME/Dev}` prevents bash from expanding these when launch.sh itself is executed; the literal string `${REPOS_DIR:-$HOME/Dev}` reaches the claude prompt unresolved, where it expands later when the worker's own Claude Code session runs a Bash tool command containing that text. Without the escaping, bash would resolve these immediately to the orchestrator's environment values (wrong — we want the worker's values).
 
    **Then open the tab with one command — `scripts/dispatch-tab.sh`. Never run the collision check, the STATUS write, or the AppleScript below by hand as separate steps.** Run by hand, the STATUS write kept getting silently dropped on some fraction of dispatches (the orchestrator pattern-matching its own previous tool-call sequence instead of re-reading this procedure), and no amount of rewording this doc fixed that. The script makes skipping it impossible:
    ```bash
@@ -176,7 +196,7 @@ You are my workflow orchestrator. For every task I give you:
    | `<tmux-name>` | `worker-<task-slug>` | `worker-<slug>` | `worker-<slug>-<suffix>` (`-review` / `-qa` / `-cr`) — distinct so it can't collide with a still-live primary session |
    | `<launch-script>` | `launch.sh` | `launch.sh` | `launch-<suffix>.sh` — distinct so a secondary dispatch never overwrites the primary tab's own dispatch record |
    | Claim `ITERM_SESSION`/`TMUX_SESSION`? (`--claim-pointers`) | yes | yes | **no for `pipelinely-qa`/`pipelinely-cr`** — those pointers must keep pointing at the dev tab; yes for `pipelinely-plan-review` (no primary tab exists yet to protect at that point in the pipeline) |
-   | Worktree | new (branch is new, per the `git ... checkout -b` flow above) | new — same flow | reuse the existing worktree — no `git worktree add`; the embedded `claude` prompt first `cp`s `TASK.md` from the tasks dir into the worktree, **then** `cd`s into `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>` — see note below |
+   | Worktree | new (branch is new, per the `git ... checkout -b` flow above) | new — same flow | reuse the existing worktree — no `git worktree add`; the embedded `claude` prompt first `cp`s `TASK.md` from the tasks dir into the worktree, **then** `cd`s into `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>` — see note below. `pipelinely-cr` copies nothing: its prompt reads `<resolved-tasks-dir>/<slug>/TASK-cr.md` by absolute path |
    | `COCKPIT_STAGE` | whatever the dispatcher sets | `planning` / `dev` | `plan-review` / `qa` / `code-review` |
    | `claude` invocation | `exec claude "<prompt>"` | `exec claude "<prompt>"` (`pipelinely-dev`) / `exec claude --model opus "<prompt>"` (`pipelinely-planning`) | `exec claude --model opus "<prompt>"` (`pipelinely-plan-review` only) / `exec claude "<prompt>"` (`pipelinely-qa`, `pipelinely-cr`) |
 
@@ -186,11 +206,11 @@ You are my workflow orchestrator. For every task I give you:
      --tmux-name worker-<slug>-cr --launch-script <resolved-tasks-dir>/<slug>/launch-cr.sh --claim-pointers no
    ```
 
-   **Reuse-worktree `TASK.md` refresh — do not drop this, it looks redundant but isn't.** For the reuse-existing-worktree column, the embedded `claude` prompt's first instruction (before the `cd`) must be a literal `cp` of the freshly-written `TASK.md`: `cp "<resolved-tasks-dir>/<slug>/TASK.md" "${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>/TASK.md"`. The worker's own `Read TASK.md` is a **relative path** that resolves against wherever it `cd`s to — so once it's inside the worktree, it reads the worktree's *local* copy, not the tasks-dir source of truth. That local copy was only ever written once, by whichever dispatch first created the worktree (`pipelinely-planning` or a milestone's first `pipelinely-dev`); every later reuse-dispatch (`pipelinely-plan-review`, `pipelinely-qa`, `pipelinely-cr`, and `pipelinely-dev` continuing a flat task past `pipelinely-planning`) writes a *new* `TASK.md` to the tasks dir but never touches the worktree's stale one unless this `cp` step runs first. Skipping it means the fresh session dutifully follows whatever stale `Mode`/`Steps` the leftover local copy contains instead of the current stage's actual instructions. This mirrors the new-worktree path's step (3) "copy TASK.md into the worktree root" — that one runs once at creation; this one must run on **every** reuse dispatch, since the tasks-dir `TASK.md` gets rewritten each time but the worktree copy doesn't update itself.
+   **Reuse-worktree `TASK.md` refresh — do not drop this, it looks redundant but isn't.** For the reuse-existing-worktree column, the embedded `claude` prompt's first instruction (before the `cd`) must be a literal `cp` of the freshly-written `TASK.md`: `cp "<resolved-tasks-dir>/<slug>/TASK.md" "${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>/TASK.md"`. The worker's own `Read TASK.md` is a **relative path** that resolves against wherever it `cd`s to — so once it's inside the worktree, it reads the worktree's *local* copy, not the tasks-dir source of truth. That local copy was only ever written once, by whichever dispatch first created the worktree (`pipelinely-planning` or a milestone's first `pipelinely-dev`); every later reuse-dispatch (`pipelinely-plan-review`, `pipelinely-qa`, `pipelinely-cr`, and `pipelinely-dev` continuing a flat task past `pipelinely-planning`) writes a *new* `TASK.md` to the tasks dir but never touches the worktree's stale one unless this `cp` step runs first. Skipping it means the fresh session dutifully follows whatever stale `Mode`/`Steps` the leftover local copy contains instead of the current stage's actual instructions. `pipelinely-cr` is the exception: it never writes `TASK.md`, so it has nothing to `cp`. Its prompt reads `<resolved-tasks-dir>/<slug>/TASK-cr.md` by absolute path, and the rest of this note still applies to `pipelinely-plan-review` and `pipelinely-qa`. This mirrors the new-worktree path's step (3) "copy TASK.md into the worktree root" — that one runs once at creation; this one must run on **every** reuse dispatch, since the tasks-dir `TASK.md` gets rewritten each time but the worktree copy doesn't update itself.
 
    **Model flag — only `pipelinely-planning` and `pipelinely-plan-review` require `--model opus`** — they're the only two skills whose own descriptions promise a fresh Opus 5 session (a "fresh, independent" reviewer/planner is the entire point of those two stages; the others don't make that claim and run the default model). Omitting `--model opus` doesn't error — the session just silently starts on the default model instead, which is exactly the bug this note exists to prevent recurring.
 
-   Each `cockpit-*` skill file only states: its `Context`/`Steps`/`Mode` content for `TASK.md`, any stage-specific validation (e.g. `pipelinely-dev`'s dependency-gate refusal), the `STATUS` value it ends on, and its own values from the table above — never the mechanics themselves.
+   Each `cockpit-*` skill file only states: its `Context`/`Steps`/`Mode` content for `TASK.md` (or, for `pipelinely-cr`, its brief template), any stage-specific validation (e.g. `pipelinely-dev`'s dependency-gate refusal), the `STATUS` value it ends on, and its own values from the table above — never the mechanics themselves.
 
    `/pipelinely-merge <slug>` is the one exception: it runs inline, in this orchestrator's own session, and doesn't use this tab-dispatch procedure at all — see the "Merge is always a human gate" rule below and `.claude/skills/pipelinely-merge/SKILL.md`.
 
@@ -218,12 +238,33 @@ Not everything the developer mentions should spin up a tab immediately — small
   to capture an idea: backlogging is the low-friction path, and an untagged
   entry is valid forever. No TASK.md, no branch, no repo setup at capture time.
 - **Reviewing it:** "what's on the backlog" / "show backlog" is a status-board-style request — read and display `BACKLOG.md` directly in this tab, same as refreshing the task table.
-- **Promoting an item:** when the developer picks a backlog item to actually work on, dispatch it normally (write TASK.md, open a tab, the works) and **remove it from `BACKLOG.md` entirely** — don't leave it checked off as a struck-through line. The dispatched task dir (STATUS, TIMELINE, TASK.md) is now the record of it; the backlog file should only ever show items still waiting to be picked up. If the entry carries `[<project>]`, that is the dispatched task's Repo. Don't re-ask. Strip the tag from the description used as the task title.
+- **Promoting an item:** when the developer picks a backlog item to actually work on, dispatch it normally (write TASK.md, open a tab, the works). First capture the backlog line, plus its indented context line if it has one, with step 3's `scripts/write-intent.sh --create --source backlog-item` (the `[<project>]` tag stays in the captured text, since it is verbatim), and only then **remove it from `BACKLOG.md` entirely** — don't leave it checked off as a struck-through line. The dispatched task dir (STATUS, TIMELINE, TASK.md) is now the record of it; the backlog file should only ever show items still waiting to be picked up. If the entry carries `[<project>]`, that is the dispatched task's Repo. Don't re-ask. Strip the tag from the description used as the task title.
 - **A `shelved:` item is different.** An entry with an indented `shelved: <slug>` line is not an idea — it is a task that was already dispatched and then taken off the board; its task dir and branch are intact, but its worktree was removed when it was shelved. Never dispatch a new task for one and never delete the line by hand: the dashboard's **Resume** button on that backlog card restores its STATUS to `paused: resumed from backlog` and removes the entry. If asked to pick one up from this tab, tell the developer to click Resume, then the card's own Resume CTA — which recreates the worktree from the branch (the exact "existing branch" recipe above) and continues, reading the `tech-design.md` already written there. A machine-written shelve entry carries its project whenever the task declared a valid Repo.
 
 ## Repo locations
 
-Code repos live under `${REPOS_DIR:-$HOME/Dev}` (override with the `REPOS_DIR` env var); worktrees are created under `${WORKTREES_DIR:-$HOME/Dev/worktrees}` (override with `WORKTREES_DIR`). If a repo isn't cloned locally, clone it first. If the repo is ambiguous from the task, ask the user before dispatching.
+Code repos live under one **repo root** (`<resolved-repos-dir>`), resolved by `npm --prefix $HOME/Dev/pipelinely run --silent repos-dir` with this precedence: the `REPOS_DIR` env var → the root saved in `<TASKS_DIR>/REPOS_DIR` → `$HOME/Dev`. Run it once per dispatch (step 4) — never re-derive the precedence by hand. The saved root is per machine and persists across sessions; set or repoint it with `npm --prefix $HOME/Dev/pipelinely run --silent repos-dir -- set <dir>` (the dir must exist), or just ask the orchestrator to.
+
+- **Ask once.** At orchestrator start, if the CLI reports `source: "default"` (nothing saved, nothing exported), ask once: "Where do your repos live? (Enter for ~/Dev)", then `set` the answer. Pressing Enter still `set`s `~/Dev`, so the question never repeats. If `set` refuses because that directory doesn't exist yet, offer to create it (`mkdir -p`) or ask for another path; don't leave the root unset.
+- **Env leak.** When the CLI reports `source: "env"`, say once per session, in one line: "Using REPOS_DIR=<path> from this shell's environment (overrides the saved root)". A stale fixture `REPOS_DIR` left in this tab would otherwise be baked into every launch script silently. If the CLI also printed a stderr warning that the path isn't an existing directory, relay it.
+- **Worktrees stay decoupled** at `${WORKTREES_DIR:-$HOME/Dev/worktrees}` (override with `WORKTREES_DIR`), whatever the repo root is. Repointing the root is an expected workflow, and worktrees that followed it would become invisible to the dashboard and to reuse-dispatches (`pipelinely-qa`, `pipelinely-cr`, … `cd` into `${WORKTREES_DIR}/<slug>`).
+- **The tool's own checkout is not under the repo root**: it is always `$HOME/Dev/pipelinely`. TODO: a custom install location is still not discoverable by the skills.
+
+If a repo isn't cloned locally, clone it first. If the repo is ambiguous from the task, ask the user before dispatching.
+
+### Onboarding offer
+
+Onboarding (`.pipelinely/pipeline.yml`) is optional and lazy: it is offered the first time in an orchestrator session that a new dispatch targets repo `<repo>`, never as a gate in front of orchestrator mode. Don't re-offer the same repo in the same session (nothing is persisted across sessions).
+
+1. Run `npm --prefix $HOME/Dev/pipelinely run --silent pipelinely-onboard -- <resolved-repos-dir>/<repo>` and parse its JSON.
+2. `alreadyOnboarded: true` → say nothing.
+3. Otherwise offer in one line, e.g. "`<repo>` has no Pipelinely config yet — set it up now? (skip is fine)".
+   - **Yes:** for each entry in the reported `ambiguous` list, ask — `plan-review` → "Enable the optional Plan Review stage? (default: yes)"; `test-command` / `lint-command` / `typecheck-command` are reported for awareness only (the CLI doesn't accept overrides for them yet, so don't imply an answer changes anything). Re-run the CLI with `--confirm-plan-review=<true|false>`. On `configWritten: true`, tell the user their pipeline is ready (Planning → Dev → Code Review → QA → Merge).
+   - If the result is `configWritten: false` (`validation.ok: false`), report every `validation.failures` entry plainly. That only stops onboarding — continue the dispatch.
+   - **No or skip:** continue the dispatch unchanged, using the repo's own `CLAUDE.md` / conventions as un-onboarded dispatches do.
+4. A CLI failure (not a git repo, not cloned yet, …) → report its one stderr line and continue. The offer never blocks a dispatch.
+
+`pipelinely-planning` Step 1 and `pipelinely-dev`'s brand-new flat-task path run this same procedure by reference; they don't copy it.
 
 ## Core Capabilities & Logic
 
@@ -253,8 +294,16 @@ the Jevons Rule applied at the coarsest grain, deciding how much process
 the task earns before a single line of `TASK.md` is written:
 
 - **Simple** — bug fix, copy change, small UI tweak, config update. Use
-  ad-hoc dispatch (above) directly. No `tech-design.md`, no plan review,
-  no QA/CR stages — one tab, one worker, done.
+  ad-hoc dispatch (above) directly. No plan review, no QA/CR stages, no
+  approval gate — one tab, one worker, done. A Simple task that writes
+  code (implement mode) has one extra first step, before any code: a short
+  `tech-design.md` (`## Summary` only, 5–10 lines: what changes, why, how
+  it is verified), copied to the tasks dir per the reporting rule, then
+  immediately a `dev` TIMELINE line so the dashboard reads Dev, not Plan
+  Review. It is there so the developer can read what the task does on the
+  dashboard, not to be approved: the worker writes it and keeps going.
+  Investigate/verify tasks write no plan. This is the one exception to
+  `docs/tech-design-template.md`'s 2–4 sentence Summary.
 - **Complex** — everything else: new component or page, contained feature,
   cross-repo change, new service integration, significant architecture
   change. Run the full pipeline: `/pipelinely-planning` →

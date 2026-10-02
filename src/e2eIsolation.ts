@@ -251,15 +251,34 @@ const GUARDED_FIXTURE_IMPORT_RE = /\b(itermSessions|orchestratorSessionLock)(\.j
 // So a bare `execa(`/`child_process` isn't itself a marker; it only counts
 // alongside the actual binary name, which the alternation below already
 // requires.
-const RAW_INTEGRATION_MARKER_RE = /\bosascript\b|\btmux[ '"]/
+const OSASCRIPT_MARKER_RE = /\bosascript\b/
+const TMUX_MARKER_RE = /\btmux[ '"]/
 
-export function scanForRealIntegrationLeaks(e2eRootDir: string): string[] {
+// Specs (relative to e2e/) that exist only in the published pipelinely repo
+// — listed in oss/protected-dest-paths.txt, authored there, never on master —
+// so the publish can't change them. install.spec.ts only drives install.sh
+// against fake binaries; its "tmux missing" test title is what TMUX_MARKER_RE
+// trips on. The exemption is narrow: these specs skip only the tmux marker, and
+// are still checked for osascript and the guarded fixtures. A master-side test
+// keeps this list in sync with protected-dest-paths.txt.
+export const PUBLIC_ONLY_SPECS: readonly string[] = ['install.spec.ts']
+
+export function scanForRealIntegrationLeaks(
+  e2eRootDir: string,
+  tmuxExemptSpecs: readonly string[] = PUBLIC_ONLY_SPECS
+): string[] {
   const integrationDir = path.join(e2eRootDir, 'integration')
+  const tmuxExemptPaths = new Set(tmuxExemptSpecs.map((spec) => path.join(e2eRootDir, spec)))
   const violations: string[] = []
   for (const specFile of findSpecFiles(e2eRootDir)) {
     if (isUnderIntegrationDir(specFile, integrationDir)) continue
     const source = stripComments(fs.readFileSync(specFile, 'utf8'))
-    if (GUARDED_FIXTURE_IMPORT_RE.test(source) || RAW_INTEGRATION_MARKER_RE.test(source)) {
+    const isTmuxChecked = !tmuxExemptPaths.has(specFile)
+    if (
+      GUARDED_FIXTURE_IMPORT_RE.test(source) ||
+      OSASCRIPT_MARKER_RE.test(source) ||
+      (isTmuxChecked && TMUX_MARKER_RE.test(source))
+    ) {
       violations.push(specFile)
     }
   }

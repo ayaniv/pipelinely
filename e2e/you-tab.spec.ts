@@ -31,7 +31,7 @@ import { removeTaskFile, writeTaskFile } from './fixtures/taskFiles'
 //    Caught live during QA: the focus hero, the toolbar (pulse chips +
 //    filter/standup buttons) and the filter bar all stayed visible above
 //    the heatmap the same as on Active/Backlog/Done. They're hidden on You
-//    now (see switchTab's [data-active-tab] and the CSS on #weekly-focus/
+//    now (see useTabPanelSync's [data-active-tab] and the CSS on #weekly-focus/
 //    .board-toolbar/#board-filters), which is also why the filter chip in
 //    case 3's own project-filter test below now gets toggled from the Done
 //    tab rather than from You — the toggle button that used to sit above
@@ -75,7 +75,7 @@ const UNPARSEABLE_FILE = 'METRICS-you-torn.json'
 const SEEDED_FILES = [...BUSY_FILES, QUIET_FILE, LEGACY_FILE, UNPARSEABLE_FILE]
 
 // Local calendar date N days before today, as the 'YYYY-MM-DD' key the cells
-// are stamped with. Mirrors localDateKey in index.html/taskParser.ts — local,
+// are stamped with. Mirrors localDateKey in src/dateKey.ts — local,
 // not UTC, because the chart buckets by the developer's own calendar day.
 function dayKeyAgo(daysAgo: number): string {
   const d = new Date()
@@ -219,7 +219,7 @@ test.describe('You tab navigation', () => {
 
   // Caught live during QA: You is meant to show just the chart, not the
   // rest of the board's shared chrome (the focus hero, the toolbar, the
-  // filter bar) — see switchTab's [data-active-tab] and the CSS on
+  // filter bar) — see useTabPanelSync's [data-active-tab] and the CSS on
   // #weekly-focus/.board-toolbar/#board-filters.
   test('the board chrome is hidden on You, and comes back on Done', async ({ page }) => {
     await gotoBoardTab(page, 'done')

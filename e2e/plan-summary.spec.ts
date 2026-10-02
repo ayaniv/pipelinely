@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 
-// Covers the Plan tab's pinned overview (renderPlanOverview in
-// public/index.html, fed by GET /tech-design/:slug's summaryHtml and
+// Covers the Plan tab's pinned overview (PlanOverview in
+// web/src/views/task-detail/panel, fed by GET /tech-design/:slug's summaryHtml and
 // testGroups): the plan's `## Summary` prose, then which e2e test titles
 // will run against the task — one group for a flat task's `**QA Spec:**`
 // line, one group per declared milestone's `spec:` field — both above the
@@ -28,7 +28,7 @@ async function openParentPlan(page: Page): Promise<void> {
 }
 
 function milestoneGroup(page: Page, milestoneId: string) {
-  return page.locator(`[data-testid="plan-tests-group"][data-milestone-id="${milestoneId}"]`)
+  return page.locator(`[data-testid="plan-tests-group"][data-plan-milestone-id="${milestoneId}"]`)
 }
 
 test.describe('flat task', () => {
@@ -80,7 +80,7 @@ test.describe('milestone parent', () => {
   test('one group per declared milestone, in declared order', async ({ page }) => {
     const groups = page.getByTestId('plan-tests-group')
     await expect(groups).toHaveCount(2)
-    const ids = await groups.evaluateAll(els => els.map(el => el.getAttribute('data-milestone-id')))
+    const ids = await groups.evaluateAll(els => els.map(el => el.getAttribute('data-plan-milestone-id')))
     expect(ids).toEqual(['M0', 'M1'])
     await expect(groups.getByTestId('plan-tests-group-milestone')).toHaveCount(2)
   })

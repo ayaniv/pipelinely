@@ -11,3 +11,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export const FIXTURE_TASKS_DIR = path.join(__dirname, 'tasks')
 export const FIXTURE_REPOS_DIR = path.join(__dirname, 'repos')
 export const FIXTURE_WORKTREES_DIR = path.join(__dirname, 'worktrees')
+
+// The remote-access token the fixture server reads in place of the real
+// ~/.config/pipelinely/remote-token. e2e/remote-auth.spec.ts writes and
+// deletes it per test, so it is gitignored scratch, never a checked-in secret.
+export const FIXTURE_REMOTE_TOKEN_FILE = path.join(__dirname, 'remote-token', 'token')

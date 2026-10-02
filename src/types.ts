@@ -1,3 +1,5 @@
+import type { ApprovalPrompt } from './approvalPrompt.js'
+
 export interface Plan {
   total: number
   done: number
@@ -119,6 +121,20 @@ export interface QaCase extends QaFailure {
   passed: boolean
 }
 
+export interface ResultDocMeta {
+  file: string
+  isTruncated: boolean
+  totalBytes: number
+  // The file's own mtime (ms since epoch), from the lstat resultDoc.ts already
+  // does for its symlink check. A same-size edit does not change totalBytes,
+  // so the client's refetch gate keys on this instead — see taskResources.ts.
+  mtimeMs: number
+}
+
+export interface ResultDoc extends ResultDocMeta {
+  markdown: string
+}
+
 // One milestone declared in a task's tech-design.md "## Milestones" section
 // — see parseMilestonesContent in taskParser.ts. This is what the plan says;
 // MilestoneStatus below is what the dashboard computed about it.
@@ -168,6 +184,9 @@ export interface Task {
   worktree: string | null  // absolute path under WORKTREES_DIR (default ~/Dev/worktrees)/<slug> if that dir exists, else null
   devUrl: string | null    // trimmed contents of DEV_URL file if exists, else null
   verifier: string | null  // first line of the VERIFY file — the command or target that decides whether this task is done. null when the task has no verifier, which the dashboard shows rather than hides.
+  // Why QA is not applicable to this task (see assessQaNeed in nextStageCta.ts), or null when
+  // QA is needed or cannot be ruled out. Only computed while waiting at a QA-entry marker.
+  qaSkipReason: string | null
   itermSessionId: string | null // trimmed contents of ITERM_SESSION file — stable iTerm2 session id for focus
   tmuxSession: string | null // trimmed contents of TMUX_SESSION file — tmux session name, used as a reattach fallback when the iTerm tab is gone but the tmux session backing it is still alive
   plan: Plan | null        // parsed from PLAN.md milestone checklist; null if PLAN.md absent
@@ -197,6 +216,14 @@ export interface Task {
   // pipeline, which is every pre-existing task dir.
   milestones?: MilestoneStatus[]
 
+  // A research task's deliverable document (RESULT.md, AUDIT.md, DESIGN.md,
+  // FINDINGS.md, or a research task's TASK.md "## Result" section — see
+  // resultDoc.ts). null when there is none. Metadata only: the markdown is
+  // fetched lazily from GET /result-doc/:slug, so it is not on every SSE frame.
+  // isTruncated says the markdown is cut at the size cap; totalBytes is the
+  // document's full size.
+  resultDoc?: ResultDocMeta | null
+
   // A dispatched milestone child's own card needs to self-identify in a
   // mixed grid ("which project is this"). Populated in parseAllTasks's
   // second pass, the same place computeMilestones stitches the child on —
@@ -223,6 +250,11 @@ export interface Task {
   // card's badge row. See computeAttentionStatus below.
   attentionStatus: AttentionStatus
 
+  // The Claude Code dialog a live tmux session of this task is stopped on, or
+  // null. Computed at read time from the polled pane (see approvalWatch.ts),
+  // never stored — STATUS on disk is never written for it.
+  approvalPrompt: ApprovalPrompt | null
+
   // ${TASKS_DIR}/<slug>/AUTO_MODE — this task's own answer, or 'inherit'
   // when it doesn't have one. 'inherit' is a real state, not a missing
   // value, which is why this is a union and not boolean | null.
@@ -243,8 +275,10 @@ export interface Task {
   waitingReason?: string   // text after "waiting: " prefix (trimmed) — blocked on a decision only the user can make
   pausedReason?: string    // text after "paused: " prefix (trimmed) — the user deliberately set this task aside; distinct from waiting because a "Resume" CTA only makes sense here
   reviewRef?: string       // text after "review: " prefix — a PR URL or number, when the worker recorded one
-  // Resolved server-side from GitHub by branch (see prLookup.ts) when neither
-  // reviewRef nor the TIMELINE names a PR. Never read from a task dir file.
+  // The single final answer to "which PR is this task's", resolved server-side
+  // (see prLookup.ts / findPrNumber): reviewRef, else the PR GitHub associates
+  // with the task's own branch, else a strict TIMELINE-note match. Every client
+  // reads this instead of re-scanning notes. Never read from a task dir file.
   prNumber?: string
   doneNote?: string        // text after "done: " prefix (trimmed) — the worker's closing note, e.g. what merged and what didn't
   handoverSession?: number // number parsed from "handover: session #N" pattern
@@ -263,4 +297,22 @@ export interface Task {
   totalOutputTokens: number
   metricsUpdatedAt?: Date  // mtime of METRICS file (current session only)
   sessions: SessionMetric[]  // per-session context and token history; [] when the task has no METRICS at all
+}
+
+// The full payload buildSnapshot() returns from both GET /api/tasks and
+// every /events push (server.ts) — one shape, whether the client got it
+// from the cold fetch or the SSE stream. web/src/data/snapshot.ts imports
+// this as a type only: the client validates the JSON boundary itself
+// rather than trusting this compile-time shape at runtime (see
+// react-migration's tech-design.md, "Keep Node-only modules out of the
+// client").
+export interface Snapshot {
+  tasks: Task[]
+  activeProject: ActiveProjectProgress | null
+  weeklyFocus: string
+  backlog: BacklogItem[]
+  doneGroups: DoneDateGroup[]
+  settings: Settings
+  orchestratorContextPct: number | null
+  isCanonical: boolean
 }

@@ -30,11 +30,11 @@ export function isLoopbackAddress(address: string | null | undefined): boolean {
   const trimmed = address.trim().toLowerCase()
   if (!trimmed || trimmed === 'localhost') return true
 
-  // A server bound to 0.0.0.0 sees IPv4 peers in IPv4-mapped IPv6 form
-  // (`::ffff:127.0.0.1`) on macOS — that, not the bare `127.0.0.1`, is the
-  // real desktop developer's real peer address, so it must reduce to the
-  // same answer as the plain IPv4 form rather than being classified as some
-  // separate kind of IPv6.
+  // A wildcard-bound (PIPELINELY_HOST=0.0.0.0 or ::) server sees IPv4 peers in
+  // IPv4-mapped IPv6 form (`::ffff:127.0.0.1`) on macOS — the default
+  // 127.0.0.1 bind sees the plain form. Both are the same real desktop
+  // developer, so the mapped form must reduce to the same answer as the plain
+  // IPv4 one rather than being classified as some separate kind of IPv6.
   const candidate = trimmed.startsWith(IPV4_MAPPED_PREFIX)
     ? trimmed.slice(IPV4_MAPPED_PREFIX.length)
     : trimmed
@@ -52,9 +52,28 @@ export function isLoopbackAddress(address: string | null | undefined): boolean {
   }
 }
 
+// The strict reading for authentication: only an address that parses as a
+// loopback IP counts, so a missing or unreadable peer has to sign in.
+export function isKnownLoopbackAddress(address: string | null | undefined): boolean {
+  if (!address) return false
+  const candidate = address.trim()
+  return net.isIP(candidate) !== 0 && isLoopbackAddress(candidate)
+}
+
 // The single named accessor every call site uses. No route reads
 // `req.socket.remoteAddress` directly, so the day this has to understand a
 // reverse proxy there is exactly one place to teach.
 export function requestIsRemote(req: { socket?: { remoteAddress?: string } }): boolean {
   return !isLoopbackAddress(req.socket?.remoteAddress)
+}
+
+// A local reverse proxy (`tailscale serve`, caddy, ngrok) makes a phone's
+// request arrive from 127.0.0.1, so the peer address alone would call it the
+// desktop. These headers can only ever make the answer stricter: a local
+// client that forges one merely makes itself sign in. They are never used to
+// *trust* a request.
+export const PROXY_HEADERS = ['x-forwarded-for', 'forwarded', 'x-real-ip', 'tailscale-user-login'] as const
+
+export function requestCameThroughProxy(req: { headers: Record<string, string | string[] | undefined> }): boolean {
+  return PROXY_HEADERS.some((header) => req.headers[header] !== undefined)
 }

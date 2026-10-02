@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Stand-in for tmux, put first on PATH for every e2e run alongside the fake
+# gh (see fakeGhEnv in ../fakeGh.ts and playwright.config.ts). The "live"
+# tmux sessions are exactly the files in ../panes/<session>.txt, and a
+# session's pane shows that file's text — so the blocked-on-approval
+# detection (dashboard-show-blocked-workers) can be driven from captured pane
+# fixtures, and no `ui` spec ever reads, let alone writes to, the
+# developer's real tmux server. Read-only by construction: it models only
+# the read commands the server issues, and any other command (new-session,
+# send-keys, kill-session, ...) fails loudly rather than pretending to
+# succeed. Each refused command that could change a session (send-keys,
+# kill-session, ...) is also recorded in fake-mux/write-attempts.log, so a spec
+# can prove nothing was sent (answer-dialog-route.spec.ts); an unmodelled read
+# (display-message, list-clients, list-panes) fails without being recorded.
+set -u
+FIXTURES="$(cd "$(dirname "$0")/.." && pwd)"
+PANES="$FIXTURES/panes"
+WRITE_ATTEMPTS_LOG="$FIXTURES/fake-mux/write-attempts.log"
+
+# The session name from a `-t` target, with tmux's exact-match `=` prefix and
+# any trailing `:window.pane` part stripped.
+target_session() {
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "-t" ]; then
+      local target="${2#=}"
+      echo "${target%%:*}"
+      return 0
+    fi
+    shift
+  done
+  return 1
+}
+
+live_sessions() {
+  for f in "$PANES"/*.txt; do
+    [ -e "$f" ] || continue
+    basename "$f" .txt
+  done
+}
+
+sub="${1:-}"
+[ "$#" -gt 0 ] && shift
+
+case "$sub" in
+  ls|list-sessions)
+    sessions="$(live_sessions)"
+    if [ -z "$sessions" ]; then
+      echo "no server running on /fake/tmux" >&2
+      exit 1
+    fi
+    echo "$sessions"
+    ;;
+  has-session)
+    name="$(target_session "$@")" || exit 1
+    [ -f "$PANES/$name.txt" ]
+    ;;
+  capture-pane)
+    name="$(target_session "$@")" || { echo "fake tmux: capture-pane needs -t" >&2; exit 1; }
+    if [ ! -f "$PANES/$name.txt" ]; then
+      echo "can't find session: $name" >&2
+      exit 1
+    fi
+    cat "$PANES/$name.txt"
+    ;;
+  display-message|list-clients|list-panes)
+    echo "fake tmux: unsupported command: $sub $*" >&2
+    exit 1
+    ;;
+  *)
+    mkdir -p "$(dirname "$WRITE_ATTEMPTS_LOG")"
+    echo "$sub $*" >> "$WRITE_ATTEMPTS_LOG"
+    echo "fake tmux: unsupported command: $sub $*" >&2
+    exit 1
+    ;;
+esac

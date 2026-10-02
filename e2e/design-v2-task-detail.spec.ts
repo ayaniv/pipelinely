@@ -148,18 +148,31 @@ test.describe('stage rail', () => {
 
     await page.getByTestId('stage-chain-qa').click()
     const selected = page.getByTestId('stage-chain-qa')
-    expect(await cssOf(selected.locator('.stage-chain-check'), 'background-color')).toBe(TOKEN.accentSoft)
+    // Retrying assertion: the node is React-owned now, so it survives the click
+    // and its 0.12s background transition is observable mid-flight.
+    await expect(selected.locator('.stage-chain-check')).toHaveCSS('background-color', TOKEN.accentSoft)
     expect(await cssOf(selected.locator('.stage-chain-name'), 'color')).toBe(TOKEN.ink)
     expect(await cssOf(selected.locator('.stage-chain-name'), 'font-weight')).toBe('700')
   })
 
-  test('connectors are 2px, min 12px wide, and sit at the circles\' centres', async ({ page }) => {
+  // M3: connectors are React Flow edges (SVG paths) between the node columns,
+  // not flex spans, so the box-model geometry this used to assert (height,
+  // min-width, margin-top) no longer exists. What carries over is the 2px
+  // stroke, the node-edge-to-node-edge span, the circles'-centre line, and the
+  // 12px minimum length.
+  test('connectors are 2px strokes, at least 12px long, and sit at the circles\' centres', async ({ page }) => {
     await page.goto(`/task/${FLAT_SLUG}`)
 
-    const connector = page.locator('.stage-chain-connector').first()
-    expect(await cssOf(connector, 'height')).toBe('2px')
-    expect(await cssOf(connector, 'min-width')).toBe('12px')
-    expect(await cssOf(connector, 'margin-top')).toBe('13px')
+    const edge = page.locator('.react-flow__edge .stage-chain-edge').first()
+    // A horizontal stroke has a zero-height box, which Playwright calls hidden.
+    await expect(edge).toBeAttached()
+    expect(await cssOf(edge, 'stroke-width')).toBe('2px')
+
+    const edgeBox = await edge.boundingBox()
+    const circleBox = await page.getByTestId('stage-chain-planning').locator('.stage-chain-check').boundingBox()
+    if (!edgeBox || !circleBox) throw new Error('edge or circle has no bounding box')
+    expect(edgeBox.width).toBeGreaterThanOrEqual(12)
+    expect(Math.abs(edgeBox.y + edgeBox.height / 2 - (circleBox.y + circleBox.height / 2))).toBeLessThanOrEqual(1)
   })
 
   // The design's rail node is a circle and a label — nothing else. This repo
@@ -306,18 +319,21 @@ test.describe('stage panel header', () => {
 })
 
 test.describe('dev waves', () => {
-  test('the dev card grid uses the design\'s 280px track and 12px gap', async ({ page }) => {
+  // M3: the CSS grid is a React Flow canvas now; its 280px minimum track lives
+  // in milestoneGraphLayout.ts (the 12px gap is asserted at unit level there),
+  // so this checks the observable result — no card narrower than 280px.
+  test('no dev card is narrower than the design\'s 280px track', async ({ page }) => {
     await page.goto('/task/fanout-parent')
 
-    const grid = page.locator('.wave-grid').first()
-    await expect(grid).toBeVisible()
-    expect(await cssOf(grid, 'gap')).toBe('12px')
-
-    // `minmax(min(100%,280px),1fr)` resolves to px, so the observable
-    // property is the one the design is actually specifying: no track is ever
-    // narrower than 280px while the container has room for it.
-    const columns = (await cssOf(grid, 'grid-template-columns')).split(' ').map(parseFloat)
-    for (const width of columns) expect(width).toBeGreaterThanOrEqual(280)
+    const milestoneCards = page.getByTestId('milestone-flow').getByTestId('milestone-card')
+    // The graph is a lazy chunk, so wait for it before snapshotting the list.
+    await expect(milestoneCards.first()).toBeVisible()
+    const cards = await milestoneCards.all()
+    expect(cards.length).toBeGreaterThan(0)
+    for (const card of cards) {
+      const box = await card.boundingBox()
+      expect(box?.width ?? 0).toBeGreaterThanOrEqual(280)
+    }
   })
 
   test('the wave header is the design\'s mono name, mode and run button', async ({ page }) => {

@@ -1,10 +1,8 @@
 import fs from 'node:fs/promises'
-import path from 'node:path'
 import { resolveTasksDir } from './tasksDir.js'
 import { parseTask } from './taskParser.js'
-import { SAFE_TOKEN } from './batchDispatch.js'
-import { mergeTask } from './taskCompletion.js'
-import { formatMergeBlockers } from './mergeGate.js'
+import { resolveTaskDirArg } from './batchDispatch.js'
+import { describeMergeOutcome, mergeResolvingPr } from './cockpitMerge.js'
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -17,8 +15,8 @@ function errorMessage(err: unknown): string {
 // refused" (2) apart from "something broke" (1) without parsing stdout text.
 async function main(): Promise<void> {
   const slug = process.argv[2]
-  if (!slug || !SAFE_TOKEN.test(slug)) {
-    console.error(`Usage: pipelinely-merge <slug>${slug ? ` — '${slug}' is not a safe task slug` : ''}`)
+  if (!slug) {
+    console.error('Usage: pipelinely-merge <slug>')
     process.exitCode = 1
     return
   }
@@ -31,13 +29,11 @@ async function main(): Promise<void> {
   const tasksDir = resolveTasksDir(process.cwd(), process.env.TASKS_DIR)
   console.log(`tasks dir: ${tasksDir}`)
 
-  const taskDir = path.join(tasksDir, slug)
-  // SAFE_TOKEN allows dots, so a slug of exactly '..' (or './..', etc.)
-  // still needs an explicit check: path.join alone would happily resolve
-  // outside tasksDir, and this CLI must never act on a directory that isn't
-  // directly one of tasksDir's own children.
-  if (path.dirname(taskDir) !== tasksDir) {
-    console.error(`Refusing '${slug}': resolves outside ${tasksDir}`)
+  let taskDir: string
+  try {
+    taskDir = resolveTaskDirArg(tasksDir, slug)
+  } catch (err) {
+    console.error(errorMessage(err))
     process.exitCode = 1
     return
   }
@@ -58,27 +54,9 @@ async function main(): Promise<void> {
   }
 
   try {
-    const result = await mergeTask(tasksDir, task)
-    switch (result.outcome) {
-      case 'no-pr':
-        console.error('No PR recorded for this task yet')
-        process.exitCode = 1
-        return
-      case 'gate-unavailable':
-      case 'merge-failed':
-        console.error(result.error)
-        process.exitCode = 1
-        return
-      case 'blocked':
-        console.error(formatMergeBlockers(result.blockers))
-        process.exitCode = 2
-        return
-      case 'merged':
-        console.log(`PR #${result.prNumber} merged, task marked done`)
-        if (result.cleanupError) console.error(`cleanup: ${result.cleanupError}`)
-        process.exitCode = 0
-        return
-    }
+    const { exitCode, lines } = describeMergeOutcome(await mergeResolvingPr(tasksDir, task))
+    for (const line of lines) (line.stream === 'log' ? console.log : console.error)(line.text)
+    process.exitCode = exitCode
   } catch (err) {
     console.error(errorMessage(err))
     process.exitCode = 1

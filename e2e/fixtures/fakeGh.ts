@@ -17,6 +17,8 @@ function safeBranchFilename(branch: string): string {
 // Environment that makes a process resolve `gh` to the fixture stand-in in
 // e2e/fixtures/bin/gh (see that script's own comment) — applied to the
 // webServer in playwright.config.ts and to every CLI process a spec spawns.
+// The same bin dir also holds the fake `tmux` (e2e/fixtures/bin/tmux), so
+// these processes never reach the developer's real tmux server either.
 export function fakeGhEnv(): Record<string, string> {
   return {
     PATH: `${FAKE_GH_BIN_DIR}${path.delimiter}${process.env.PATH ?? ''}`,

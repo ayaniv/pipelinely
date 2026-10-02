@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>pipelinely.cc</title>
+  <script>
+    // Applied synchronously, before first paint, so an explicit saved theme
+    // never flashes the OS-driven default first. No stored value means the
+    // user hasn't chosen — leave data-theme unset so the
+    // prefers-color-scheme media query keeps governing.
+    (function () {
+      try {
+        var stored = localStorage.getItem('cockpit-theme')
+        if (stored === 'light' || stored === 'dark') {
+          document.documentElement.dataset.theme = stored
+        }
+      } catch (_) { /* localStorage unavailable (e.g. private mode) */ }
+    })()
+  </script>
+  <link rel="preload" as="font" type="font/woff2" href="/fonts/figtree-latin-400-normal.woff2" crossorigin>
+  <link rel="preload" as="font" type="font/woff2" href="/fonts/jetbrains-mono-latin-400-normal.woff2" crossorigin>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+</html>

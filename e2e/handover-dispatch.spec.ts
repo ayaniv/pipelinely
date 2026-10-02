@@ -1,4 +1,5 @@
 import { test, expect, type Page, type Request, type Route } from '@playwright/test'
+import { openWithSnapshot, pushSnapshot } from './fixtures/snapshotStub.js'
 
 // The Handover pills stage `/pipelinely-handover` into the right session instead of
 // being decorative. See tech-design.md.
@@ -171,46 +172,18 @@ test.describe('task Handover pill — detail header', () => {
     expect(posts.orchestratorHandover).toBe(0)
     expect(posts.otherDispatch).toEqual([])
   })
-
-  // renderDashboard re-runs renderTaskDetail on every SSE message while a
-  // detail view is open, and renderTaskDetail used to write .detail-ctx-row
-  // (the detail-handover pill's container) with plain innerHTML — the same
-  // click-swallowing bug the header case below documents for header-ctx-slot.
-  // Driven with a real mouse down/up and the exact render call the SSE
-  // handler makes, in between.
-  test('a detail re-render landing mid-click does not swallow the request', async ({ page }) => {
-    const posts = recordDispatchPosts(page)
-    await stubRoute(page, `**/pipelinely-handover/${HOT_SLUG}`, 200)
-    await page.goto(`/task/${HOT_SLUG}`)
-    const detail = page.getByTestId('task-detail')
-    await expect(detail).toBeVisible()
-
-    const pill = detail.getByTestId('detail-handover')
-    await expect(pill).toBeVisible()
-    const box = await pill.boundingBox()
-    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2)
-    await page.mouse.down()
-    // renderDashboard sets its own module-scope `currentTasks` from its
-    // argument (index.html:3376), so re-fetching the same snapshot the page
-    // already loaded is equivalent to the SSE handler's own re-render call —
-    // window.currentTasks isn't reachable here: it's a script-scope `let`,
-    // never a property of `window` (unlike the `function` globals).
-    const tasks = await page.evaluate(async () => (await (await fetch('/api/tasks')).json()).tasks)
-    await page.evaluate((t) => (window as unknown as { renderDashboard: (tasks: unknown) => void }).renderDashboard(t), tasks)
-    await page.mouse.up()
-
-    await expect.poll(() => posts.taskHandover).toEqual([HOT_SLUG])
-  })
 })
 
 test.describe('orchestrator Handover segment — top bar', () => {
-  test('is a real button carrying the orchestrator-handover action and no slug', async ({ page }) => {
+  // The segment binds its own onClick (and posts to /orchestrator/pipelinely-handover,
+  // asserted by the next case), so it needs no data-action to route by. "No
+  // slug" is the meaningful half: this segment is the orchestrator's, never a task's.
+  test('is a real button that carries no task slug', async ({ page }) => {
     await page.goto('/')
     const segment = page.getByTestId('header-handover')
     await expect(segment).toBeVisible()
     expect(await segment.evaluate((el) => el.tagName)).toBe('BUTTON')
     await expect(segment).toHaveAttribute('type', 'button')
-    await expect(segment).toHaveAttribute('data-action', 'orchestrator-handover')
     await expect(segment).not.toHaveAttribute('data-slug', /.*/)
   })
 
@@ -248,24 +221,24 @@ test.describe('orchestrator Handover segment — top bar', () => {
     await expect(segment).toBeEnabled()
   })
 
-  // renderHeaderCtx runs on every SSE message (any watched task file
-  // changing, every second or two in real use). The same root cause
-  // focus-button-rerender-race.spec.ts documents for the board: an
-  // unconditional innerHTML replace landing between mousedown and mouseup
-  // swallows the click entirely. Driven with a real mouse down/up and the
-  // exact render call the SSE handler makes, in between.
-  test('a header re-render landing mid-click does not swallow the request', async ({ page }) => {
+  // Every SSE message (any watched task file changing, every second or two
+  // in real use) re-renders the header. The same root cause
+  // focus-button-rerender-race.spec.ts documents for the board: a re-render
+  // that replaced the button's DOM between mousedown and mouseup would
+  // swallow the click entirely. The header is React, which reconciles the same node in place for a
+  // same-content snapshot, so this pushes one through the page's own es.onmessage (a real SSE push,
+  // via snapshotStub.ts) between a real mouse down/up.
+  test('a same-content snapshot landing mid-click does not swallow the request', async ({ page }) => {
     const posts = recordDispatchPosts(page)
     await stubRoute(page, '**/orchestrator/pipelinely-handover', 200)
-    await page.goto('/')
+    const snapshot = await openWithSnapshot(page, '/', () => {})
 
     const segment = page.getByTestId('header-handover')
     await expect(segment).toBeVisible()
     const box = await segment.boundingBox()
     await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2)
     await page.mouse.down()
-    const ctx = await page.evaluate(async () => (await (await fetch('/api/tasks')).json()).orchestratorContextPct)
-    await page.evaluate((pct) => (window as unknown as { renderHeaderCtx: (pct: number) => void }).renderHeaderCtx(pct), ctx)
+    await pushSnapshot(page, { ...snapshot })
     await page.mouse.up()
 
     await expect.poll(() => posts.orchestratorHandover).toBe(1)

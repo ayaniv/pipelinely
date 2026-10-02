@@ -75,7 +75,7 @@ test.describe('desktop (loopback) dashboard — the regression constraint', () =
   test('GET /api/access reports isRemoteAccess false to a loopback caller', async ({ request }) => {
     const res = await request.get('/api/access')
     expect(res.ok()).toBe(true)
-    expect(await res.json()).toEqual({ isRemoteAccess: false })
+    expect(await res.json()).toEqual({ isRemoteAccess: false, hasRemoteSession: false })
   })
 
   test('a stage CTA still posts autoSubmit false, exactly as it does today', async ({ page }) => {
