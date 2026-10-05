@@ -47,13 +47,18 @@ const OPTIONAL_INSTALLER_BINARY = 'widgetcli'
 // answers. Two calls are intercepted: `--version` (STUB_GIT_VERSION_EXIT
 // poses as the Command Line Tools shim) and `clone`, which clones the
 // throwaway local origin in place of the github.com URL install.sh passes,
-// so nothing ever touches the network.
+// so nothing ever touches the network. For the states real git can't be put
+// in on demand, `git -C <dir> <subcommand>` can be made to fail
+// (STUB_GIT_FAIL_ON=<subcommand>) or to print a warning on stderr and still
+// succeed (STUB_GIT_WARN_ON=<subcommand>).
 async function stubGit() {
   await writeFiles(stubBin, {
     git: `#!/bin/sh
 echo "git $*" >> "${callLog}"
 if [ "$1" = "--version" ] && [ -n "\${STUB_GIT_VERSION_EXIT:-}" ]; then exit "$STUB_GIT_VERSION_EXIT"; fi
 if [ "$1" = "clone" ]; then exec "${realGit}" clone -q "${origin}" "$3"; fi
+if [ "$1" = "-C" ] && [ "$3" = "\${STUB_GIT_FAIL_ON:-}" ]; then echo "fatal: injected $3 failure" >&2; exit 128; fi
+if [ "$1" = "-C" ] && [ "$3" = "\${STUB_GIT_WARN_ON:-}" ]; then echo "warning: injected $3 warning" >&2; fi
 exec "${realGit}" "$@"
 `,
   })
@@ -137,7 +142,8 @@ async function removeStub(name: string) {
   await fs.rm(path.join(stubBin, name))
 }
 
-function runInstaller({ withStubBin, gitEnv = {} }: { withStubBin: boolean; gitEnv?: Record<string, string> }) {
+// stubEnv: extra env for one run — the STUB_* knobs of the fakes above, or an override of install.sh's own env.
+function runInstaller({ withStubBin, stubEnv = {} }: { withStubBin: boolean; stubEnv?: Record<string, string> }) {
   // Real macOS ships a real `git` under /usr/bin (Xcode command line tools),
   // so proving the "git missing" failure path needs a PATH with no lookup
   // dirs at all, not just the stub bin left off.
@@ -155,7 +161,7 @@ function runInstaller({ withStubBin, gitEnv = {} }: { withStubBin: boolean; gitE
       // /Applications and /opt/homebrew never decide a case's outcome.
       PIPELINELY_APP_DIRS: appsDir,
       PIPELINELY_BREW_PREFIXES: brewPrefix,
-      ...gitEnv,
+      ...stubEnv,
     },
     extendEnv: false,
   })
@@ -249,6 +255,12 @@ test.describe('install.sh updating an existing checkout', () => {
     await git(home, ['clone', '-q', origin, dest])
   }
 
+  // The state every existing user is in: only the lockfile an older installer's `npm install` rewrote.
+  async function seedLockfileOnlyChange() {
+    await seedExistingCheckout()
+    await fs.appendFile(path.join(dest, 'package-lock.json'), 'rewritten by an old npm install\n')
+  }
+
   // A new upstream commit, so the seeded checkout is one commit behind.
   async function advanceOrigin(): Promise<string> {
     await writeFiles(origin, { 'src/server.ts': 'export const updated = true\n' })
@@ -310,8 +322,7 @@ test.describe('install.sh updating an existing checkout', () => {
   })
 
   test('the real-world case: main whose only change is the installer-rewritten package-lock.json is restored and updated', async () => {
-    await seedExistingCheckout()
-    await fs.appendFile(path.join(dest, 'package-lock.json'), 'rewritten by an old npm install\n')
+    await seedLockfileOnlyChange()
     await writeFiles(dest, { 'node_modules/marker': 'ignored, must survive\n' })
     const upstreamSha = await advanceOrigin()
 
@@ -327,9 +338,8 @@ test.describe('install.sh updating an existing checkout', () => {
   })
 
   test('failure path: another modified file — nothing is touched (not even the lockfile), update skipped, banner printed', async () => {
-    await seedExistingCheckout()
+    await seedLockfileOnlyChange()
     const seededSha = await headSha(dest)
-    await fs.appendFile(path.join(dest, 'package-lock.json'), 'rewritten by an old npm install\n')
     await writeFiles(dest, { 'src/server.ts': 'my own edit\n' })
     await advanceOrigin()
 
@@ -340,7 +350,7 @@ test.describe('install.sh updating an existing checkout', () => {
     expect(await fs.readFile(path.join(dest, 'src/server.ts'), 'utf-8')).toBe('my own edit\n')
     expect(await porcelainStatus(dest)).toBe('M package-lock.json\n M src/server.ts')
     expect(lines(result.stdout)).not.toContain(LOCKFILE_RESTORED_LINE)
-    await expectNotUpdatedBanner(result, `git -C ${dest} status`)
+    await expectNotUpdatedBanner(result, `git -C ${dest} stash push --include-untracked`)
     await expectInstalledVersionLines(result)
     await expectSkillsLinkedToDest()
   })
@@ -356,8 +366,62 @@ test.describe('install.sh updating an existing checkout', () => {
 
     expect(await headSha(dest)).toBe(seededSha)
     expect(await fs.readFile(path.join(dest, 'notes.md'), 'utf-8')).toBe('my notes\n')
+    await expectNotUpdatedBanner(result, `git -C ${dest} stash push --include-untracked`)
+    await expectInstalledVersionLines(result)
+  })
+
+  test('failure path: a STAGED package-lock.json change is the user\'s own — left staged, update skipped, banner printed', async () => {
+    await seedLockfileOnlyChange()
+    await git(dest, ['add', 'package-lock.json'])
+    const seededSha = await headSha(dest)
+    await advanceOrigin()
+
+    const result = await runInstaller({ withStubBin: true })
+    expect(result.exitCode, result.all).toBe(0)
+
+    expect(await headSha(dest)).toBe(seededSha)
+    expect(await porcelainStatus(dest)).toBe('M  package-lock.json')
+    expect(lines(result.stdout)).not.toContain(LOCKFILE_RESTORED_LINE)
+    await expectNotUpdatedBanner(result, `git -C ${dest} stash push --include-untracked`)
+  })
+
+  test('a warning git prints on stderr during status does not count as a local change', async () => {
+    await seedLockfileOnlyChange()
+    const upstreamSha = await advanceOrigin()
+
+    const result = await runInstaller({ withStubBin: true, stubEnv: { STUB_GIT_WARN_ON: 'status' } })
+    expect(result.exitCode, result.all).toBe(0)
+
+    expect(await headSha(dest)).toBe(upstreamSha)
+    expect(result.stderr).not.toContain(NOT_UPDATED_TITLE)
+  })
+
+  test('failure path: git status failing skips the update with a banner instead of aborting the install', async () => {
+    await seedExistingCheckout()
+    const seededSha = await headSha(dest)
+    await advanceOrigin()
+
+    const result = await runInstaller({ withStubBin: true, stubEnv: { STUB_GIT_FAIL_ON: 'status' } })
+    expect(result.exitCode, result.all).toBe(0)
+
+    expect(await headSha(dest)).toBe(seededSha)
+    expect(result.stderr).toContain('fatal: injected status failure')
     await expectNotUpdatedBanner(result, `git -C ${dest} status`)
     await expectInstalledVersionLines(result)
+  })
+
+  test('failure path: restoring package-lock.json failing skips the update with a banner and leaves the change', async () => {
+    await seedLockfileOnlyChange()
+    const seededSha = await headSha(dest)
+    await advanceOrigin()
+
+    const result = await runInstaller({ withStubBin: true, stubEnv: { STUB_GIT_FAIL_ON: 'checkout' } })
+    expect(result.exitCode, result.all).toBe(0)
+
+    expect(await headSha(dest)).toBe(seededSha)
+    expect(await porcelainStatus(dest)).toBe('M package-lock.json')
+    expect(result.stderr).toContain('fatal: injected checkout failure')
+    await expectNotUpdatedBanner(result, `git -C ${dest} checkout -- package-lock.json`)
   })
 
   test('failure path: a checkout on another branch is never switched, banner gives the switch command', async () => {
@@ -462,7 +526,7 @@ test.describe('install.sh updating an existing checkout', () => {
   })
 
   test('npm ci failing falls back to npm install --no-save, says so, and still leaves the checkout clean', async () => {
-    const result = await runInstaller({ withStubBin: true, gitEnv: { STUB_NPM_CI_EXIT: '1' } })
+    const result = await runInstaller({ withStubBin: true, stubEnv: { STUB_NPM_CI_EXIT: '1' } })
     expect(result.exitCode, result.all).toBe(0)
 
     expect(await fs.readFile(callLog, 'utf-8')).toContain(`npm --prefix ${dest} install --no-save`)
@@ -471,7 +535,7 @@ test.describe('install.sh updating an existing checkout', () => {
   })
 
   test('failure path: npm ci and the fallback both failing is reported and exits non-zero', async () => {
-    const result = await runInstaller({ withStubBin: true, gitEnv: { STUB_NPM_CI_EXIT: '1', STUB_NPM_INSTALL_EXIT: '1' } })
+    const result = await runInstaller({ withStubBin: true, stubEnv: { STUB_NPM_CI_EXIT: '1', STUB_NPM_INSTALL_EXIT: '1' } })
     expect(result.exitCode).not.toBe(0)
 
     expect(lines(result.stderr)).toContain('install.sh: installing dependencies failed (see npm output above).')
@@ -515,7 +579,7 @@ test.describe('install.sh prerequisite preflight', () => {
   })
 
   test('failure path: Node older than 20 — reported with the version found', async () => {
-    const result = await runInstaller({ withStubBin: true, gitEnv: { STUB_NODE_VERSION: UNSUPPORTED_NODE_VERSION } })
+    const result = await runInstaller({ withStubBin: true, stubEnv: { STUB_NODE_VERSION: UNSUPPORTED_NODE_VERSION } })
     expect(result.exitCode).not.toBe(0)
     expect(result.all).toContain('20+')
     expect(result.all).toContain(UNSUPPORTED_NODE_VERSION)
@@ -533,7 +597,7 @@ test.describe('install.sh prerequisite preflight', () => {
   })
 
   test('failure path: gh installed but not signed in — fix is gh auth login', async () => {
-    const result = await runInstaller({ withStubBin: true, gitEnv: { STUB_GH_AUTH_EXIT: '1' } })
+    const result = await runInstaller({ withStubBin: true, stubEnv: { STUB_GH_AUTH_EXIT: '1' } })
     expect(result.exitCode).not.toBe(0)
     expect(await callsSoFar()).toContain('gh auth status')
     expect(result.all).toContain('gh auth login')
@@ -560,7 +624,7 @@ test.describe('install.sh prerequisite preflight', () => {
   })
 
   test('failure path: not macOS — says macOS is required and stops', async () => {
-    const result = await runInstaller({ withStubBin: true, gitEnv: { STUB_UNAME: 'Linux' } })
+    const result = await runInstaller({ withStubBin: true, stubEnv: { STUB_UNAME: 'Linux' } })
     expect(result.exitCode).not.toBe(0)
     expect(result.all).toMatch(/macOS/)
     await expectNothingChanged()
@@ -614,7 +678,7 @@ test.describe('install.sh prerequisite preflight', () => {
   })
 
   test('failure path: git is only the Command Line Tools shim — reported missing with the xcode-select fix', async () => {
-    const result = await runInstaller({ withStubBin: true, gitEnv: { STUB_GIT_VERSION_EXIT: '1' } })
+    const result = await runInstaller({ withStubBin: true, stubEnv: { STUB_GIT_VERSION_EXIT: '1' } })
     expect(result.exitCode).not.toBe(0)
     expect(result.all).toContain('xcode-select --install')
     await expectNothingChanged()
@@ -627,7 +691,7 @@ test.describe('install.sh prerequisite preflight', () => {
 
   test('failure path: gh auth hangs — the check is bounded and reported, not waited on forever', async () => {
     const startedAt = Date.now()
-    const result = await runInstaller({ withStubBin: true, gitEnv: { STUB_GH_AUTH_DELAY: '30', PIPELINELY_GH_TIMEOUT_SECONDS: '1' } })
+    const result = await runInstaller({ withStubBin: true, stubEnv: { STUB_GH_AUTH_DELAY: '30', PIPELINELY_GH_TIMEOUT_SECONDS: '1' } })
     expect(Date.now() - startedAt).toBeLessThan(15_000)
     expect(result.exitCode).not.toBe(0)
     expect(result.all).toContain('gh auth login')
@@ -645,7 +709,7 @@ test.describe('install.sh prerequisite preflight', () => {
     await fs.mkdir(fakeSystemApps)
     const result = await runInstaller({
       withStubBin: true,
-      gitEnv: { HOME: spacedHome, PIPELINELY_APP_DIRS: `${fakeSystemApps}:${spacedHome}/Applications` },
+      stubEnv: { HOME: spacedHome, PIPELINELY_APP_DIRS: `${fakeSystemApps}:${spacedHome}/Applications` },
     })
     expect(result.all).not.toContain('iTerm2 not found')
   })
@@ -663,7 +727,7 @@ test.describe('install.sh prerequisite preflight', () => {
     test(`an invalid gh timeout (${invalidTimeout}) falls back to the default instead of killing gh at once`, async () => {
       const result = await runInstaller({
         withStubBin: true,
-        gitEnv: { PIPELINELY_GH_TIMEOUT_SECONDS: invalidTimeout, STUB_GH_AUTH_DELAY: '1' },
+        stubEnv: { PIPELINELY_GH_TIMEOUT_SECONDS: invalidTimeout, STUB_GH_AUTH_DELAY: '1' },
       })
       expect(result.exitCode, result.all).toBe(0)
       expect(result.all).toContain('gh signed in')
@@ -671,7 +735,7 @@ test.describe('install.sh prerequisite preflight', () => {
   }
 
   test('failure path: node exists but errors on --version — reported, not a crash', async () => {
-    const result = await runInstaller({ withStubBin: true, gitEnv: { STUB_NODE_BROKEN: '1' } })
+    const result = await runInstaller({ withStubBin: true, stubEnv: { STUB_NODE_BROKEN: '1' } })
     expect(result.exitCode).not.toBe(0)
     expect(result.all).toContain('20+')
     expect(result.all).toContain('brew install node')
@@ -680,7 +744,7 @@ test.describe('install.sh prerequisite preflight', () => {
 
   test('failure path: not macOS — no brew or Homebrew advice is printed', async () => {
     await removeStub('node')
-    const result = await runInstaller({ withStubBin: true, gitEnv: { STUB_UNAME: 'Linux' } })
+    const result = await runInstaller({ withStubBin: true, stubEnv: { STUB_UNAME: 'Linux' } })
     expect(result.exitCode).not.toBe(0)
     expect(result.all).toMatch(/macOS/)
     expect(result.all).not.toContain('brew')
@@ -693,7 +757,7 @@ test.describe('install.sh prerequisite preflight', () => {
     await writeFiles(intelPrefix, { 'bin/brew': '#!/bin/sh\nexit 0\n' })
     await fs.chmod(path.join(intelPrefix, 'bin', 'brew'), 0o755)
 
-    const result = await runInstaller({ withStubBin: true, gitEnv: { PIPELINELY_BREW_PREFIXES: `${brewPrefix}:${intelPrefix}` } })
+    const result = await runInstaller({ withStubBin: true, stubEnv: { PIPELINELY_BREW_PREFIXES: `${brewPrefix}:${intelPrefix}` } })
     expect(result.all).toContain(`${intelPrefix}/bin/brew shellenv`)
     expect(result.all).not.toContain('Homebrew/install')
   })
@@ -712,7 +776,7 @@ test.describe('install.sh prerequisite preflight', () => {
     await writeFiles(brewPrefix, { 'bin/brew': '#!/bin/sh\nexit 0\n' })
     await fs.chmod(path.join(brewPrefix, 'bin', 'brew'), 0o755)
 
-    const result = await runInstaller({ withStubBin: true, gitEnv: { SHELL: '/bin/zsh' } })
+    const result = await runInstaller({ withStubBin: true, stubEnv: { SHELL: '/bin/zsh' } })
     expect(result.all).toContain(`>> ~/.zprofile`)
   })
 

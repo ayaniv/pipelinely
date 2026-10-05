@@ -88,8 +88,10 @@ update_existing_checkout() {
     skip_update "it has no 'origin' remote to update from" "" "git -C $quoted_dest remote add origin $REMOTE"
     return
   fi
-  if ! local_changes="$(git -C "$DEST" status --porcelain 2>&1)"; then
-    skip_update "git status failed" "$local_changes" "git -C $quoted_dest status"
+  # stderr stays out of the change list: a warning git prints while still
+  # succeeding must not make a clean checkout look modified.
+  if ! local_changes="$(git -C "$DEST" status --porcelain)"; then
+    skip_update "git status failed (see git's error above)" "" "git -C $quoted_dest status"
     return
   fi
   if [[ "$local_changes" == "$INSTALLER_OWNED_CHANGE" ]]; then
@@ -99,7 +101,7 @@ update_existing_checkout() {
     fi
     echo "Restored $LOCKFILE (an earlier install rewrote it) before updating."
   elif [[ -n "$local_changes" ]]; then
-    skip_update "it has local changes, which the installer never discards — commit or stash them yourself" "$local_changes" "git -C $quoted_dest status"
+    skip_update "it has local changes, which the installer never discards — commit them, or set them aside with the command below (bring them back later with git -C $quoted_dest stash pop)" "$local_changes" "git -C $quoted_dest stash push --include-untracked"
     return
   fi
   # No terminal prompt: a credential prompt would hang a piped `curl | sh`.
