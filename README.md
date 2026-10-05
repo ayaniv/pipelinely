@@ -94,25 +94,8 @@ curl -fsSL https://pipelinely.cc/install.sh | sh
 ```
 
 `PIPELINELY_DIR` overrides where it clones to (defaults to
-`~/Dev/pipelinely`). Safe to re-run any time.
-
-**Updating:** re-run the same one-liner. On an existing checkout it
-fast-forwards `main` to the latest commit, reinstalls dependencies with
-`npm ci` (which never rewrites the tracked `package-lock.json`), repoints the
-skills, and ends by printing the installed checkout, commit and version.
-Restart Claude Code afterwards — it reads skills only at session start.
-
-It never switches your branch, discards your changes, or forces a merge. If
-the checkout is on another branch, has local changes, has diverged from
-`origin/main`, or can't reach GitHub, the install still finishes, but its
-output ends with a **`pipelinely was NOT updated.`** block: the reason,
-git's own error, and the exact command to run (for example
-`git -C ~/Dev/pipelinely switch main`) before re-running the one-liner. Until
-you do, your skills still point at the old checkout. (The one exception is a
-`package-lock.json` rewritten by an older version of the installer: that
-change is the installer's own, so it restores the file and updates.)
-
-Or do it by hand:
+`~/Dev/pipelinely`). Safe to re-run any time — it always picks up your
+latest checkout. Or do it by hand:
 
 ```bash
 git clone https://github.com/ayaniv/pipelinely.git ~/Dev/pipelinely
