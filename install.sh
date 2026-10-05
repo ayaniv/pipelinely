@@ -5,7 +5,7 @@
 # installs dependencies, symlinks the pipeline skills into ~/.claude/skills,
 # and runs every optional dotfiles installer whose required binary is already
 # on PATH. Safe to re-run — re-running is how an existing install picks up
-# updates.
+# updates, and when it can't update, it says so at the end of its output.
 # Usage: curl -fsSL https://pipelinely.cc/install.sh | sh
 #    or: bash install.sh   (from an existing clone)
 # Overrides (all optional): PIPELINELY_DIR, PIPELINELY_REMOTE, and — so tests
@@ -30,6 +30,13 @@ GH_AUTH_TIMEOUT_SECONDS="${PIPELINELY_GH_TIMEOUT_SECONDS:-$DEFAULT_GH_AUTH_TIMEO
 # itself contain a space (/Users/Jane Doe).
 IFS=: read -r -a APP_DIRS <<< "${PIPELINELY_APP_DIRS:-/Applications:$HOME/Applications}"
 IFS=: read -r -a BREW_PREFIXES <<< "${PIPELINELY_BREW_PREFIXES:-/opt/homebrew:/usr/local}"
+INSTALLER_COMMAND='curl -fsSL https://pipelinely.cc/install.sh | sh'
+LOCKFILE=package-lock.json
+# The one local change the installer may discard: installers before npm ci
+# ran `npm install`, which rewrote the tracked lockfile on every machine, so
+# every existing checkout carries exactly this change.
+INSTALLER_OWNED_CHANGE=" M $LOCKFILE"
+BANNER_RULE='========================================================================'
 HOMEBREW_INSTALL_COMMAND='/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
 
 # Parallel arrays (bash 3.2 on macOS has no associative arrays): the Nth
@@ -37,22 +44,121 @@ HOMEBREW_INSTALL_COMMAND='/bin/bash -c "$(curl -fsSL https://raw.githubuserconte
 MISSING_ITEMS=()
 MISSING_FIXES=()
 
+# Why an existing checkout wasn't updated, git's own error text (if any) and
+# the command that fixes it. Empty reason = not skipped.
+UPDATE_SKIPPED_REASON=""
+UPDATE_SKIPPED_DETAIL=""
+UPDATE_FIX_COMMAND=""
+# Claude Code reads skills only at session start, so any new commit or newly
+# pointed skill link needs a restart to take effect.
+NEEDS_CLAUDE_RESTART=false
+
+# "<short sha> (<commit date>)" of the checkout's HEAD.
+describe_commit() {
+  echo "$(git -C "$DEST" rev-parse --short HEAD) ($(git -C "$DEST" log -1 --date=short --format=%cd))"
+}
+
+# Records why the update was skipped, for print_not_updated_banner to repeat
+# after "Done". $1 = reason, $2 = git's error text (may be empty), $3 = the
+# fix command.
+skip_update() {
+  UPDATE_SKIPPED_REASON="$1"
+  UPDATE_SKIPPED_DETAIL="$2"
+  UPDATE_FIX_COMMAND="$3"
+  echo "NOT updating $DEST: $1 (details at the end)." >&2
+}
+
 # Fast-forwards an existing checkout so re-running the installer updates it.
-# Never touches a checkout with local changes or on another branch, and
-# --ff-only refuses rather than merges on divergence — a failed or skipped
-# update must not abort the rest of the install.
+# Never switches branches, never forces, and never discards anything but the
+# lockfile change older installers made themselves. A skipped update must not
+# abort the rest of the install, but it is never silent either.
 update_existing_checkout() {
-  local current_branch
-  current_branch="$(git -C "$DEST" symbolic-ref -q --short HEAD || true)"
-  if [[ "$current_branch" != "$UPDATE_BRANCH" ]]; then
-    echo "Found existing checkout at $DEST — skipping update (not on ${UPDATE_BRANCH})."
-  elif [[ -n "$(git -C "$DEST" status --porcelain)" ]]; then
-    echo "Found existing checkout at $DEST — skipping update (local changes)."
-  elif git -C "$DEST" pull --ff-only; then
-    echo "Updated existing checkout at $DEST."
-  else
-    echo "Found existing checkout at $DEST — update failed (see above); continuing with what's there." >&2
+  local quoted_dest current_branch local_changes restore_output fetch_output merge_output old_head
+  quoted_dest="$(printf '%q' "$DEST")"
+  echo "Found existing checkout at $DEST — updating it..."
+  if ! current_branch="$(git -C "$DEST" symbolic-ref -q --short HEAD)"; then
+    skip_update "HEAD is detached (no branch is checked out)" "" "git -C $quoted_dest switch $UPDATE_BRANCH"
+    return
   fi
+  if [[ "$current_branch" != "$UPDATE_BRANCH" ]]; then
+    skip_update "it is on branch '$current_branch', not '$UPDATE_BRANCH', and the installer never switches branches for you" "" "git -C $quoted_dest switch $UPDATE_BRANCH"
+    return
+  fi
+  if ! git -C "$DEST" remote get-url origin >/dev/null 2>&1; then
+    skip_update "it has no 'origin' remote to update from" "" "git -C $quoted_dest remote add origin $REMOTE"
+    return
+  fi
+  if ! local_changes="$(git -C "$DEST" status --porcelain 2>&1)"; then
+    skip_update "git status failed" "$local_changes" "git -C $quoted_dest status"
+    return
+  fi
+  if [[ "$local_changes" == "$INSTALLER_OWNED_CHANGE" ]]; then
+    if ! restore_output="$(git -C "$DEST" checkout -- "$LOCKFILE" 2>&1)"; then
+      skip_update "restoring $LOCKFILE failed" "$restore_output" "git -C $quoted_dest checkout -- $LOCKFILE"
+      return
+    fi
+    echo "Restored $LOCKFILE (an earlier install rewrote it) before updating."
+  elif [[ -n "$local_changes" ]]; then
+    skip_update "it has local changes, which the installer never discards — commit or stash them yourself" "$local_changes" "git -C $quoted_dest status"
+    return
+  fi
+  # No terminal prompt: a credential prompt would hang a piped `curl | sh`.
+  if ! fetch_output="$(GIT_TERMINAL_PROMPT=0 git -C "$DEST" fetch origin "$UPDATE_BRANCH" 2>&1)"; then
+    skip_update "fetching from origin failed (offline?), so nothing was changed" "$fetch_output" "git -C $quoted_dest fetch origin $UPDATE_BRANCH"
+    return
+  fi
+  old_head="$(git -C "$DEST" rev-parse HEAD)"
+  if ! merge_output="$(git -C "$DEST" merge --ff-only FETCH_HEAD 2>&1)"; then
+    skip_update "local $UPDATE_BRANCH has diverged from origin and can't be fast-forwarded, and the installer never forces" "$merge_output" "git -C $quoted_dest pull --rebase origin $UPDATE_BRANCH"
+    return
+  fi
+  if [[ "$(git -C "$DEST" rev-parse HEAD)" == "$old_head" ]]; then
+    echo "Already up to date at $(describe_commit)."
+  else
+    NEEDS_CLAUDE_RESTART=true
+    echo "Updated to $(describe_commit)."
+  fi
+}
+
+# Repeats a skipped update after "Done", where it can't scroll away unread.
+print_not_updated_banner() {
+  [[ -n "$UPDATE_SKIPPED_REASON" ]] || return 0
+  {
+    echo
+    echo "$BANNER_RULE"
+    echo "pipelinely was NOT updated."
+    echo "  Why: $UPDATE_SKIPPED_REASON."
+    [[ -z "$UPDATE_SKIPPED_DETAIL" ]] || sed 's/^/      /' <<< "$UPDATE_SKIPPED_DETAIL"
+    echo "  To fix it, run:"
+    echo "    $UPDATE_FIX_COMMAND"
+    echo "  then re-run: $INSTALLER_COMMAND"
+    echo "  Until then, the installed skills still point at the OLD checkout: $DEST at $(describe_commit)."
+    echo "$BANNER_RULE"
+  } >&2
+}
+
+print_installed_version() {
+  echo "Installed pipelinely:"
+  echo "  checkout: $DEST"
+  echo "  commit:   $(describe_commit)"
+  echo "  version:  $(git -C "$DEST" describe --tags 2>/dev/null || echo untagged)"
+}
+
+# npm ci installs exactly the committed lockfile and never rewrites it, so the
+# checkout stays clean and the next re-run can update it. If ci refuses (say,
+# a lockfile out of sync with a locally edited package.json), npm install
+# --no-save resolves the tree without writing the lockfile back either.
+install_dependencies() {
+  if npm --prefix "$DEST" ci --no-audit --no-fund; then
+    return
+  fi
+  echo "npm ci failed (see above) — retrying with npm install --no-save." >&2
+  if npm --prefix "$DEST" install --no-save --no-audit --no-fund; then
+    return
+  fi
+  echo "install.sh: installing dependencies failed (see npm output above)." >&2
+  print_not_updated_banner
+  exit 1
 }
 
 record_ok() {
@@ -232,6 +338,7 @@ preflight
 if [[ ! -e "$DEST" ]]; then
   echo "Cloning pipelinely into $DEST..."
   git clone "$REMOTE" "$DEST"
+  NEEDS_CLAUDE_RESTART=true
 elif ! git -C "$DEST" rev-parse --git-dir >/dev/null 2>&1; then
   echo "install.sh: $DEST exists and is not a git repository" >&2
   exit 1
@@ -243,7 +350,7 @@ fi
 source "$DEST/dotfiles/lib/install-helpers.sh"
 
 echo "Installing dependencies..."
-npm --prefix "$DEST" install
+install_dependencies
 
 echo "Linking pipeline skills into ~/.claude/skills..."
 SKILLS_DIR="$HOME/.claude/skills"
@@ -254,12 +361,17 @@ for skill_source in "$DEST"/.claude/skills/*/; do
   skill_source="${skill_source%/}"
   name="$(basename "$skill_source")"
   target="$SKILLS_DIR/$name"
+  if [[ -L "$target" && "$(readlink "$target")" == "$skill_source" ]]; then
+    echo "  already linked $name"
+    continue
+  fi
   if [[ -e "$target" && ! -L "$target" ]]; then
     backup_path "$target" "$BACKUP_DIR/$name.$TIMESTAMP"
     echo "  backed up existing $name to ~/.claude/skills.bak/"
   fi
   ln -sfn "$skill_source" "$target"
   echo "  linked $name"
+  NEEDS_CLAUDE_RESTART=true
 done
 
 echo "Running optional dotfiles installers (each skips itself if its required binary isn't on PATH)..."
@@ -276,3 +388,9 @@ echo
 echo "Done. Next steps:"
 echo "  cd $DEST && npm start"
 echo "  then run /pipelinely in a dedicated Claude Code tab"
+if [[ "$NEEDS_CLAUDE_RESTART" == true ]]; then
+  echo "Restart Claude Code so it loads the updated skills (it reads skills only at session start)."
+fi
+print_not_updated_banner
+echo
+print_installed_version
