@@ -58,6 +58,19 @@ describe_commit() {
   echo "$(git -C "$DEST" rev-parse --short HEAD) ($(git -C "$DEST" log -1 --date=short --format=%cd))"
 }
 
+# Quotes $1 for a command the user will copy out of the banner. Single quotes,
+# not printf %q: macOS's bash 3.2 %q splits a multi-byte UTF-8 character into
+# lone octal escapes under a UTF-8 locale, which a terminal prints as U+FFFD,
+# so the copied command names a path that doesn't exist. A path of only
+# shell-safe characters is left bare.
+shell_quote() {
+  if [[ "$1" =~ ^[A-Za-z0-9_./-]+$ ]]; then
+    printf '%s' "$1"
+  else
+    printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+  fi
+}
+
 # Records why the update was skipped, for print_not_updated_banner to repeat
 # after "Done". $1 = reason, $2 = git's error text (may be empty), $3 = the
 # fix command.
@@ -74,7 +87,7 @@ skip_update() {
 # abort the rest of the install, but it is never silent either.
 update_existing_checkout() {
   local quoted_dest current_branch local_changes restore_output fetch_output merge_output old_head
-  quoted_dest="$(printf '%q' "$DEST")"
+  quoted_dest="$(shell_quote "$DEST")"
   echo "Found existing checkout at $DEST — updating it..."
   if ! current_branch="$(git -C "$DEST" symbolic-ref -q --short HEAD)"; then
     skip_update "HEAD is detached (no branch is checked out)" "" "git -C $quoted_dest switch $UPDATE_BRANCH"
@@ -160,6 +173,9 @@ install_dependencies() {
   fi
   echo "install.sh: installing dependencies failed (see npm output above)." >&2
   print_not_updated_banner
+  # The checkout is in place (maybe freshly updated) even though npm failed.
+  echo
+  print_installed_version
   exit 1
 }
 

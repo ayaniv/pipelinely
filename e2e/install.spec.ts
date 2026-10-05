@@ -540,6 +540,24 @@ test.describe('install.sh updating an existing checkout', () => {
 
     expect(lines(result.stderr)).toContain('install.sh: installing dependencies failed (see npm output above).')
     expect(lines(result.stdout)).not.toContain(DONE_LINE)
+    await expectInstalledVersionLines(result)
+    expect(result.stdout.trimEnd().endsWith('  version:  untagged')).toBe(true)
+  })
+
+  // macOS /bin/bash is 3.2, whose printf %q splits a multi-byte UTF-8
+  // character into lone octal escapes under a UTF-8 locale: the terminal
+  // shows U+FFFD and the copied fix command points at a path that doesn't exist.
+  test('failure path: a non-ASCII checkout path is quoted so the banner\'s fix command can be copied as printed', async () => {
+    dest = path.join(home, 'Jöhn Dœ home', 'pïpe lïnely')
+    await seedExistingCheckout()
+    await writeFiles(dest, { 'notes.md': 'my notes\n' })
+
+    const result = await runInstaller({ withStubBin: true, stubEnv: { LANG: 'en_US.UTF-8' } })
+    expect(result.exitCode, result.all).toBe(0)
+
+    expect(result.stderr).not.toContain('\uFFFD')
+    await expectNotUpdatedBanner(result, `git -C '${dest}' stash push --include-untracked`)
+    expect(result.stderr).toContain(`git -C '${dest}' stash pop`)
   })
 })
 
