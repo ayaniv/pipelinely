@@ -24,7 +24,7 @@ For each checked failure, find and fix the root cause — don't just patch the s
 
 ## Step 3 — Re-verify locally
 
-Re-run the verifier / e2e suite locally and confirm green before considering this done. Don't rely on the next QA pass to catch a fix that doesn't actually work.
+Re-run the verifier (and the e2e suite, only when e2e is on — see the **E2E** bullet in `docs/engineering-constraints.md`) locally and confirm green before considering this done. Don't rely on the next QA pass to catch a fix that doesn't actually work.
 
 ## Step 4 — Commit, push, and report
 

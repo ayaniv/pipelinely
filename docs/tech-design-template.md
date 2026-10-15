@@ -157,7 +157,7 @@ Time estimations for a task should be the total time, end-to-end, it takes from 
 
 - [ ] Done task
 - [ ] QA approved
-- [ ] E2E passed
+- [ ] E2E passed (skip while e2e is off — see the **E2E** bullet in `docs/engineering-constraints.md`)
 - [ ] Tests passes
 - [ ] Analytics events approved
 - [ ] Final sync with PM
