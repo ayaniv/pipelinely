@@ -13,6 +13,10 @@ private development history, going back to the first commit on 2026-06-27,
 included so the arc of how this got built is visible rather than starting
 from a blank slate.
 
+## 2026-10-24
+
+- [#12](https://github.com/ayaniv/pipelinely/pull/12) Release 0.3.0: parent tasks and wave runs on the dashboard, /pipelinely-babysit, and tmux-only dispatch
+
 ## 2026-10-02
 
 - [#9](https://github.com/ayaniv/pipelinely/pull/9) Release 0.2.0: React dashboard, opt-in remote access, and approving blocked workers from the dashboard
