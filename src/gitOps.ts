@@ -243,6 +243,20 @@ export async function commitAndRemoveWorktree(
 // Refs a task branch might have forked from, most authoritative first.
 const BASE_REF_CANDIDATES = ['origin/HEAD', 'origin/master', 'origin/main', 'master', 'main']
 
+// The ref a task branch most likely forked from — the first of
+// BASE_REF_CANDIDATES that exists — by its branch name, so origin/HEAD reads
+// as the origin/<branch> it points at. null when none exists. A failing git
+// call throws; callers log it in their own context.
+export async function resolveBaseRef(worktreePath: string): Promise<string | null> {
+  for (const baseRef of BASE_REF_CANDIDATES) {
+    const hasBaseRef = await execa('git', ['-C', worktreePath, 'rev-parse', '--verify', '--quiet', baseRef], { reject: false })
+    if (hasBaseRef.exitCode !== 0) continue
+    const { stdout } = await execa('git', ['-C', worktreePath, 'rev-parse', '--abbrev-ref', baseRef])
+    return stdout.trim() || baseRef
+  }
+  return null
+}
+
 // A dashboard refresh reads every task waiting at a QA-entry marker, and a
 // task that needs QA stays there for days. The diff only changes when the
 // branch's HEAD does, so it is cached per worktree keyed on that sha.
@@ -258,16 +272,15 @@ export async function listBranchChangedFiles(worktreePath: string): Promise<stri
     const cached = changedFilesCache.get(worktreePath)
     if (cached?.headSha === headSha) return cached.files
 
-    for (const baseRef of BASE_REF_CANDIDATES) {
-      const hasBaseRef = await execa('git', ['-C', worktreePath, 'rev-parse', '--verify', '--quiet', baseRef], { reject: false })
-      if (hasBaseRef.exitCode !== 0) continue
-      const { stdout } = await execa('git', ['-C', worktreePath, 'diff', '--name-only', `${baseRef}...HEAD`])
-      const files = stdout.split('\n').filter(Boolean)
-      changedFilesCache.set(worktreePath, { headSha, files })
-      return files
+    const baseRef = await resolveBaseRef(worktreePath)
+    if (!baseRef) {
+      console.error(`No base ref found to diff ${worktreePath} against`)
+      return null
     }
-    console.error(`No base ref found to diff ${worktreePath} against`)
-    return null
+    const { stdout } = await execa('git', ['-C', worktreePath, 'diff', '--name-only', `${baseRef}...HEAD`])
+    const files = stdout.split('\n').filter(Boolean)
+    changedFilesCache.set(worktreePath, { headSha, files })
+    return files
   } catch (err) {
     console.error(`Failed to list changed files in ${worktreePath}:`, err)
     return null

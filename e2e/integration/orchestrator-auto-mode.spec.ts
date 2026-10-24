@@ -2,7 +2,15 @@ import { test, expect, type APIRequestContext } from '@playwright/test'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { withOrchestratorSessionLock } from '../fixtures/orchestratorSessionLock.js'
-import { openScratchSession, closeScratchSession, readSessionContents } from '../fixtures/itermSessions.js'
+import { randomUUID } from 'node:crypto'
+import {
+  openScratchSession,
+  closeScratchSession,
+  attachSessionToTmux,
+  createOrchestratorTmuxSession,
+  readTmuxPaneContents,
+  killTmuxSession,
+} from '../fixtures/itermSessions.js'
 import {
   FIXTURE_TASKS_DIR,
   SETTINGS_PATH,
@@ -18,7 +26,7 @@ import {
 // into the orchestrator's own session when a task hands off at a MECHANICAL
 // transition, and never at a judgment-call one.
 //
-// Why real osascript (no route mocking): the whole claim under test is
+// Why a real tmux pane (no route mocking): the whole claim under test is
 // "a command actually reached the orchestrator's session, unattended" —
 // and, for the negative cases, that one did NOT. A route-level assertion
 // can only see that the server decided to dispatch; it cannot distinguish
@@ -32,8 +40,15 @@ import {
 // demonstrably completed a full advancement pass over the same task list,
 // so the negative's continued absence is a real result rather than a race
 // against a slow watcher.
+//
+// The scratch orchestrator is a uniquely named tmux session whose pane runs a
+// fake claude, named in the fixture ORCHESTRATOR_TMUX. Auto mode is a 'send'
+// write, which pastes into that pane without ever raising iTerm2, so delivery
+// is read straight from the pane with capture-pane. No iTerm2 tab is involved
+// except in the one test about the manual CTA, which focuses a tab.
 
 const ORCHESTRATOR_SESSION_PATH = path.join(FIXTURE_TASKS_DIR, 'ORCHESTRATOR_SESSION')
+const ORCHESTRATOR_TMUX_PATH = path.join(FIXTURE_TASKS_DIR, 'ORCHESTRATOR_TMUX')
 
 // The STATUS phrases workers write on handoff — verbatim from
 // NEXT_STAGE_BY_WAITING_REASON in src/taskParser.ts.
@@ -53,6 +68,14 @@ const ALL_FIXTURES = [MECHANICAL, TRIAGE, MERGE, TASK_OFF, TASK_ON]
 // (ORCHESTRATOR_SESSION, SETTINGS.json, and the fixture tasks' STATUS /
 // TIMELINE), and playwright.config.ts turns fullyParallel on repo-wide.
 test.describe.configure({ mode: 'serial' })
+
+// Unique per test so a leaked session from an aborted run can never be mistaken
+// for this run's orchestrator.
+async function openOrchestratorPane(): Promise<string> {
+  const tmuxName = `cockpit-e2e-auto-${randomUUID().slice(0, 8)}`
+  await createOrchestratorTmuxSession(tmuxName)
+  return tmuxName
+}
 
 async function apiTask(request: APIRequestContext, slug: string) {
   const res = await request.get('/api/tasks')
@@ -91,11 +114,11 @@ function expectedCommand(skill: string, slug: string) {
 
 // The control dispatch every absence proof synchronises on: a transition
 // that MUST auto-dispatch under the settings the test has already applied.
-async function awaitControlDispatch(request: APIRequestContext, sessionId: string, slug: string) {
+async function awaitControlDispatch(request: APIRequestContext, tmuxName: string, slug: string) {
   await resetTask(request, slug)
   await handOff(slug, CR_MARKER)
   await expect
-    .poll(() => readSessionContents(sessionId), { timeout: 30_000 })
+    .poll(() => readTmuxPaneContents(tmuxName), { timeout: 30_000 })
     .toContain(expectedCommand('cr', slug))
 }
 
@@ -116,14 +139,16 @@ test.beforeEach(async () => {
 test.afterEach(async () => {
   await restoreTasks?.()
   await restoreSettings?.()
+  // The server re-records the iTerm tab attached to the pane in
+  // ORCHESTRATOR_SESSION after a write, so both pointers are reset.
+  await fs.rm(ORCHESTRATOR_TMUX_PATH, { force: true })
   await fs.rm(ORCHESTRATOR_SESSION_PATH, { force: true })
 })
 
-// UN-QUARANTINED 2026-09-07, developer decision: every test in this file calls
-// openScratchSession() and dispatches through the server's real
-// orchestrator-write path. Quarantined 2026-09-01 after this suite was
+// UN-QUARANTINED 2026-09-07, developer decision: every test in this file
+// dispatches through the server's real orchestrator-write path. Quarantined 2026-09-01 after this suite was
 // confirmed live to reach the developer's actual, real orchestrator tab (not
-// the fixture ORCHESTRATOR_SESSION under e2e/fixtures/tasks) and dispatch a
+// the fixture orchestrator pointers under e2e/fixtures/tasks) and dispatch a
 // real /pipelinely-cr command into it, twice. The leading suspected cause —
 // playwright.config.ts's `reuseExistingServer: true` picking up an
 // already-running stray server not scoped to this suite's fixture dirs — is
@@ -131,9 +156,9 @@ test.afterEach(async () => {
 // run-e2e-in-vm-m0/PR #60, merged into this branch). This file was also
 // relocated into e2e/integration/ so assertIsolatedEnvironment() gates it
 // outside a real VM. Not fixed: `openScratchSession`/`closeScratchSession`
-// (e2e/fixtures/itermSessions.ts) still iterate every open iTerm2 window on
-// the machine, not just this suite's own scratch sessions — no code-level
-// fix for that exists (run-e2e-in-vm's local-VM/tart approach was rejected
+// (e2e/fixtures/itermSessions.ts, used by the manual-CTA test only) still
+// iterate every open iTerm2 window on the machine, not just this suite's own
+// scratch sessions — no code-level fix for that exists (run-e2e-in-vm's local-VM/tart approach was rejected
 // and deleted; no remote VM path exists). Un-quarantined anyway, as a
 // deliberate developer decision to run this once, tonight, while unattended
 // — not because the underlying risk is fully closed.
@@ -141,17 +166,17 @@ test.describe('auto mode on — mechanical transitions advance themselves', () =
   // The headline case: dev hands off with a PR open, and CR starts without
   // anyone clicking anything.
   test('a dev → code-review handoff auto-submits /pipelinely-cr into the orchestrator', async ({ request }) => {
-    const sessionId = await openScratchSession()
+    const tmuxName = await openOrchestratorPane()
     try {
       await withOrchestratorSessionLock(async () => {
-        await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
+        await fs.writeFile(ORCHESTRATOR_TMUX_PATH, tmuxName + '\n')
         await setGlobalAutoMode(request, true)
         await resetTask(request, MECHANICAL)
 
         await handOff(MECHANICAL, CR_MARKER)
 
         await expect
-          .poll(() => readSessionContents(sessionId), { timeout: 30_000 })
+          .poll(() => readTmuxPaneContents(tmuxName), { timeout: 30_000 })
           .toContain(expectedCommand('cr', MECHANICAL))
 
         // Auto mode records what it did, in the same append-only file every
@@ -167,7 +192,7 @@ test.describe('auto mode on — mechanical transitions advance themselves', () =
         expect(autoTimelineEntries(timeline)[0]).toContain('code-review')
       })
     } finally {
-      await closeScratchSession(sessionId)
+      await killTmuxSession(tmuxName)
     }
   })
 
@@ -176,16 +201,16 @@ test.describe('auto mode on — mechanical transitions advance themselves', () =
   // also runs on a timer — so a level-triggered implementation would
   // re-dispatch the same handoff on every unrelated refresh.
   test('a mechanical transition dispatches exactly once, even as other tasks churn', async ({ request }) => {
-    const sessionId = await openScratchSession()
+    const tmuxName = await openOrchestratorPane()
     try {
       await withOrchestratorSessionLock(async () => {
-        await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
+        await fs.writeFile(ORCHESTRATOR_TMUX_PATH, tmuxName + '\n')
         await setGlobalAutoMode(request, true)
         await resetTask(request, MECHANICAL)
 
         await handOff(MECHANICAL, CR_MARKER)
         await expect
-          .poll(() => readSessionContents(sessionId), { timeout: 30_000 })
+          .poll(() => readTmuxPaneContents(tmuxName), { timeout: 30_000 })
           .toContain(expectedCommand('cr', MECHANICAL))
 
         // Force several more refresh passes over a task list that still
@@ -197,12 +222,12 @@ test.describe('auto mode on — mechanical transitions advance themselves', () =
 
         const timeline = (await readTaskFile(MECHANICAL, 'TIMELINE')) ?? ''
         expect(autoTimelineEntries(timeline)).toHaveLength(1)
-        const contents = await readSessionContents(sessionId)
+        const contents = await readTmuxPaneContents(tmuxName)
         const occurrences = contents.split(expectedCommand('cr', MECHANICAL)).length - 1
         expect(occurrences).toBe(1)
       })
     } finally {
-      await closeScratchSession(sessionId)
+      await killTmuxSession(tmuxName)
     }
   })
 })
@@ -212,17 +237,17 @@ test.describe('auto mode on — judgment-call transitions still stop for a human
   // Deciding which review findings are worth fixing is the human's call.
   // Auto mode must never dispatch /pipelinely-cr-fixes on their behalf.
   test('a CR-findings triage handoff never auto-dispatches', async ({ request }) => {
-    const sessionId = await openScratchSession()
+    const tmuxName = await openOrchestratorPane()
     try {
       await withOrchestratorSessionLock(async () => {
-        await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
+        await fs.writeFile(ORCHESTRATOR_TMUX_PATH, tmuxName + '\n')
         await setGlobalAutoMode(request, true)
         await resetTask(request, TRIAGE)
 
         await handOff(TRIAGE, CR_TRIAGE_MARKER)
-        await awaitControlDispatch(request, sessionId, MECHANICAL)
+        await awaitControlDispatch(request, tmuxName, MECHANICAL)
 
-        const contents = await readSessionContents(sessionId)
+        const contents = await readTmuxPaneContents(tmuxName)
         expect(contents).not.toContain('cr-fixes')
         expect(contents).not.toContain(TRIAGE)
         expect(autoTimelineEntries((await readTaskFile(TRIAGE, 'TIMELINE')) ?? '')).toHaveLength(0)
@@ -233,24 +258,24 @@ test.describe('auto mode on — judgment-call transitions still stop for a human
         expect(task.waitingReason).toContain(CR_TRIAGE_MARKER)
       })
     } finally {
-      await closeScratchSession(sessionId)
+      await killTmuxSession(tmuxName)
     }
   })
 
   // Merge is the one stage with no skill, deliberately — only an explicit
   // human action may move a task into "done".
   test('a QA-passed → merge handoff never auto-dispatches', async ({ request }) => {
-    const sessionId = await openScratchSession()
+    const tmuxName = await openOrchestratorPane()
     try {
       await withOrchestratorSessionLock(async () => {
-        await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
+        await fs.writeFile(ORCHESTRATOR_TMUX_PATH, tmuxName + '\n')
         await setGlobalAutoMode(request, true)
         await resetTask(request, MERGE)
 
         await handOff(MERGE, MERGE_MARKER)
-        await awaitControlDispatch(request, sessionId, MECHANICAL)
+        await awaitControlDispatch(request, tmuxName, MECHANICAL)
 
-        const contents = await readSessionContents(sessionId)
+        const contents = await readTmuxPaneContents(tmuxName)
         expect(contents).not.toContain(MERGE)
         expect(contents).not.toContain('/pipelinely-merge')
         expect(autoTimelineEntries((await readTaskFile(MERGE, 'TIMELINE')) ?? '')).toHaveLength(0)
@@ -259,7 +284,7 @@ test.describe('auto mode on — judgment-call transitions still stop for a human
         expect(task.status).toBe('waiting')
       })
     } finally {
-      await closeScratchSession(sessionId)
+      await killTmuxSession(tmuxName)
     }
   })
 })
@@ -267,10 +292,15 @@ test.describe('auto mode on — judgment-call transitions still stop for a human
 // Un-quarantined 2026-09-07 — see the note above the first describe block in this file.
 test.describe('auto mode off — every transition stays manual', () => {
   test('a mechanical transition dispatches nothing and leaves the manual CTA to do it', async ({ page, request }) => {
-    const sessionId = await openScratchSession()
+    const tmuxName = await openOrchestratorPane()
+    // The CTA is a 'stage' write, which focuses the tab attached to the
+    // orchestrator's tmux session. Attaching one up front keeps the server
+    // from opening a fresh window this test would have to hunt down.
+    const attachedTabId = await openScratchSession()
     try {
+      await attachSessionToTmux(attachedTabId, tmuxName)
       await withOrchestratorSessionLock(async () => {
-        await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
+        await fs.writeFile(ORCHESTRATOR_TMUX_PATH, tmuxName + '\n')
         await setGlobalAutoMode(request, false)
         await resetTask(request, MECHANICAL)
 
@@ -278,9 +308,9 @@ test.describe('auto mode off — every transition stays manual', () => {
         // TASK_ON carries a per-task AUTO_MODE=auto override, so it is the
         // one transition that still dispatches with the global switch off —
         // which makes it this test's control as well as its own scope proof.
-        await awaitControlDispatch(request, sessionId, TASK_ON)
+        await awaitControlDispatch(request, tmuxName, TASK_ON)
 
-        const contents = await readSessionContents(sessionId)
+        const contents = await readTmuxPaneContents(tmuxName)
         expect(contents).not.toContain(expectedCommand('cr', MECHANICAL))
         expect(autoTimelineEntries((await readTaskFile(MECHANICAL, 'TIMELINE')) ?? '')).toHaveLength(0)
 
@@ -291,11 +321,12 @@ test.describe('auto mode off — every transition stays manual', () => {
         await expect(page.getByTestId('task-detail')).toBeVisible()
         await page.getByTestId('l2-cta').first().click()
         await expect
-          .poll(() => readSessionContents(sessionId), { timeout: 15_000 })
+          .poll(() => readTmuxPaneContents(tmuxName), { timeout: 15_000 })
           .toContain(expectedCommand('cr', MECHANICAL))
       })
     } finally {
-      await closeScratchSession(sessionId)
+      await closeScratchSession(attachedTabId)
+      await killTmuxSession(tmuxName)
     }
   })
 })
@@ -303,17 +334,17 @@ test.describe('auto mode off — every transition stays manual', () => {
 // Un-quarantined 2026-09-07 — see the note above the first describe block in this file.
 test.describe('settings scope — a global default with per-task overrides', () => {
   test('a per-task manual override wins over the global switch being on', async ({ request }) => {
-    const sessionId = await openScratchSession()
+    const tmuxName = await openOrchestratorPane()
     try {
       await withOrchestratorSessionLock(async () => {
-        await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
+        await fs.writeFile(ORCHESTRATOR_TMUX_PATH, tmuxName + '\n')
         await setGlobalAutoMode(request, true)
         await resetTask(request, TASK_OFF)
 
         await handOff(TASK_OFF, CR_MARKER)
-        await awaitControlDispatch(request, sessionId, MECHANICAL)
+        await awaitControlDispatch(request, tmuxName, MECHANICAL)
 
-        expect(await readSessionContents(sessionId)).not.toContain(expectedCommand('cr', TASK_OFF))
+        expect(await readTmuxPaneContents(tmuxName)).not.toContain(expectedCommand('cr', TASK_OFF))
         expect(autoTimelineEntries((await readTaskFile(TASK_OFF, 'TIMELINE')) ?? '')).toHaveLength(0)
 
         const task = await apiTask(request, TASK_OFF)
@@ -321,21 +352,21 @@ test.describe('settings scope — a global default with per-task overrides', () 
         expect(task.autoMode).toBe(false)
       })
     } finally {
-      await closeScratchSession(sessionId)
+      await killTmuxSession(tmuxName)
     }
   })
 
   test('a per-task auto override wins over the global switch being off', async ({ request }) => {
-    const sessionId = await openScratchSession()
+    const tmuxName = await openOrchestratorPane()
     try {
       await withOrchestratorSessionLock(async () => {
-        await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
+        await fs.writeFile(ORCHESTRATOR_TMUX_PATH, tmuxName + '\n')
         await setGlobalAutoMode(request, false)
         await resetTask(request, TASK_ON)
 
         await handOff(TASK_ON, CR_MARKER)
         await expect
-          .poll(() => readSessionContents(sessionId), { timeout: 30_000 })
+          .poll(() => readTmuxPaneContents(tmuxName), { timeout: 30_000 })
           .toContain(expectedCommand('cr', TASK_ON))
 
         const task = await apiTask(request, TASK_ON)
@@ -343,7 +374,7 @@ test.describe('settings scope — a global default with per-task overrides', () 
         expect(task.autoMode).toBe(true)
       })
     } finally {
-      await closeScratchSession(sessionId)
+      await killTmuxSession(tmuxName)
     }
   })
 
@@ -351,10 +382,10 @@ test.describe('settings scope — a global default with per-task overrides', () 
   // while five tasks already sit at a handoff marker must not fire five
   // sessions at once for handoffs that happened before it was enabled.
   test('enabling auto mode does not dispatch tasks already sitting at a handoff', async ({ request }) => {
-    const sessionId = await openScratchSession()
+    const tmuxName = await openOrchestratorPane()
     try {
       await withOrchestratorSessionLock(async () => {
-        await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
+        await fs.writeFile(ORCHESTRATOR_TMUX_PATH, tmuxName + '\n')
         await setGlobalAutoMode(request, false)
         await resetTask(request, MECHANICAL)
 
@@ -367,13 +398,13 @@ test.describe('settings scope — a global default with per-task overrides', () 
 
         // TASK_ON dispatches on its own override, so it is a control that
         // proves a full advancement pass ran AFTER the switch was flipped.
-        await awaitControlDispatch(request, sessionId, TASK_ON)
+        await awaitControlDispatch(request, tmuxName, TASK_ON)
 
-        expect(await readSessionContents(sessionId)).not.toContain(expectedCommand('cr', MECHANICAL))
+        expect(await readTmuxPaneContents(tmuxName)).not.toContain(expectedCommand('cr', MECHANICAL))
         expect(autoTimelineEntries((await readTaskFile(MECHANICAL, 'TIMELINE')) ?? '')).toHaveLength(0)
       })
     } finally {
-      await closeScratchSession(sessionId)
+      await killTmuxSession(tmuxName)
     }
   })
 
@@ -427,12 +458,12 @@ test.describe('settings scope — a global default with per-task overrides', () 
 
 // Un-quarantined 2026-09-07 — see the note above the first describe block in this file.
 test.describe('auto mode failure paths', () => {
-  // A dispatch that cannot reach the orchestrator must be recorded and then
-  // left alone. Retrying on every refresh would hammer a dead session
+  // A dispatch that cannot reach the orchestrator (no ORCHESTRATOR_TMUX
+  // recorded, so the write is a 503) must be recorded and then left alone. Retrying on every refresh would hammer a dead session
   // forever; failing silently would leave a task looking like it advanced.
   test('a failed auto-dispatch is recorded once and never retried', async ({ request }) => {
     await withOrchestratorSessionLock(async () => {
-      await fs.rm(ORCHESTRATOR_SESSION_PATH, { force: true })
+      await fs.rm(ORCHESTRATOR_TMUX_PATH, { force: true })
       await setGlobalAutoMode(request, true)
       await resetTask(request, MECHANICAL)
 

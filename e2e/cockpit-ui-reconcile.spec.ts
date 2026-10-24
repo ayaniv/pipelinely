@@ -121,14 +121,12 @@ test.describe('active sessions card — reconciled against the design reference'
     await expect(page.locator('#detail-title')).toHaveText(/\S/)
   })
 
-  // Superseded: the design's own card summary (verified against Pipelinely
-  // Dashboard v2.dc.html's live renderer) has no per-status accent at all —
-  // plain paragraph text, same treatment regardless of status. The
-  // bordered/tinted callout this used to assert on was built against an
-  // earlier, since-superseded reference file.
-  test('a waiting/paused reason renders as plain text, carrying its own real content', async ({ page }) => {
+  // v3: a Needs-you card shows its reason as the stage-soft summary callout; a
+  // paused (Working-group) card keeps the plain note. Neither has a left
+  // border accent.
+  test('a waiting/paused reason renders without a border accent, carrying its own real content', async ({ page }) => {
     await page.goto('/')
-    const needsYouNote = card(page, NEEDS_YOU_SLUG).getByTestId('card-note')
+    const needsYouNote = card(page, NEEDS_YOU_SLUG).getByTestId('card-summary')
     const pausedNote = card(page, PAUSED_SLUG).getByTestId('card-note')
     await expect(needsYouNote).toBeVisible()
     await expect(pausedNote).toBeVisible()

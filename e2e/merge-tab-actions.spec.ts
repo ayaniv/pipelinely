@@ -42,7 +42,7 @@ test.describe('Open PR', () => {
     // doesn't depend on which one fired.
     await page.goto('/')
     await openCardMenu(page, 'merge-ready')
-    const btn = card(page, 'merge-ready').getByTestId('open-pr-btn')
+    const btn = page.getByTestId('open-pr-btn')
     await expect(btn).toBeVisible()
     await btn.click()
     await expect(btn).toHaveClass(/btn-err/)
@@ -57,7 +57,7 @@ test.describe('Open PR', () => {
     // would be absent because only the single latest dev note was checked.
     await page.goto('/')
     await openCardMenu(page, 'merge-ready-followup-dev-note')
-    const btn = card(page, 'merge-ready-followup-dev-note').getByTestId('open-pr-btn')
+    const btn = page.getByTestId('open-pr-btn')
     await expect(btn).toBeVisible()
   })
 })
@@ -110,7 +110,7 @@ test.describe('Mark done', () => {
     await withRestoredFixtureFiles('mark-done-no-worktree', ['STATUS'], async () => {
       await page.goto('/')
       await openCardMenu(page, 'mark-done-no-worktree')
-      const btn = card(page, 'mark-done-no-worktree').getByTestId('mark-done-btn')
+      const btn = page.getByTestId('mark-done-btn')
 
       let dialogFired = false
       page.once('dialog', (d) => { dialogFired = true; d.dismiss() })
@@ -137,7 +137,7 @@ test.describe('Mark done', () => {
     await withRestoredFixtureFiles('mark-done-with-worktree-dismiss', ['STATUS'], async () => {
       await page.goto('/')
       await openCardMenu(page, 'mark-done-with-worktree-dismiss')
-      const btn = card(page, 'mark-done-with-worktree-dismiss').getByTestId('mark-done-btn')
+      const btn = page.getByTestId('mark-done-btn')
 
       page.once('dialog', (d) => d.dismiss())
       await btn.click()
@@ -154,7 +154,7 @@ test.describe('Mark done', () => {
     await withRestoredFixtureFiles('mark-done-with-worktree', ['STATUS'], async () => {
       await page.goto('/')
       await openCardMenu(page, 'mark-done-with-worktree')
-      const btn = card(page, 'mark-done-with-worktree').getByTestId('mark-done-btn')
+      const btn = page.getByTestId('mark-done-btn')
 
       let dialogMessage = ''
       page.once('dialog', (d) => { dialogMessage = d.message(); d.accept() })

@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react'
+import { useLayoutEffect, type ReactNode } from 'react'
 import { useNavigate } from 'react-router'
 import { useBodyClass } from '../../useBodyClass'
 import { rememberedBoardTabUrl } from '../board/boardTabRoutes'
@@ -11,14 +11,21 @@ import { rememberedBoardTabUrl } from '../board/boardTabRoutes'
 export interface FullPageProps {
   pageId: string
   title: string
+  // A line under the title, and something to the right of it. Without either
+  // the title stands alone, exactly as on Settings, Help and Docs.
+  subtitle?: ReactNode
+  headerAside?: ReactNode
   children: ReactNode
 }
 
-export function FullPage({ pageId, title, children }: FullPageProps) {
+export function FullPage({ pageId, title, subtitle, headerAside, children }: FullPageProps) {
   const navigate = useNavigate()
   useBodyClass('full-page-open')
 
-  useEffect(() => {
+  // A layout effect, like useBodyClass: the URL changes in the same commit that
+  // mounts this page, and a passive effect attaches after paint, so an Escape
+  // pressed right after the URL moved was dropped.
+  useLayoutEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') navigate(rememberedBoardTabUrl())
     }
@@ -26,9 +33,20 @@ export function FullPage({ pageId, title, children }: FullPageProps) {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [navigate])
 
+  const heading = <h2 className="detail-title">{title}</h2>
+  const hasHeaderExtras = subtitle !== undefined || headerAside !== undefined
+
   return (
     <div id={pageId} data-testid={pageId}>
-      <h2 className="detail-title">{title}</h2>
+      {hasHeaderExtras ? (
+        <div className="full-page-header">
+          <div className="full-page-heading">
+            {heading}
+            {subtitle}
+          </div>
+          {headerAside}
+        </div>
+      ) : heading}
       {children}
     </div>
   )

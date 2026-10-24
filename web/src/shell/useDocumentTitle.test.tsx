@@ -8,7 +8,7 @@ import { useDocumentTitle, waitingTitle } from './useDocumentTitle'
 
 const snapshotOf = (statuses: string[]): Snapshot => ({
   tasks: statuses.map((status, index) => makeTask({ slug: `t${index}`, status: status as never })),
-  activeProject: null, weeklyFocus: '', backlog: [], doneGroups: [], settings: { autoMode: false }, orchestratorContextPct: null, isCanonical: true,
+  activeProject: null, weeklyFocus: '', backlog: [], doneGroups: [], settings: { autoMode: false, creaturePlacement: 'header', weeklyFocusEnabled: true, qaStartPolicy: 'ask-every-time' }, orchestratorContextPct: null, isCanonical: true,
 }) as Snapshot
 
 describe('waitingTitle', () => {

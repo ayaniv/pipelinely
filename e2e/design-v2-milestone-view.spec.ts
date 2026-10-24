@@ -30,15 +30,17 @@ import { TOKEN, DESKTOP, cssOf } from './fixtures/designTokens'
 test.use({ colorScheme: 'light', viewport: DESKTOP })
 
 const PARENT_SLUG = 'fanout-parent'
-const MILESTONE_ID = 'M0'
+// M1 is queued: a click on a queued wave-graph node drills into it, while a
+// dispatched one (M0) opens its own task page.
+const MILESTONE_ID = 'M1'
 // clamp(18px,2.4vw,26px) at 1280px pins to 26px — same gutter as Screen 2.
 const PANEL_GUTTER = '26px'
 
-// The drill-down is reached by opening the parent and clicking a milestone
-// card, which is how a developer actually gets there.
+// The drill-down is reached by opening the parent and clicking a queued milestone
+// in the wave graph, which is how a developer actually gets there.
 async function openMilestone(page: import('@playwright/test').Page): Promise<void> {
   await page.goto(`/task/${PARENT_SLUG}`)
-  await page.locator(`[data-testid="milestone-card"][data-milestone-id="${MILESTONE_ID}"]`).click()
+  await page.getByTestId(`wave-task-${MILESTONE_ID}`).click()
   await page.getByTestId('milestone-detail-head').waitFor({ state: 'visible' })
 }
 
@@ -113,112 +115,27 @@ test.describe('milestone header card', () => {
     expect(await cssOf(title, 'font-size')).toBe('25px')
     expect(await cssOf(title, 'font-weight')).toBe('800')
   })
-
-  test('the header carries a ctx row and the four mono meta pairs', async ({ page }) => {
-    await openMilestone(page)
-
-    await expect(page.getByTestId('milestone-ctx-row')).toBeVisible()
-    await expect(page.getByTestId('milestone-ctx-row').getByTestId('card-ctx-label')).toHaveText('ctx')
-
-    const meta = page.getByTestId('milestone-meta')
-    await expect(meta.getByTestId('detail-meta-label')).toHaveText(['tok', 'cost', 'sessions', 'model'])
-    expect(await cssOf(meta, 'font-family')).toContain('JetBrains Mono')
-  })
-
-  test('the header actions are terminal, VS Code and a 38px 3-dots menu', async ({ page }) => {
-    await openMilestone(page)
-
-    const actions = page.getByTestId('milestone-detail-head').locator('.detail-actions')
-    const menuBtn = actions.getByTestId('card-menu-btn')
-    expect(await cssOf(menuBtn, 'width')).toBe('38px')
-    expect(await cssOf(menuBtn, 'height')).toBe('38px')
-    expect(await cssOf(menuBtn, 'border-radius')).toBe('10px')
-
-    await menuBtn.click()
-    await expect(actions.getByTestId('card-menu')).toBeVisible()
-    expect(await cssOf(actions.getByTestId('card-menu'), 'min-width')).toBe('210px')
-  })
 })
 
+// The rail's colours, rings and sizes are the pipeline chart's now, and are
+// pinned by dashboard-v4-pipeline-chart.spec.ts; what stays here is that a
+// milestone's chart is its own four nodes.
 test.describe('milestone stage rail', () => {
-  test('the rail is four nodes in 92px columns', async ({ page }) => {
+  test('the rail is four chart nodes under the 26px rail margin', async ({ page }) => {
     await openMilestone(page)
 
     const rail = page.getByTestId('stepper-wide')
     await expect(rail.locator('.stage-chain-node')).toHaveCount(4)
-    expect(await cssOf(page.getByTestId('stage-chain-dev'), 'width')).toBe('92px')
     expect(await cssOf(rail, 'margin-top')).toBe('26px')
-    expect(await cssOf(rail, 'padding-top')).toBe('26px')
   })
 
-  // Sage, not accent — the milestone rail's completed treatment is its own.
-  //
-  // The ring is authored at the design's own 1.5px (see .stepper-wide.is-
-  // milestone .stage-chain-check in app.css — the same value the 16px
-  // mini-rail already uses). That is what a real, headed browser renders:
-  // verified directly against this exact Chromium build with
-  // `chromium.launch({ headless: false })`, which reports
-  // `getComputedStyle(...).borderTopWidth` as the authored '1.5px'.
-  // headless Chromium (what `--project=ui`, and this test, actually runs
-  // under) genuinely floors any border-width in (1px, 2px) down to a used
-  // value of 1px — not just a getComputedStyle reporting quirk:
-  // `clientWidth` on a `box-sizing:border-box` box confirms the LAID-OUT
-  // border itself consumes only 1px per side, verified the same way. So
-  // '1.5px' is not an assertion this suite's own browser can ever observe
-  // as true, the same failure shape M0 found in its own
-  // `/art/../../src/server.ts` case (design-v2-frame.spec.ts's plan) —
-  // '1px' is what this specific check can actually fail on, which is what
-  // distinguishes it from the Pipeline rail's real 2px ring below.
-  test('a completed node is sage on sageSoft with a 1px (headless-floored) ring', async ({ page }) => {
+  test('every node carries a name and one status line', async ({ page }) => {
     await openMilestone(page)
 
-    const done = page.getByTestId('stage-chain-dev').locator('.stage-chain-check')
-    expect(await cssOf(done, 'border-top-width')).toBe('1px')
-    expect(await cssOf(done, 'border-top-color')).toBe(TOKEN.sage)
-    expect(await cssOf(done, 'background-color')).toBe(TOKEN.sageSoft)
-    expect(await cssOf(done, 'color')).toBe(TOKEN.sageInk)
-  })
-
-  // Same headless-floor as above (see the comment on the previous case) —
-  // authored at 1.5px, observed as 1px under this suite's own browser.
-  test('an upcoming node\'s ring is dashed, not solid', async ({ page }) => {
-    await openMilestone(page)
-
-    const upcoming = page.getByTestId('stage-chain-merge').locator('.stage-chain-check')
-    expect(await cssOf(upcoming, 'border-top-style')).toBe('dashed')
-    expect(await cssOf(upcoming, 'border-top-width')).toBe('1px')
-    expect(await cssOf(upcoming, 'border-top-color')).toBe(TOKEN.border2)
-  })
-
-  // The Milestone design DOES give its nodes a third line, unlike the
-  // Pipeline rail (which M4 strips) — but its values are `"done"`,
-  // `"current"` and `"—"`. It is a terse state word, not the prose stage
-  // outcome this repo used to render on both rails; that text now lives on
-  // the panel header's meta line on both screens. Asserting the value set,
-  // not just that a line exists, is what keeps M5 from quietly re-introducing
-  // the summary M4 removed.
-  test('every node carries a mono state word under its name', async ({ page }) => {
-    await openMilestone(page)
-
-    const sub = page.getByTestId('stage-chain-dev').getByTestId('stage-node-data')
-    await expect(sub).toBeVisible()
-    expect(await cssOf(sub, 'font-family')).toContain('JetBrains Mono')
-    expect(await cssOf(sub, 'font-size')).toBe('10.5px')
-
-    const words = await page.getByTestId('stepper-wide')
-      .getByTestId('stage-node-data').allTextContents()
-    expect(words).toHaveLength(4)
-    for (const word of words) expect(['done', 'current', '—']).toContain(word.trim())
-  })
-
-  // The pipeline rail's own values must NOT leak in — 2px accent rings here
-  // would mean one rule is styling both rails.
-  test('the pipeline rail\'s accent treatment does not leak into this one', async ({ page }) => {
-    await openMilestone(page)
-
-    const done = page.getByTestId('stage-chain-dev').locator('.stage-chain-check')
-    expect(await cssOf(done, 'border-top-color')).not.toBe(TOKEN.accent)
-    expect(await cssOf(done, 'border-top-width')).not.toBe('2px')
+    const rail = page.getByTestId('stepper-wide')
+    await expect(rail.getByTestId('stage-node-name')).toHaveCount(4)
+    await expect(rail.getByTestId('stage-node-sub')).toHaveCount(4)
+    await expect(rail.getByTestId('stage-node-data')).toHaveCount(0)
   })
 })
 
@@ -253,17 +170,14 @@ test.describe('milestone detail panel', () => {
     expect(band!.width).toBeCloseTo(panel!.width, 0)
   })
 
-  // Failure path: a stage with nothing recorded gets the design's own empty
-  // panel rather than a blank region.
-  test('a stage with no history renders the design\'s empty panel', async ({ page }) => {
+  // Failure path: a queued milestone has nothing recorded on any stage, and
+  // says so rather than leaving a blank region.
+  test('a stage with no history says the milestone is not dispatched yet', async ({ page }) => {
     await openMilestone(page)
 
     await page.getByTestId('stage-chain-merge').click()
-    const empty = page.getByTestId('milestone-stage-empty')
-    await expect(empty).toBeVisible()
-    expect(await cssOf(empty, 'background-color')).toBe(TOKEN.surface2)
-    expect(await cssOf(empty, 'border-radius')).toBe('12px')
-    expect(await cssOf(empty, 'font-size')).toBe('13.5px')
-    expect(await cssOf(empty, 'color')).toBe(TOKEN.text3)
+    const note = page.getByTestId('not-dispatched-note')
+    await expect(note).toBeVisible()
+    expect(await cssOf(note, 'color')).toBe(TOKEN.text3)
   })
 })

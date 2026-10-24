@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeCost, formatTokens, modelShort, modelClass, costClass, costIsHigh, ctxIsHot, ctxMeterColor, relTime, formatWhen, CTX_HOT_THRESHOLD, CTX_WARN_THRESHOLD } from './format'
+import { computeCost, formatTokens, modelShort, modelClass, costClass, costIsHigh, ctxIsHot, ctxMeterColor, relTime, formatWhen, formatBacklogDate, CTX_HOT_THRESHOLD, CTX_WARN_THRESHOLD } from './format'
 
 // The published per-million-token rate for every model in use. A stale or
 // missing rate silently produces a wrong or zero cost, which is exactly what
@@ -141,5 +141,23 @@ describe('costIsHigh', () => {
     expect(costIsHigh(1.99)).toBe(false)
     expect(costIsHigh(2)).toBe(true)
     expect(costIsHigh(null)).toBe(false)
+  })
+})
+
+describe('formatBacklogDate', () => {
+  it('a YYYY-MM-DD date reads as the short month and the zero-padded day, as in the design', () => {
+    expect(formatBacklogDate('2026-08-20')).toBe('Aug 20')
+    expect(formatBacklogDate('2026-09-02')).toBe('Sep 02')
+  })
+
+  // Parsed from its parts, never through Date(): "2026-01-01" as UTC midnight would read as Dec 31 west of Greenwich.
+  it('the first of a month stays on that day', () => {
+    expect(formatBacklogDate('2026-01-01')).toBe('Jan 01')
+  })
+
+  it('anything that is not a real calendar date is shown as it was written', () => {
+    expect(formatBacklogDate('someday')).toBe('someday')
+    expect(formatBacklogDate('2026-13-05')).toBe('2026-13-05')
+    expect(formatBacklogDate('')).toBe('')
   })
 })

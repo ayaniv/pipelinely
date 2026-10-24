@@ -1,10 +1,17 @@
+import { Suspense } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { MilestoneStatus, Task } from '../../../../../src/types'
 import { TaskDetailNavProvider, type TaskDetailNav } from '../detailNav'
 import { SNAPSHOT_QUERY_KEY } from '../../../data/snapshot'
+import { makeMilestone, makeTask } from '../../../testing/makeTask'
 import { TaskDetailPanel } from './TaskDetailPanel'
+
+// React Flow is not under test here; what matters is which body the panel picks.
+vi.mock('../graph/WaveGraph', () => ({
+  WaveGraph: ({ task }: { task: Task }) => <div data-testid="wave-graph-stub" data-count={task.milestones?.length ?? 0} />,
+}))
 
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 
@@ -31,7 +38,10 @@ function renderPanel(open: Task, navigation: TaskDetailNav, allTasks: Task[] = [
   return render(
     <QueryClientProvider client={queryClient}>
       <TaskDetailNavProvider value={navApi(navigation)}>
-        <TaskDetailPanel task={open} nav={navigation} graph={<div data-testid="detail-graph-slot" />} />
+        {/* TaskDetail owns this boundary in the app; the wave graph loads lazily. */}
+        <Suspense fallback={null}>
+          <TaskDetailPanel task={open} nav={navigation} graph={<div data-testid="detail-graph-slot" />} />
+        </Suspense>
       </TaskDetailNavProvider>
     </QueryClientProvider>,
   )
@@ -82,30 +92,46 @@ describe('a fan-out parent', () => {
   const m0 = milestone('M0', { state: 'done', task: task({ slug: 'p-m0', status: 'done' }) })
   const parent = task({ slug: 'p', milestones: [m0, milestone('M1', { needs: ['M0'] })], stageHistory: [{ stage: 'plan-review', at: 'x', note: '' }] } as Partial<Task>)
 
-  test('leads with the L1 tab bar, then an l1-panel holding the graph slot and the panel slot in that order', () => {
+  test('renders the graph slot then the panel slot, with no L1 tab bar or wrapper any more', () => {
     renderPanel(parent, nav())
 
-    const tabs = screen.getByTestId('l1-tabs')
-    const l1Panel = screen.getByTestId('l1-panel')
-    expect(domOrder(tabs, l1Panel)).toBeTruthy()
-    expect(l1Panel).toContainElement(screen.getByTestId('detail-graph-slot'))
-    expect(l1Panel).toContainElement(screen.getByTestId('detail-panel-slot'))
     expect(domOrder(screen.getByTestId('detail-graph-slot'), screen.getByTestId('detail-panel-slot'))).toBeTruthy()
-    expect(screen.getByTestId('l1-tab-dev')).toHaveClass('is-active')
+    expect(screen.queryByTestId('l1-tabs')).toBeNull()
+    expect(screen.queryByTestId('l1-panel')).toBeNull()
   })
 
-  test('on the Dev tab with no milestone opened, the panel slot is empty', () => {
-    renderPanel(parent, nav())
-    expect(screen.getByTestId('detail-panel-slot')).toBeEmptyDOMElement()
+  test('on Dev with no milestone opened, the panel slot holds the project summary and the wave panel, with no card', async () => {
+    // makeTask carries the scope fields the summary's rollup reads.
+    const done = makeMilestone({ id: 'M0', state: 'done', task: makeTask({ slug: 'p-m0', status: 'done' }) })
+    renderPanel(makeTask({ slug: 'p', milestones: [done, makeMilestone({ id: 'M1', needs: ['M0'] })] }), nav())
+
+    // The lazy wave graph suspends the whole panel until its chunk is in.
+    expect(await screen.findByTestId('wave-graph-stub')).toHaveAttribute('data-count', '2')
+    expect(within(screen.getByTestId('detail-panel-slot')).getByTestId('project-summary-slot')).toBeInTheDocument()
+    expect(screen.queryByTestId('l2-panel')).toBeNull()
   })
 
-  test('on a plan tab, shows the plan directly in the panel slot — not inside a bordered stage panel', async () => {
-    renderPanel(parent, nav({ l1Tab: 'plan' }))
+  test('on Planning, shows the plan directly in the panel slot — not inside a bordered stage panel', async () => {
+    renderPanel(parent, nav({ l1Tab: 'planning' }))
 
     expect(within(screen.getByTestId('detail-panel-slot')).getByTestId('tech-design-body')).toBeInTheDocument()
     expect(screen.queryByTestId('l2-panel')).toBeNull()
     expect(screen.getByTestId('l2-panel-title')).toHaveTextContent('Planning')
     await waitFor(() => expect(screen.getByTestId('tech-design-body')).toHaveTextContent('doc'))
+  })
+
+  test('on Code review, lists the milestones in review, uncarded', () => {
+    const inReview = milestone('M1', { state: 'dispatched', task: task({ slug: 'p-m1', stage: 'code-review' }) })
+    renderPanel(task({ slug: 'p', milestones: [m0, inReview] } as Partial<Task>), nav({ l1Tab: 'cr' }))
+
+    expect(within(screen.getByTestId('detail-panel-slot')).getAllByTestId('parent-stage-row').map((row) => row.dataset.milestoneId)).toEqual(['M1'])
+    expect(screen.queryByTestId('l2-panel')).toBeNull()
+  })
+
+  test('on QA with nothing in QA, says so instead of rendering an empty list', () => {
+    renderPanel(parent, nav({ l1Tab: 'qa' }))
+    expect(screen.getByTestId('parent-stage-empty')).toBeInTheDocument()
+    expect(screen.queryByTestId('parent-stage-list')).toBeNull()
   })
 
   test('opened into a milestone, shows that milestone\'s stage panel in the bordered card', () => {

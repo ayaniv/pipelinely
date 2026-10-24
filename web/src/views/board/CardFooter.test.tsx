@@ -5,7 +5,7 @@ import { makeTask } from './testTask'
 import type { ResultDocMeta } from '../../../../src/types'
 
 // The design's ONE footer CTA per card. Three
-// shapes — a dispatchable next stage, a merge-ready trio, and "See details".
+// shapes — a dispatchable next stage, a merge-ready trio, and "Show task".
 
 const okJson = (body: unknown = {}, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 
@@ -49,27 +49,91 @@ describe('CardFooter: stage CTA', () => {
     await waitFor(() => expect(screen.getByTestId('card-cta-btn')).toHaveClass('btn-err'))
     expect(log).toHaveBeenCalledWith(expect.stringContaining('[action]'), expect.any(Error))
   })
-
-  test('a milestone-declaring parent never offers a stage, even with a dispatchable waiting reason', () => {
-    render(<CardFooter task={makeTask({ ...waitingForDevProps(), milestones: [{ id: 'M0' }] as never })} />)
-    expect(screen.getByTestId('card-cta-btn')).toHaveTextContent('See details')
-  })
 })
 
 function waitingForDevProps() {
   return { status: 'waiting' as const, waitingReason: 'plan reviewed, ready for dev' }
 }
 
-describe('CardFooter: See details', () => {
-  test('a card with no next stage offers "See details", which opens the task', () => {
+describe('CardFooter: Show task', () => {
+  test('a card with no next stage offers an outlined "Show task", which opens the task', () => {
     const onOpenDetail = vi.fn()
     render(<CardFooter task={makeTask({ status: 'waiting', waitingReason: 'need sign-off' })} onOpenDetail={onOpenDetail} />)
 
     const cta = screen.getByTestId('card-cta-btn')
-    expect(cta).toHaveTextContent('See details')
+    expect(cta).toHaveTextContent('Show task')
     expect(cta).toHaveAttribute('data-action', 'open-detail')
+    expect(cta).toHaveAttribute('data-primary', 'false')
+    expect(screen.queryByTestId('card-cta-secondary')).not.toBeInTheDocument()
     fireEvent.click(cta)
     expect(onOpenDetail).toHaveBeenCalledWith('demo-task')
+  })
+})
+
+describe('CardFooter: paired buttons', () => {
+  const crFixes = (selected: boolean) =>
+    makeTask({ status: 'waiting', attentionStatus: 'needs-you', waitingReason: 'CR found 1 must-fix comments, triage and dispatch cr-fixes', findings: [{ severity: 'must', category: 'Bug', description: 'x', location: 'a.ts:1', selected }] })
+
+  test('Dev: Start dev plus an outlined Read plan that opens the plan tab', () => {
+    const onOpenDetail = vi.fn()
+    render(<CardFooter task={makeTask({ ...waitingForDevProps(), attentionStatus: 'needs-you' })} onOpenDetail={onOpenDetail} />)
+    const secondary = screen.getByTestId('card-cta-secondary')
+    expect(secondary).toHaveAttribute('data-action', 'read-plan')
+    expect(secondary).not.toHaveClass('btn-primary')
+    expect(screen.getByTestId('card-footer')).toBeInTheDocument()
+    fireEvent.click(secondary)
+    expect(onOpenDetail).toHaveBeenCalledWith('demo-task', { stage: 'planning' })
+  })
+
+  test('CR fixes with a selection: Run CR fixes plus Triage comments on the cr-fixes tab, not the pipeline stage name', () => {
+    const onOpenDetail = vi.fn()
+    render(<CardFooter task={crFixes(true)} onOpenDetail={onOpenDetail} />)
+    expect(screen.getByTestId('card-cta-btn')).toHaveAttribute('data-stage', 'comment-fix')
+    const secondary = screen.getByTestId('card-cta-secondary')
+    expect(secondary).toHaveAttribute('data-action', 'triage-comments')
+    fireEvent.click(secondary)
+    expect(onOpenDetail).toHaveBeenCalledWith('demo-task', { stage: 'cr-fixes' })
+  })
+
+  test('QA fixes: Run QA fixes plus Triage comments on the qa-fixes tab', () => {
+    const onOpenDetail = vi.fn()
+    render(<CardFooter task={makeTask({ status: 'waiting', waitingReason: 'QA found 2 issues, triage and dispatch qa-fixes' })} onOpenDetail={onOpenDetail} />)
+    expect(screen.getByTestId('card-cta-btn')).toHaveTextContent('Run QA fixes')
+    fireEvent.click(screen.getByTestId('card-cta-secondary'))
+    expect(onOpenDetail).toHaveBeenCalledWith('demo-task', { stage: 'qa-fixes' })
+  })
+
+  // The design leads each outlined companion with its own icon. These buttons never flash, so an icon can't be lost on a revert.
+  test('on a card, Read plan leads with a document icon and Triage comments with a speech bubble', () => {
+    const { unmount } = render(<CardFooter task={makeTask({ ...waitingForDevProps(), attentionStatus: 'needs-you' })} />)
+    expect(screen.getByTestId('card-cta-secondary').querySelector('[data-testid="read-plan-icon"]')).not.toBeNull()
+    expect(screen.getByTestId('card-cta-secondary')).toHaveTextContent('Read plan')
+    unmount()
+    render(<CardFooter task={crFixes(true)} />)
+    expect(screen.getByTestId('card-cta-secondary').querySelector('[data-testid="triage-comments-icon"]')).not.toBeNull()
+    expect(screen.getByTestId('card-cta-secondary')).toHaveTextContent('Triage comments')
+  })
+
+  test("in a table row the companions stay plain text links, with no icon", () => {
+    render(<CardFooter task={makeTask({ ...waitingForDevProps(), attentionStatus: 'needs-you' })} variant="row" />)
+    expect(screen.getByTestId('row-cta-link').querySelector('svg')).toBeNull()
+  })
+
+  test('CR fixes with nothing selected: a single Triage CR comments and no second button', () => {
+    render(<CardFooter task={crFixes(false)} />)
+    expect(screen.getByTestId('card-cta-btn')).toHaveTextContent('Triage CR comments')
+    expect(screen.queryByTestId('card-cta-secondary')).not.toBeInTheDocument()
+  })
+
+  test('a stage with no companion (code review) renders one button only', () => {
+    render(<CardFooter task={makeTask({ status: 'waiting', waitingReason: 'PR open, ready for CR' })} />)
+    expect(screen.queryByTestId('card-cta-secondary')).not.toBeInTheDocument()
+  })
+
+  test('Merge pairs with an Open PR button carrying the GitHub icon', () => {
+    const task = makeTask({ stage: 'merge', reviewRef: '42', status: 'waiting', waitingReason: 'QA passed, ready to merge' })
+    render(<CardFooter task={task} readMergeState={() => ({ banner: null, isInFlight: false })} />)
+    expect(screen.getByTestId('card-open-pr-btn')).toContainElement(screen.getByTestId('github-icon'))
   })
 })
 
@@ -182,11 +246,11 @@ describe('CardFooter: Read result', () => {
   const resultDoc: ResultDocMeta = { file: 'AUDIT.md', isTruncated: false, totalBytes: 7, mtimeMs: 1000 }
   const readyForReview = (overrides = {}) => makeTask({ status: 'waiting', attentionStatus: 'needs-you', waitingReason: 'audit ready for developer review', resultDoc, ...overrides })
 
-  test('a research task with a document, ready for review, offers "Read result" instead of "See details"', () => {
+  test('a research task with a document, ready for review, offers "Read result" instead of "Show task"', () => {
     render(<CardFooter task={readyForReview()} />)
     const cta = screen.getByTestId('card-cta-btn')
     expect(cta).toHaveTextContent('Read result')
-    expect(cta).not.toHaveTextContent('See details')
+    expect(cta).not.toHaveTextContent('Show task')
     expect(cta).toHaveAttribute('data-action', 'open-result')
     expect(cta).toHaveAttribute('data-primary', 'true')
   })
@@ -198,14 +262,14 @@ describe('CardFooter: Read result', () => {
     expect(onOpenResult).toHaveBeenCalledWith('demo-task')
   })
 
-  test('keeps "See details" when the task is ready for review but has no document', () => {
+  test('keeps "Show task" when the task is ready for review but has no document', () => {
     render(<CardFooter task={readyForReview({ resultDoc: null })} />)
-    expect(screen.getByTestId('card-cta-btn')).toHaveTextContent('See details')
+    expect(screen.getByTestId('card-cta-btn')).toHaveTextContent('Show task')
   })
 
-  test('keeps "See details" when a document exists but the task is not ready for review', () => {
+  test('keeps "Show task" when a document exists but the task is not ready for review', () => {
     render(<CardFooter task={readyForReview({ waitingReason: 'need sign-off' })} />)
-    expect(screen.getByTestId('card-cta-btn')).toHaveTextContent('See details')
+    expect(screen.getByTestId('card-cta-btn')).toHaveTextContent('Show task')
   })
 
   test('never replaces a real stage CTA', () => {

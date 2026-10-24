@@ -64,7 +64,7 @@ Periodically run `bash ~/Dev/pipelinely/scripts/write-metrics.sh` so the dashboa
 ## Step 3 — Open the tab, but do not claim the pointers
 
 Follow `orchestrator-prompt.md` step 4's shared tab-opening procedure ("Reusable form" subsection) with:
-- `<tmux-name>`: `worker-<slug>-qa` · `<launch-script>`: `launch-qa.sh` (distinct filename, so the dev tab's own `launch.sh` isn't touched)
+- `<tmux-name>`: the line printed by `npm --prefix $HOME/Dev/pipelinely run --silent babysit -- tmux-name worker-<slug>-qa` (`worker-<slug>-qa`, or `-qa2`, `-qa3` when a finished QA session still holds the name — never kill it to reuse the name) · `<launch-script>`: `launch-qa.sh` (distinct filename, so the dev tab's own `launch.sh` isn't touched)
 - Claim `ITERM_SESSION`/`TMUX_SESSION`: **no** — deliberately skip that part of the procedure. Those must keep pointing at the dev tab, which is what `pipelinely-qa-fixes` returns to and what the dashboard's → Terminal button reaches.
 - Worktree: **reuse existing** at `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>` — no new worktree/branch
 - `COCKPIT_STAGE`: `qa`

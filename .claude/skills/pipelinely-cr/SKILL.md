@@ -91,7 +91,7 @@ The CR session is told to follow this example exactly — it's fed through the d
 ## Step 3 — Open the tab, but do not claim the pointers
 
 Follow `orchestrator-prompt.md` step 4's shared tab-opening procedure ("Reusable form" subsection) with:
-- `<tmux-name>`: `worker-<slug>-cr` · `<launch-script>`: `launch-cr.sh`
+- `<tmux-name>`: the line printed by `npm --prefix $HOME/Dev/pipelinely run --silent babysit -- tmux-name worker-<slug>-cr` (`worker-<slug>-cr`, or `-cr2`, `-cr3` when a finished review session still holds the name — never kill it to reuse the name) · `<launch-script>`: `launch-cr.sh`
 - Claim `ITERM_SESSION`/`TMUX_SESSION`: **no** — deliberately skip that part of the procedure. They must keep pointing at the dev tab, which `pipelinely-cr-fixes` returns to.
 - Worktree: **reuse existing** at `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>` — no new worktree/branch
 - Launch prompt: copy nothing into the worktree (the brief is read by absolute path, and this stage must leave the worktree's own `TASK.md` alone) and open with `"Read <resolved-tasks-dir>/<slug>/TASK-cr.md. BEFORE doing any task work: (1) rename this iTerm2 tab to '<slug>-cr' using osascript; (2) cd into ${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug> and complete the task from there."` — the tasks dir is the resolved one, never the hard-coded default root.

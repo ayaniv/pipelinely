@@ -13,7 +13,7 @@ export interface SnapshotShape {
   tasks: Array<Record<string, unknown>>
   orchestratorContextPct: number | null
   isCanonical: boolean
-  settings: { autoMode: boolean }
+  settings: { autoMode: boolean; qaStartPolicy?: string }
   [key: string]: unknown
 }
 

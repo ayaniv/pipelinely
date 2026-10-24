@@ -51,6 +51,140 @@ function renderStage(tab: StagePanelTabId, child: Task | null, extra: StagePanel
   )
 }
 
+describe('ds stages', () => {
+  const DS_TABS = ['design-intake', 'design-fixes'] as const
+
+  test.each(DS_TABS)('%s renders its own header and the TIMELINE note, never an empty panel', (tab) => {
+    const stage = tab
+    renderStage(tab, makeChild({ kind: 'ds', stageHistory: [{ stage, at: '2026-10-10T10:00:00Z', note: `matched coreui/Button (${tab})` }] }))
+
+    expect(screen.getByTestId('ds-stage-body')).toBeInTheDocument()
+    expect(screen.getByTestId('detail-panel-meta')).toHaveTextContent(`matched coreui/Button (${tab})`)
+  })
+
+  test.each(DS_TABS)('%s with no TIMELINE entry says so instead of rendering blank', (tab) => {
+    renderStage(tab, makeChild({ kind: 'ds' }))
+
+    expect(screen.getByTestId('ds-stage-body')).toBeInTheDocument()
+    expect(screen.getByTestId('milestone-stage-empty')).toBeInTheDocument()
+  })
+})
+
+describe('the adopt stage', () => {
+  const merged = (extra: Partial<Task> = {}) => makeChild({ kind: 'ds', status: 'waiting', stage: 'merge', waitingReason: 'merged, ready for adopt', ...extra })
+
+  test('lists one row per affected app, in plan order', () => {
+    renderStage('adopt', merged({ affectedApps: ['web-app', 'admin-portal'] }))
+
+    const apps = screen.getAllByTestId('adopt-app')
+    expect(apps.map((el) => el.getAttribute('data-app'))).toEqual(['web-app', 'admin-portal'])
+    expect(screen.queryByTestId('adopt-no-apps')).toBeNull()
+  })
+
+  test('shows what adopt recorded on the TIMELINE once it has run', () => {
+    const stageHistory = [{ stage: 'adopt', note: 'queued 2 items', at: '2026-10-20T10:00:00Z' }]
+    renderStage('adopt', merged({ affectedApps: ['web-app', 'admin-portal'], stageHistory } as Partial<Task>))
+
+    expect(screen.getByTestId('detail-panel-meta')).toHaveTextContent('queued 2 items')
+  })
+
+  test('says so when the plan names no affected apps', () => {
+    renderStage('adopt', merged({ affectedApps: [] }))
+
+    expect(screen.getByTestId('adopt-no-apps')).toBeInTheDocument()
+    expect(screen.queryAllByTestId('adopt-app')).toHaveLength(0)
+  })
+
+  test('its CTA stages the adopt skill once the task is merged', async () => {
+    renderStage('adopt', merged({ affectedApps: ['web-app'] }))
+
+    expect(screen.getByTestId('l2-cta')).toHaveTextContent('Run adopt')
+    expect(screen.getByTestId('l2-cta')).toBeEnabled()
+    fireEvent.click(screen.getByTestId('l2-cta'))
+    await waitFor(() => expect(fetchStub).toHaveBeenCalledWith('/stage-skill/my-task', expect.objectContaining({ body: JSON.stringify({ stage: 'adopt', autoSubmit: false }) })))
+  })
+
+  test('its CTA stays disabled before the merge', () => {
+    renderStage('adopt', makeChild({ kind: 'ds', status: 'waiting', waitingReason: 'design approved, ready to merge', affectedApps: ['web-app'] }))
+
+    expect(screen.getByTestId('l2-cta')).toBeDisabled()
+  })
+})
+
+describe('the design QA and design approval stages', () => {
+  const REPORT = '| Primary | Dark | design-qa/primary-dark.png | design-qa/figma-primary.png | no — border radius 6px vs 8px |'
+  const atGate = (extra: Partial<Task> = {}) => makeChild({ kind: 'ds', status: 'waiting', waitingReason: 'design QA done, ready for design approval', designQaReport: REPORT, ...extra })
+
+  test('design QA shows its report and a Start design QA CTA that is live once QA passed', async () => {
+    renderStage('design-qa', makeChild({ kind: 'ds', status: 'waiting', waitingReason: 'QA passed, ready to merge', designQaReport: REPORT }))
+
+    expect(screen.getByTestId('design-qa-report')).toHaveTextContent('border radius 6px vs 8px')
+    expect(screen.getByTestId('l2-cta')).toHaveTextContent('Start design QA')
+    fireEvent.click(screen.getByTestId('l2-cta'))
+    await waitFor(() => expect(fetchStub).toHaveBeenCalledWith('/stage-skill/my-task', expect.objectContaining({ body: JSON.stringify({ stage: 'design-qa', autoSubmit: false }) })))
+  })
+
+  test('design QA before it has run says there is no report and keeps its CTA disabled', () => {
+    renderStage('design-qa', makeChild({ kind: 'ds', designQaReport: null }))
+
+    expect(screen.getByTestId('design-qa-no-report')).toBeInTheDocument()
+    expect(screen.getByTestId('l2-cta')).toBeDisabled()
+  })
+
+  test('design approval renders the report, a screenshot per referenced file, and live decision buttons at the gate', () => {
+    renderStage('design-approval', atGate())
+
+    expect(screen.getByTestId('design-qa-report')).toHaveTextContent('border radius 6px vs 8px')
+    const images = screen.getAllByTestId('design-qa-image')
+    expect(images.map((img) => img.getAttribute('src'))).toEqual(['/task-asset/my-task/design-qa/primary-dark.png', '/task-asset/my-task/design-qa/figma-primary.png'])
+    expect(screen.getByTestId('design-approve-btn')).toBeEnabled()
+    expect(screen.getByTestId('design-request-changes-btn')).toBeDisabled()
+  })
+
+  test('design approval away from the gate leaves both decision buttons disabled', () => {
+    renderStage('design-approval', atGate({ waitingReason: 'QA passed, ready to merge' }))
+
+    expect(screen.getByTestId('design-approve-btn')).toBeDisabled()
+    expect(screen.getByTestId('design-request-changes-btn')).toBeDisabled()
+  })
+
+  test('Approve posts the decision for that task', async () => {
+    fetchStub.mockResolvedValue(new Response('{}', { status: 200 }))
+    renderStage('design-approval', atGate())
+
+    fireEvent.click(screen.getByTestId('design-approve-btn'))
+
+    await waitFor(() => expect(fetchStub).toHaveBeenCalledWith('/design-approval/my-task', expect.objectContaining({ body: JSON.stringify({ decision: 'approve' }) })))
+    await waitFor(() => expect(screen.getByTestId('design-approve-btn')).toHaveTextContent('✓ approved'))
+  })
+
+  test('Request changes enables only once notes are typed, then posts them', async () => {
+    fetchStub.mockResolvedValue(new Response('{}', { status: 200 }))
+    renderStage('design-approval', atGate())
+
+    fireEvent.change(screen.getByTestId('design-changes-notes'), { target: { value: '   ' } })
+    expect(screen.getByTestId('design-request-changes-btn')).toBeDisabled()
+    fireEvent.change(screen.getByTestId('design-changes-notes'), { target: { value: 'Dark radius should be 8px' } })
+    fireEvent.click(screen.getByTestId('design-request-changes-btn'))
+
+    await waitFor(() => expect(fetchStub).toHaveBeenCalledWith('/design-approval/my-task', expect.objectContaining({ body: JSON.stringify({ decision: 'request-changes', notes: 'Dark radius should be 8px' }) })))
+    await waitFor(() => expect(screen.getByTestId('design-changes-notes')).toHaveValue(''))
+  })
+
+  test('a refused decision flashes why, logs it, and keeps the typed notes', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    fetchStub.mockResolvedValue(new Response('{}', { status: 409 }))
+    renderStage('design-approval', atGate())
+
+    fireEvent.change(screen.getByTestId('design-changes-notes'), { target: { value: 'Needs 8px' } })
+    fireEvent.click(screen.getByTestId('design-request-changes-btn'))
+
+    await waitFor(() => expect(screen.getByTestId('design-request-changes-btn')).toHaveTextContent('not at the gate'))
+    expect(log).toHaveBeenCalled()
+    expect(screen.getByTestId('design-changes-notes')).toHaveValue('Needs 8px')
+  })
+})
+
 describe('Dev stage', () => {
   test('a flat task shows its dispatch state and only a verifier row — "needs" is milestone jargon', () => {
     renderStage('dev', makeChild({ verifier: 'npm test' }))
@@ -119,14 +253,63 @@ describe('CR stage', () => {
     expect(screen.queryByTestId('detail-panel-footer')).toBeNull()
   })
 
-  test('lists the findings read-only, with a button through to the triage tab', () => {
+  test('lists the findings read-only, with a button through to the triage tab, while no fix action is live', () => {
     renderStage('cr', makeChild({ findings: [finding()] }))
 
     expect(screen.getAllByTestId('finding-row')).toHaveLength(1)
     expect(screen.queryByTestId('triage-checkbox')).toBeNull()
+    expect(screen.queryByTestId('triage-checklist')).toBeNull()
 
     fireEvent.click(screen.getByTestId('select-findings-btn'))
     expect(navApi.selectStageTab).toHaveBeenCalledWith('cr-fixes')
+  })
+
+  test('stays read-only for a review already fixed, even with findings listed', () => {
+    renderStage('cr', waiting('comments addressed, ready for QA', { findings: [finding()] }))
+    expect(screen.queryByTestId('triage-checkbox')).toBeNull()
+  })
+
+  test('with the comment-fix action live, the checklist is interactive in place and the jump button is gone', () => {
+    renderStage('cr', waiting('triage and dispatch cr-fixes', { findings: [finding(true), finding(false)] }))
+
+    expect(screen.getByTestId('triage-checklist')).toHaveAttribute('data-endpoint', 'triage')
+    expect(screen.getAllByTestId('triage-checkbox')).toHaveLength(2)
+    expect(screen.getByTestId('checklist-selected-count')).toHaveTextContent('1')
+    expect(screen.queryByTestId('select-findings-btn')).toBeNull()
+    expect(screen.getByTestId('l2-cta')).toHaveTextContent('Fix 1 CR Comment')
+    expect(screen.getByTestId('l2-cta')).toBeEnabled()
+    expect(screen.getByTestId('skip-cta')).toBeEnabled()
+  })
+
+  test('an approved review with only should-fix comments is interactive too', () => {
+    renderStage('cr', waiting('CR approved, ready for QA', { findings: [{ ...finding(false), severity: 'should' as const }] }))
+
+    expect(screen.getByTestId('triage-checkbox')).toBeInTheDocument()
+    expect(screen.getByTestId('l2-cta')).toHaveTextContent('Fix 0 CR Comments')
+    expect(screen.getByTestId('l2-cta')).toBeDisabled()
+    expect(screen.getByTestId('skip-cta')).toBeEnabled()
+  })
+
+  test('ticking a box on the CR tab persists to /triage and enables the Fix CTA', async () => {
+    renderStage('cr', waiting('triage and dispatch cr-fixes', { findings: [finding(false)] }))
+    expect(screen.getByTestId('l2-cta')).toBeDisabled()
+
+    fireEvent.click(screen.getByTestId('triage-checkbox'))
+
+    expect(screen.getByTestId('l2-cta')).toBeEnabled()
+    await waitFor(() => expect(fetchStub).toHaveBeenCalledWith('/triage/my-task', expect.objectContaining({ body: JSON.stringify({ selected: [0] }) })))
+  })
+
+  test('a failed triage POST on the CR tab is logged and the box reverts', async () => {
+    const logError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    fetchStub.mockImplementation((url: string) => Promise.resolve(url.startsWith('/triage/') ? json(500, { error: 'boom' }) : json(200, { stages: {} })))
+    renderStage('cr', waiting('triage and dispatch cr-fixes', { findings: [finding(false)] }))
+
+    fireEvent.click(screen.getByTestId('triage-checkbox'))
+
+    await waitFor(() => expect(logError).toHaveBeenCalled())
+    await waitFor(() => expect(screen.getByTestId('checklist-selected-count')).toHaveTextContent('0'))
+    expect(screen.getByTestId('l2-cta')).toBeDisabled()
   })
 
   test('with no findings, says code review either has not run or found nothing, and offers no triage button', () => {
@@ -327,8 +510,74 @@ describe('Merge stage', () => {
     expect(screen.queryByTestId('merge-banner')).toBeNull()
   })
 
+  test('a conflicting PR offers Fix conflicts as the primary and no Merge; Open PR and Mark done stay', () => {
+    renderStage('merge', waiting('QA passed, ready to merge', { ...withPr, prMergeState: 'conflicting' }))
+
+    const footer = screen.getByTestId('detail-panel-footer')
+    const fix = within(footer).getByTestId('fix-conflicts-cta')
+    expect(fix).toBeEnabled()
+    expect(within(footer).queryByTestId('merge-pr-btn')).toBeNull()
+    expect(within(footer).getByTestId('open-pr-btn')).toBeInTheDocument()
+    expect(within(footer).getByTestId('mark-done-btn')).toBeInTheDocument()
+  })
+
+  test('Fix conflicts stages the merge-conflicts skill', async () => {
+    renderStage('merge', waiting('QA passed, ready to merge', { ...withPr, prMergeState: 'conflicting' }))
+    fireEvent.click(screen.getByTestId('fix-conflicts-cta'))
+
+    await waitFor(() => expect(fetchStub).toHaveBeenCalledWith('/stage-skill/my-task', expect.anything()))
+    const call = fetchStub.mock.calls.find(([url]) => url === '/stage-skill/my-task')!
+    expect(JSON.parse((call[1] as RequestInit).body as string)).toMatchObject({ stage: 'merge-conflicts' })
+  })
+
+  test('a conflicting PR on a task not yet at a hand-off shows Fix conflicts disabled, still with no Merge', () => {
+    renderStage('merge', makeChild({ ...withPr, prMergeState: 'conflicting' }))
+    expect(screen.getByTestId('fix-conflicts-cta')).toBeDisabled()
+    expect(screen.queryByTestId('merge-pr-btn')).toBeNull()
+  })
+
+  test.each(['mergeable', 'unknown'] as const)('a %s PR keeps Merge and offers no Fix conflicts', (prMergeState) => {
+    renderStage('merge', makeChild({ ...withPr, prMergeState }))
+    expect(screen.getByTestId('merge-pr-btn')).toBeInTheDocument()
+    expect(screen.queryByTestId('fix-conflicts-cta')).toBeNull()
+  })
+
+  test('the QA panel does not offer Start QA while the PR conflicts', () => {
+    renderStage('qa', waiting('fixes pushed, ready to re-run QA', { ...withPr, prMergeState: 'conflicting' }))
+    expect(screen.getByTestId('l2-cta')).toBeDisabled()
+  })
+
   test('an undispatched milestone says so', () => {
     renderStage('merge', null)
     expect(screen.getByTestId('not-dispatched-note')).toBeInTheDocument()
+  })
+})
+
+describe('the design approval report without matched screenshots', () => {
+  test('says why no images show, instead of rendering a bare report', () => {
+    renderStage('design-approval', makeChild({ kind: 'ds', status: 'waiting', waitingReason: 'design QA done, ready for design approval', designQaReport: '| Primary | Light | shots/a.png | shots/f.png | yes |' }))
+
+    expect(screen.getByTestId('design-qa-images-missing')).toBeInTheDocument()
+    expect(screen.queryAllByTestId('design-qa-image')).toHaveLength(0)
+  })
+})
+
+describe('the design approval report with some screenshots unusable', () => {
+  const REPORT = '| P | L | design-qa/ok.png | design-qa/with space.png | yes |'
+
+  test('lists the image cells it cannot serve even when other screenshots render', () => {
+    renderStage('design-approval', makeChild({ kind: 'ds', status: 'waiting', waitingReason: 'design QA done, ready for design approval', designQaReport: REPORT }))
+
+    expect(screen.getByTestId('design-qa-images-unservable')).toHaveTextContent('design-qa/with space.png')
+    expect(screen.getAllByTestId('design-qa-image')).toHaveLength(1)
+  })
+
+  test('a screenshot that fails to load is replaced by a not-found note', () => {
+    renderStage('design-approval', makeChild({ kind: 'ds', status: 'waiting', waitingReason: 'design QA done, ready for design approval', designQaReport: REPORT }))
+
+    fireEvent.error(screen.getByTestId('design-qa-image'))
+
+    expect(screen.getByTestId('design-qa-image-failed')).toHaveTextContent('Screenshot not found: ok.png')
+    expect(screen.queryAllByTestId('design-qa-image')).toHaveLength(0)
   })
 })

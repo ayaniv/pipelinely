@@ -1,7 +1,6 @@
 import { useLayoutEffect, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { BOARD_TABS, type BoardTab } from '../views/board/boardTabRoutes'
-import { DocsIcon, FilterIcon, HelpIcon, MenuIcon, SettingsIcon, SidebarCollapseIcon } from '../components/icons'
-import { navigateToUrl } from './appNavigation'
+import { FilterIcon, MenuIcon, SidebarCollapseIcon } from '../components/icons'
 import { sidebarStore, useSidebarState } from './sidebarState'
 
 // The page's frame: the sidebar, the header, and the board's scaffolding (the
@@ -20,7 +19,7 @@ const PANELS: { tab: BoardTab; element: 'main' | 'section'; id: string; testId: 
   { tab: 'inprogress', element: 'main', id: 'dashboard', testId: 'active-sessions', className: 'tab-panel' },
   { tab: 'backlog', element: 'section', id: 'backlog-section', testId: 'backlog-section', className: 'tab-panel backlog-section' },
   { tab: 'done', element: 'section', id: 'done-section', testId: 'done-section', className: 'tab-panel done-section' },
-  { tab: 'you', element: 'section', id: 'you-section', testId: 'you-section', className: 'tab-panel you-section' },
+  { tab: 'usage', element: 'section', id: 'usage-section', testId: 'usage-section', className: 'tab-panel usage-section' },
 ]
 
 function TabPanel({ panel, activeTab, children }: { panel: (typeof PANELS)[number]; activeTab: BoardTab; children?: ReactNode }) {
@@ -60,24 +59,12 @@ function Sidebar() {
         {/* The three counted tabs: React (views/board/TabBar.tsx), portalled in. Persistent in the sidebar, not hidden while a task detail is open — switching sections never requires backing out of a detail view first. */}
         <nav className="tab-bar" id="tab-bar" data-testid="tab-bar" />
 
+        {/* The Bookmarks row: React (views/board/BookmarksNavItem.tsx), portalled in. A slot of its own, not part of #tab-bar, which is exactly the three counted tabs. */}
+        <div className="sidebar-bookmarks-slot" id="sidebar-bookmarks-slot" />
+
         <div className="sidebar-spacer" />
 
-        <div className="sidebar-foot">
-          <button type="button" className="sidebar-foot-item" id="sidebar-settings-btn" data-testid="sidebar-settings-btn" aria-label="Open settings" onClick={() => navigateToUrl('/settings')}>
-            <span className="sidebar-foot-icon" aria-hidden="true"><SettingsIcon /></span>
-            <span className="sidebar-foot-label">Settings</span>
-          </button>
-          <button type="button" className="sidebar-foot-item" id="sidebar-docs-btn" data-testid="sidebar-docs-btn" aria-label="Open docs" onClick={() => navigateToUrl('/docs')}>
-            <span className="sidebar-foot-icon" aria-hidden="true"><DocsIcon /></span>
-            <span className="sidebar-foot-label">Docs</span>
-          </button>
-          <button type="button" className="sidebar-foot-item" id="sidebar-help-btn" data-testid="sidebar-help-btn" aria-label="Open help" onClick={() => navigateToUrl('/help')}>
-            <span className="sidebar-foot-icon" aria-hidden="true"><HelpIcon /></span>
-            <span className="sidebar-foot-label">Help</span>
-          </button>
-        </div>
-
-        {/* The You tab trigger: React (views/board/TabBar.tsx), portalled in. */}
+        {/* The account row and its Settings / Usage / Docs / Help group: React (views/board/SidebarAccount.tsx), portalled in. */}
         <div className="sidebar-account-slot" id="sidebar-account-slot" />
       </aside>
     </>
@@ -88,16 +75,19 @@ export interface AppFrameProps {
   activeTab: BoardTab
   // Views that portal into the frame's regions — held back until they exist.
   slots: ReactNode
+  // Off removes the weekly-focus hero from the frame entirely (Settings →
+  // Weekly focus), rather than leaving an empty banner behind.
+  isWeeklyFocusEnabled: boolean
   // The route's own content (a task detail), rendered after the board inside
   // the main column so it shares the column's width.
   children: ReactNode
 }
 
-export function AppFrame({ activeTab, slots, children }: AppFrameProps) {
+export function AppFrame({ activeTab, slots, isWeeklyFocusEnabled, children }: AppFrameProps) {
   const [isFrameMounted, setIsFrameMounted] = useState(false)
   useLayoutEffect(() => setIsFrameMounted(true), [])
   // The filter row is board-wide (it narrows Active, Backlog and Done), so it
-  // sits above the tabbed panels. Hidden on You along with the rest of the
+  // sits above the tabbed panels. Hidden on Usage along with the rest of the
   // toolbar chrome (CSS, off `data-active-tab`).
   const [isFilterOpen, setIsFilterOpen] = useState(false)
 
@@ -105,34 +95,40 @@ export function AppFrame({ activeTab, slots, children }: AppFrameProps) {
     <div className="app-shell">
       <Sidebar />
 
-      <div className="app-main">
+      <div className="app-main" data-testid="app-main">
         <header data-testid="app-header">
-          <button className="hamburger-btn" id="sidebar-open-toggle" type="button" data-testid="sidebar-open-toggle" aria-label="Open menu" onClick={sidebarStore.openMobile}>
-            <MenuIcon />
-          </button>
-          <div className="header-back-slot" id="header-back-slot" data-testid="header-back-slot" />
-          {/* Empty on purpose: the ctx pill, spend, live status, auto-submit and theme toggles are React (views/header), portalled in. A static element so the header's own flex layout (.header-chrome in app.css) doesn't move. */}
-          <div className="header-chrome" id="header-chrome" />
+          <div className="app-header-inner" data-testid="app-header-inner">
+            <button className="hamburger-btn" id="sidebar-open-toggle" type="button" data-testid="sidebar-open-toggle" aria-label="Open menu" onClick={sidebarStore.openMobile}>
+              <MenuIcon />
+            </button>
+            <div className="header-back-slot" id="header-back-slot" data-testid="header-back-slot" />
+            {/* Empty on purpose: the ctx pill, spend, live status, auto-submit and theme toggles are React (views/header), portalled in. A static element so the header's own flex layout (.header-chrome in app.css) doesn't move. */}
+            <div className="header-chrome" id="header-chrome" />
+          </div>
         </header>
         <div className="read-only-banner-slot" id="read-only-banner-slot" />
         <div className="global-progress" id="global-progress" />
 
         <div id="board" className="board page-column" data-testid="board-column" data-active-tab={activeTab}>
-          {/* A WEEKLY focus (persisted server-side via POST /weekly-focus): click-to-edit, multi-line. Visible on Active/Backlog/Done, hidden on You along with the toolbar and filters — You shows just the chart. */}
-          <div className="focus-hero" id="weekly-focus">
-            <div className="focus-hero-overlay" aria-hidden="true" />
-            <div className="focus-hero-body">
-              <div className="focus-hero-eyebrow">
-                <span>focus for this week</span>
-                <span className="focus-hero-dates">· <span id="weekly-focus-dates" /></span>
+          {/* A WEEKLY focus (persisted server-side via POST /weekly-focus): click-to-edit, multi-line. Visible on Active/Backlog/Done, hidden on Usage along with the toolbar and filters — Usage shows just the chart. */}
+          {isWeeklyFocusEnabled && (
+            <div className="focus-hero" id="weekly-focus" data-testid="weekly-focus-hero">
+              <div className="focus-hero-overlay" aria-hidden="true" />
+              <div className="focus-hero-body">
+                <div className="focus-hero-eyebrow">
+                  <span>focus for this week</span>
+                  <span className="focus-hero-dates">· <span id="weekly-focus-dates" /></span>
+                </div>
+                <div className="focus-hero-row" id="weekly-focus-row" />
               </div>
-              <div className="focus-hero-row" id="weekly-focus-row" />
             </div>
-          </div>
+          )}
 
           <div className="board-toolbar">
             <div className="summary-strip" id="summary-strip" data-testid="summary-strip" />
             <div className="board-toolbar-right">
+              {/* The Active tab's cards/table switch: React (views/board/ActiveViewSwitch.tsx), portalled in. */}
+              <div className="active-view-slot" id="active-view-slot" />
               <button className={`filter-toggle-btn${isFilterOpen ? ' is-active' : ''}`} id="filter-toggle-btn" type="button" data-testid="filter-toggle-btn" aria-expanded={isFilterOpen} onClick={() => setIsFilterOpen((isOpen) => !isOpen)}>
                 <FilterIcon />
                 <span>filter</span>
@@ -152,7 +148,7 @@ export function AppFrame({ activeTab, slots, children }: AppFrameProps) {
               <TabPanel key={tab} panel={panel} activeTab={activeTab}>
                 {tab === 'inprogress' && <div className="active-cards" id="active-cards" />}
                 {tab === 'done' && <div id="done-groups" />}
-                {tab === 'you' && <div id="work-density" data-testid="work-density" />}
+                {tab === 'usage' && <div id="work-density" data-testid="work-density" />}
               </TabPanel>
             )
           })}

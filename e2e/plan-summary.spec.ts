@@ -23,7 +23,7 @@ async function openFlatPlan(page: Page, slug: string): Promise<void> {
 
 async function openParentPlan(page: Page): Promise<void> {
   await page.goto(`/task/${PARENT_SLUG}`)
-  await page.getByTestId('l1-tab-plan').click()
+  await page.getByTestId('stage-chain-planning').click()
   await expect(page.getByTestId('tech-design-body')).toBeVisible()
 }
 

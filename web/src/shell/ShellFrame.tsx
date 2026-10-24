@@ -3,6 +3,7 @@ import { matchShellRoute } from './routes'
 import { AppFrame } from './AppFrame'
 import { useDocumentTitle } from './useDocumentTitle'
 import { ViewBoundary } from './ViewBoundary'
+import { useWeeklyFocusEnabled } from '../data/weeklyFocusEnabled'
 import { useActiveBoardTab } from '../views/board/boardTabRoutes'
 import { ActiveBoard } from '../views/board/ActiveBoard'
 import { BoardTabs } from '../views/board/BoardTabs'
@@ -18,15 +19,17 @@ export function ShellFrame() {
   const location = useLocation()
   const routeId = matchShellRoute(location.pathname) ?? 'unknown'
   const activeTab = useActiveBoardTab()
+  const isWeeklyFocusEnabled = useWeeklyFocusEnabled()
   useDocumentTitle()
 
   return (
     <div data-testid="react-shell" data-route={routeId}>
       <AppFrame
         activeTab={activeTab}
+        isWeeklyFocusEnabled={isWeeklyFocusEnabled}
         slots={(
           <>
-            {/* Header chrome, the read-only banner and the sidebar tab bar (with the Backlog/Done/You panels) portal into the frame's regions. */}
+            {/* Header chrome, the read-only banner and the sidebar tab bar (with the Backlog/Done/Usage panels) portal into the frame's regions. */}
             <HeaderChrome />
             <ReadOnlyBanner />
             <ViewBoundary view="board-tabs" fallback={<p data-testid="board-tabs-crashed-message">The tabs failed to load — reload the page, and check the console.</p>}>
@@ -34,7 +37,7 @@ export function ShellFrame() {
             </ViewBoundary>
             {/* The active board isn't a route: every board panel stays in the frame (shown by class), so its React half mounts once, for every route, rather than per-route like the task detail. */}
             <ViewBoundary view="board" fallback={<p data-testid="board-crashed-message">The board failed to load — reload the page, and check the console.</p>}>
-              <ActiveBoard />
+              <ActiveBoard activeTab={activeTab} />
             </ViewBoundary>
           </>
         )}

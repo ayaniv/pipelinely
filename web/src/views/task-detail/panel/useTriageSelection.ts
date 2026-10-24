@@ -20,6 +20,8 @@ interface TriageSelectionOptions extends Partial<PostActionOptions> {
 
 const sameSelection = (a: boolean[], b: boolean[]) => a.length === b.length && a.every((value, i) => value === b[i])
 
+export type TriageSelection = ReturnType<typeof useTriageSelection>
+
 export function useTriageSelection({ slug, endpoint, serverSelected, fetchImpl = fetch, log = console.error }: TriageSelectionOptions) {
   const [override, setOverride] = useState<boolean[] | null>(null)
   const overrideRef = useRef<boolean[] | null>(null)

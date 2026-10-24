@@ -1,5 +1,5 @@
 import { useSnapshot } from '../../data/snapshot'
-import { activeTasksOf, narrowByProject, projectOptions } from './boardModel'
+import { activeTasksOf, narrowByProject, partitionParents, projectOptions } from './boardModel'
 import { projectFilterStore, selectionWithin, useProjectFilter, type ProjectFilterStore } from './boardFilter'
 
 // The project filter as the board's views apply it: the snapshot, the
@@ -13,6 +13,8 @@ export function useBoardFilterView(store: ProjectFilterStore = projectFilterStor
   const activeTasks = snapshot ? activeTasksOf(snapshot.tasks) : []
   const options = snapshot ? projectOptions(activeTasks, snapshot.doneGroups, snapshot.backlog) : []
   const effectiveSelected = selectionWithin(selected, options)
-  const visibleTasks = narrowByProject(activeTasks, effectiveSelected, (task) => task.repo)
-  return { snapshot, options, selected: effectiveSelected, visibleTasks, toggle, prune }
+  // Parents are filtered by project like any task but kept apart: they have no
+  // card and no part in the Active count (see partitionParents).
+  const { parents, unstartedParents, leaves } = partitionParents(narrowByProject(activeTasks, effectiveSelected, (task) => task.repo))
+  return { snapshot, options, selected: effectiveSelected, visibleTasks: leaves, visibleParents: parents, visibleUnstartedParents: unstartedParents, toggle, prune }
 }

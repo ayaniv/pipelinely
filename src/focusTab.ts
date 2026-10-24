@@ -2,33 +2,6 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { execa } from 'execa'
 
-// iTerm2's AppleScript enumeration of "every window" / "every tab" is a
-// live snapshot that can be invalidated mid-walk by a concurrent process
-// mutating the same window/tab list (e.g. a sibling Claude Code session
-// opening or closing its own tab while this script is still iterating) —
-// iTerm2 then raises "Can't get item N of every tab ... Invalid index."
-// Reproduced directly against this machine's real, multi-session iTerm2
-// state: the same script that fails this way on one invocation succeeds
-// immediately on the next, since the list is stable again a moment later.
-// So this retries the whole osascript call a few times before giving up,
-// rather than letting a transient race either surface as an uncaught
-// rejection (pasteIntoSession/stageInSession are documented to return
-// false, never throw) or as a spurious "not found". Attempt count and delay
-// were widened (from an initial 3x150ms) after that budget still lost to
-// the race on this machine under real multi-session load — 5x250ms (a ~1s
-// worst case) is still negligible next to the 30s callers poll for.
-async function runOsascriptWithTabListRaceRetry(script: string, attempts = 5): Promise<string> {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      const { stdout } = await execa('osascript', ['-e', script])
-      return stdout
-    } catch (error) {
-      if (attempt >= attempts) throw error
-      await new Promise((resolve) => setTimeout(resolve, 250))
-    }
-  }
-}
-
 export async function focusITermTab(tabName: string, sessionId?: string | null): Promise<void> {
   try {
     // Prefer matching on the stable session id — iTerm session *names* are
@@ -60,347 +33,12 @@ end tell`
   }
 }
 
-export interface SessionWriteOptions {
-  submit: boolean   // send the Return as its own `write text` call afterwards
-  focus: boolean    // bring iTerm2 itself to the OS foreground (`activate`)
-}
-
-// Escapes a string for embedding inside an AppleScript double-quoted string
-// literal: `\` and `"` (as always), plus CR/LF collapsed to the two-character
-// `\n` escape. Without the CR/LF handling, an embedded raw line break makes
-// the generated script a syntax error — `osascript` exits non-zero and the
-// caller throws, which is not a handled failure. No caller passed multi-line
-// text before this was extracted, so this closes a latent hole for every
-// caller at once (including /backlog/dispatch's description/context).
-function escapeForAppleScriptString(value: string): string {
-  return value
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\r\n|\r|\n/g, '\\n')
-}
-
-// Pure — builds the AppleScript that writeToSession runs. Split out so the
-// escaping, the newline-no/newline-yes split, and the focus/no-focus
-// difference are unit-testable without driving a real iTerm2.
-//
-// `select aTab`/`select aWindow` run regardless of `focus` — measured against
-// a real iTerm2 (10+ real-session e2e runs, reproduced consistently): a
-// `write text` sent to a session that was never `select`ed is silently lost
-// often enough to make a real e2e case against it flake/fail outright, even
-// though `osascript` still reports "ok" (it found the session; it did not
-// confirm delivery). `select` only changes which tab/window iTerm2 itself
-// considers current — unlike `activate`, it does not raise iTerm2 to the OS
-// foreground, so it doesn't steal the developer's focus away from the
-// dashboard. `focus: false` omits only the leading `activate` line for that
-// reason.
-// `pasteIntoSession`'s own `focus: true` default additionally activates —
-// right for an explicit "Run" click, which spawns a tab the developer needs
-// to see; that reasoning does not carry to answering a yes/no.
-export function buildSessionWriteScript(
-  sessionId: string,
-  text: string,
-  { submit, focus }: SessionWriteOptions,
-): string {
-  const escapedSessionId = escapeForAppleScriptString(sessionId)
-  const escapedText = escapeForAppleScriptString(text)
-  const activateLine = focus ? '  activate\n' : ''
-  const selectLines = '            select aTab\n            select aWindow\n'
-  const submitWrite = submit ? '\n              write text "" newline yes' : ''
-  return `tell application "iTerm2"
-${activateLine}  repeat with aWindow in windows
-    tell aWindow
-      repeat with aTab in tabs
-        repeat with aSession in sessions of aTab
-          if id of aSession is "${escapedSessionId}" then
-${selectLines}            tell aSession
-              write text "${escapedText}" newline no${submitWrite}
-            end tell
-            return "ok"
-          end if
-        end repeat
-      end repeat
-    end tell
-  end repeat
-end tell
-return "not-found"`
-}
-
-// Runs buildSessionWriteScript's script and reports whether the session was
-// found and written to. Shared body behind pasteIntoSession/stageInSession/
-// pasteIntoTrackedSession — see buildSessionWriteScript's own comment for why
-// this exists as one function rather than a near-copy per caller.
-async function writeToSession(sessionId: string, text: string, options: SessionWriteOptions): Promise<boolean> {
-  const script = buildSessionWriteScript(sessionId, text, options)
-  try {
-    const stdout = await runOsascriptWithTabListRaceRetry(script)
-    return stdout.trim() === 'ok'
-  } catch (error) {
-    console.error('Failed to write into iTerm session:', error)
-    return false
-  }
-}
-
-// Focuses the session by id and types `text` into it followed by Return, as
-// if the developer had typed it themselves — used to paste a promoted
-// backlog item into the orchestrator's own running session. Returns false
-// (rather than throwing) when no session with that id is currently open, so
-// callers can surface "orchestrator not running" distinctly from a hard error.
-//
-// The text and the Return are sent as two separate `write text` calls
-// (message with `newline no`, then an empty write with `newline yes`)
-// rather than one call with a trailing newline. Observed failure mode
-// (reproduced 10+ times against a real Claude Code session in a scratch
-// tmux/iTerm2 pair, before this change): the message would sit in the input
-// box unsent, requiring a separate real Enter keypress to submit — as if the
-// `\r` iTerm2's `write text` appends had been delivered as literal pasted
-// content rather than an Enter keystroke, which is consistent with (but not
-// confirmed as) Ink's bracketed-paste handling swallowing it. The exact
-// trigger is NOT nailed down — it did not reproduce as a clean "text over N
-// characters" rule (a real ~90-char dispatch succeeded on unmodified code
-// shortly after this was written), so it's likely timing- or
-// system-load-dependent rather than purely length-based. This change is a
-// safe hardening regardless: sending the Return as its own `write text` call
-// can't make delivery less reliable than bundling it with the text.
-//
-// Keeps `activate` (focus: true) — this is the direct result of an explicit
-// "Run" click on a backlog item, not background automation. The developer
-// just told the dashboard to do something and should see it happen, the
-// same way focusITermTab does for → Terminal. (Contrast openNewTabRunning,
-// which fires repeatedly and unattended mid-dispatch and must NOT steal
-// focus — see that function's own comment.)
-//
-// Restores whatever app was frontmost before `activate`, once the whole
-// write+confirm sequence is done — mirroring openNewTabRunning's own
-// save/restore, which this function never had. Without it, iTerm2 stayed
-// frontmost indefinitely after every call: fine for the one real "Run"
-// click this comment describes, but this same code path also fires from
-// automated dispatch (/backlog/dispatch, /focus/:slug's fallback)
-// and from e2e tests exercising those routes — repeated,
-// unattended calls that each yanked the developer's real OS focus to iTerm2
-// and never gave it back, observed live as iTerm2 windows "jumping"
-// forward while the developer was working in a completely unrelated app.
-// Collapses all whitespace (space/tab/CR/LF, including a terminal's own
-// soft-wrap line breaks, which land as real newlines in `contents of
-// aSession`) down to single spaces, matching pasteIntoSession's AppleScript
-// `collapseWhitespace` handler. Applied to `text` before it's embedded in
-// that script, so the confirmation check compares two identically-normalized
-// strings — a message long enough to wrap mid-string in the terminal window
-// gets a literal line break inserted into its buffer contents that never
-// existed in the text that was written, so an exact, un-normalized substring
-// check would permanently report a perfectly-landed write as failed for any
-// sufficiently long message (reproduced against /focus/:slug's ~300-char
-// fallback message).
-// Also the collapse POST /help/pipelinely-feedback applies to a staged message before
-// it can become a literal Return keystroke in the pane — see
+// Collapses all whitespace (space/tab/CR/LF) down to single spaces. POST
+// /help/pipelinely-feedback applies it to a staged message so a newline in the text can
+// never become a literal Return keystroke in the pane — see
 // tech-design-help-feedback-tab.md's "newline decision".
 export function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
-}
-
-// Pure — builds the AppleScript that finds `sessionId`, waits for iTerm2 to
-// actually be frontmost, and writes `text` — nothing else. Split out, same
-// as buildSessionWriteScript above, so the escaping is unit-testable without
-// driving a real iTerm2.
-//
-// `activate` asks iTerm2 to become frontmost but does not block until the
-// WindowServer actually finishes the transition — `select tab`/`select
-// window` can return, and `write text` can fire, while some other app is
-// still key. `write text` delivers via synthetic keyboard events, so a write
-// issued before iTerm2 is genuinely frontmost is silently dropped (no
-// AppleScript error — the call still reports "ok"): confirmed via a
-// read-back-after-write diagnostic that a raw `activate` left the paste
-// missing from the session's contents entirely a real fraction of the time,
-// worse and more erratic under real machine load (multiple back-to-back
-// dispatches, as wave-batch mode does, made it far more likely to hit).
-// Polling System Events' own frontmost-process reading until it actually
-// reports "iTerm2" — rather than trusting `activate`'s return — closes that
-// gap; 20 * 0.1s is generous slack for a focus transition that normally
-// completes in well under that.
-//
-// Returns immediately once the write fires — no confirm-poll inside this
-// script at all (see pasteIntoSession's own comment for why that moved out).
-// This means nothing enumerable is touched between the write and the
-// return, so a caught error afterward can only mean the write itself never
-// happened, which is what makes retrying this WHOLE script via
-// runOsascriptWithTabListRaceRetry safe.
-export function buildPasteIntoSessionWriteScript(sessionId: string, text: string): string {
-  const escapedSessionId = escapeForAppleScriptString(sessionId)
-  const escapedText = escapeForAppleScriptString(text)
-  return `tell application "System Events"
-  set frontApp to name of first application process whose frontmost is true
-end tell
-
-tell application "iTerm2"
-  activate
-  repeat with aWindow in windows
-    tell aWindow
-      repeat with aTab in tabs
-        repeat with aSession in sessions of aTab
-          if id of aSession is "${escapedSessionId}" then
-            select aTab
-            select aWindow
-            repeat 20 times
-              set isFront to false
-              tell application "System Events"
-                if (name of first application process whose frontmost is true) is "iTerm2" then set isFront to true
-              end tell
-              if isFront then exit repeat
-              delay 0.1
-            end repeat
-            tell aSession
-              write text "${escapedText}" newline no
-              write text "" newline yes
-            end tell
-            tell application "System Events"
-              tell application process frontApp to set frontmost to true
-            end tell
-            return "ok"
-          end if
-        end repeat
-      end repeat
-    end tell
-  end repeat
-end tell
-
-tell application "System Events"
-  tell application process frontApp to set frontmost to true
-end tell
-
-return "not-found"`
-}
-
-// Pure — builds the read-only AppleScript that reads back `sessionId`'s
-// current contents, used only to CONFIRM a write already landed. Never
-// mutates anything, so it is always safe to retry in full — including via
-// runOsascriptWithTabListRaceRetry's whole-script retry, and via
-// pasteIntoSession's own outer confirm-poll below.
-function buildReadSessionContentsScript(sessionId: string): string {
-  const escapedSessionId = escapeForAppleScriptString(sessionId)
-  return `tell application "iTerm2"
-  repeat with aWindow in windows
-    tell aWindow
-      repeat with aTab in tabs
-        repeat with aSession in sessions of aTab
-          if id of aSession is "${escapedSessionId}" then
-            select aTab
-            select aWindow
-            return contents of aSession
-          end if
-        end repeat
-      end repeat
-    end tell
-  end repeat
-end tell
-return ""`
-}
-
-export async function pasteIntoSession(sessionId: string, text: string): Promise<boolean> {
-  // Step 1 — write. This is the ONLY place `write text` can fire, and the
-  // script above returns the instant it does, so retrying this call (on a
-  // tab-list race or any other transient osascript error) can only mean the
-  // write itself never happened — never a second write on top of one that
-  // already landed.
-  //
-  // An earlier version wrote and confirmed inside ONE script, ending in a
-  // shared `return` reached only after unwinding — or, in a version that
-  // moved the `return` up but kept the confirm-poll ahead of it — after
-  // finishing a 20-iteration confirm-poll that itself reads `contents of
-  // aSession` repeatedly. Either shape leaves a window, between the write
-  // firing and the script's return, where something can still throw (the
-  // enclosing loops' live tab/window re-enumeration, or the confirm-poll's
-  // own repeated reads under real multi-session AppleEvent load) —
-  // and runOsascriptWithTabListRaceRetry then retries the WHOLE script,
-  // including a fresh `write text`, even though the first write had already
-  // landed. Reproduced: auto mode double-dispatching `/pipelinely-cr` into the
-  // orchestrator session while other tasks churned concurrently
-  // (e2e/integration/orchestrator-auto-mode.spec.ts's "dispatches exactly
-  // once" case) — the double landed even after moving the return ahead of
-  // the confirm-poll (a first fix attempt, commit 29f2a0f), because the
-  // confirm-poll was still ahead of that return, not after it. The write and
-  // the confirm are now two separate osascript invocations: nothing at all
-  // can execute between the write firing and this script exiting.
-  const writeScript = buildPasteIntoSessionWriteScript(sessionId, text)
-  let writeResult: string
-  try {
-    writeResult = (await runOsascriptWithTabListRaceRetry(writeScript)).trim()
-  } catch (error) {
-    console.error('Failed to paste into iTerm session:', error)
-    return false
-  }
-  if (writeResult !== 'ok') return false
-
-  // Step 2 — confirm, entirely separately and read-only. Polls Node-side
-  // (rather than looping inside one long-lived osascript process, as the
-  // write+confirm-in-one-script version did) specifically so a transient
-  // read failure can never be mistaken for "the write needs retrying" — it
-  // can only ever mean "try the read again". Same 20 * 0.1s budget as
-  // before. Compares against a whitespace-collapsed reading, not the raw
-  // buffer: a message long enough to soft-wrap in the terminal gets a real
-  // line break inserted into the buffer mid-string, which an exact substring
-  // check can never match (see normalizeWhitespace's own comment).
-  const normalizedTarget = normalizeWhitespace(text)
-  const readScript = buildReadSessionContentsScript(sessionId)
-  for (let attempt = 0; attempt < 20; attempt++) {
-    try {
-      const { stdout } = await execa('osascript', ['-e', readScript])
-      if (normalizeWhitespace(stdout).includes(normalizedTarget)) return true
-    } catch {
-      // Transient read failure (e.g. the same live tab-list race) — the next
-      // iteration just tries the read again. Never touches `write text`.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100))
-  }
-  console.error(`pasteIntoSession: wrote to session ${sessionId} but its content never confirmed the text landed`)
-  return false
-}
-
-// Sibling to pasteIntoSession — same session lookup, but appends
-// `newline no` (confirmed against iTerm2.sdef's `write` command) so the
-// command sits at the prompt for the developer to review before running it.
-// Every /cockpit-<stage> invocation this dashboard stages goes through this
-// — never pasteIntoSession — since each one spawns a worktree, a tab, or a
-// PR and must never auto-confirm.
-//
-// Keeps `activate` (focus: true) — every "Start <stage>" click on the
-// dashboard stages its command here, unsent, specifically so the developer
-// reviews it before it runs. A staged-but-unsent command the developer can't
-// find is useless, so this must bring the terminal forward, same as
-// focusITermTab. (An earlier version of this fix removed `activate` here
-// too, treating it as background noise like openNewTabRunning — wrong: this
-// one is a direct, single, explicit button click, not automation firing
-// repeatedly and unattended. Confirmed wrong by real usage: "Start plan
-// review" stopped focusing the terminal, which is the whole point of
-// staging instead of auto-submitting.)
-export async function stageInSession(sessionId: string, text: string): Promise<boolean> {
-  return writeToSession(sessionId, text, { submit: false, focus: true })
-}
-
-// Sibling to pasteIntoSession: writes the text and submits it (the Return
-// sent as its own `write text` call, same split and for the same reason), but
-// never `activate`s iTerm2.
-//
-// This is the auto-submitted remote/mobile stage-dispatch path. It fires
-// unattended — triggered from the developer's phone while they may be working
-// in a completely unrelated app on the desktop — so it must not raise iTerm2
-// to the OS foreground. pasteIntoSession's activate-then-restore round trip
-// is not good enough here: the restore puts focus back, but the jump itself is
-// still visible, which is the exact symptom its own comment above describes
-// ("observed live as iTerm2 windows 'jumping' forward").
-//
-// A manual "Start <stage>" click is unaffected and still uses stageInSession
-// with focus: true — a human who just clicked a button wants the terminal
-// brought forward. Only the unattended path is quiet.
-//
-// `select aTab`/`select aWindow` still run (buildSessionWriteScript emits them
-// regardless of `focus`): they are what makes delivery reliable, and unlike
-// `activate` they do not raise iTerm2 to the OS foreground. Deliberately no
-// confirm-by-readback — this is the same { submit: true, focus: false } shape
-// pasteIntoTrackedSession uses for its own submit:true callers without a
-// reported delivery problem, so it follows that precedent rather than
-// pasteIntoSession's heavier frontmost-poll-and-read-back loop, which exists
-// specifically to close a race that only `activate` creates.
-export async function pasteIntoSessionQuiet(sessionId: string, text: string): Promise<boolean> {
-  return writeToSession(sessionId, text, { submit: true, focus: false })
 }
 
 // Returns the set of currently-open iTerm2 session ids, or null if iTerm2
@@ -480,11 +118,12 @@ export async function getLiveTmuxSessions(options: { timeoutMs?: number } = {}):
 }
 
 export const TMUX_WRITE_TIMEOUT_MS = 2000
-const TMUX_PANE_ID = /^%\d+$/
+export const TMUX_PANE_ID = /^%\d+$/
 
-// The only tmux write in the codebase. argv only (no shell), and it never adds
-// Enter: the caller passes exactly the keys to type, built by keysForChoice.
-// Takes a pinned pane id, never a session name, so the pane that was
+// The keystroke half of the tmux writes (the paste half is tmuxPaneWrite's
+// load-buffer + paste-buffer). argv only (no shell), and it never adds Enter:
+// the caller passes exactly the keys to type, built by keysForChoice or the
+// single Enter that submits a paste. Takes a pinned pane id, never a session name, so the pane that was
 // re-checked is the pane that is typed into.
 export async function sendKeysToPane(paneId: string, keys: readonly string[]): Promise<void> {
   if (!TMUX_PANE_ID.test(paneId)) throw new Error(`refusing to send keys: ${JSON.stringify(paneId)} is not a tmux pane id`)
@@ -504,6 +143,35 @@ export async function resolveActivePaneId(session: string): Promise<string | nul
   }
 }
 
+export interface TmuxPaneState {
+  paneId: string
+  command: string
+  hasBracketedPaste: boolean
+  isInMode: boolean
+}
+
+// One snapshot of the session's active pane, taken in a single tmux call so
+// the id, the foreground command and the input-mode flags all describe the
+// same pane. Returns null when no pane resolves: measured on tmux 3.7b,
+// `display-message -t '=missing:'` exits 0 with EMPTY output, so the exit
+// code alone cannot say "no such session" — the pane id read back has to be
+// validated. The trailing `:` (empty window/pane) is required, and `=` forces
+// an exact session-name match: `=foo:` resolves to the session's active pane
+// but never matches session `foobar`, whereas a bare `=name` resolves to no
+// pane at all. Throws when tmux itself fails (timeout, server gone), which
+// callers must tell apart from "no such pane".
+export async function readPaneState(session: string): Promise<TmuxPaneState | null> {
+  if (!SAFE_TMUX_SESSION_NAME.test(session)) return null
+  const { stdout } = await execa(
+    'tmux',
+    ['display-message', '-p', '-t', `=${session}:`, '#{pane_id}\t#{pane_current_command}\t#{bracket_paste_flag}\t#{pane_in_mode}'],
+    { timeout: TMUX_WRITE_TIMEOUT_MS },
+  )
+  const [paneId, command, bracketPasteFlag, inModeFlag] = stdout.trim().split('\t')
+  if (!TMUX_PANE_ID.test(paneId ?? '')) return null
+  return { paneId, command: command ?? '', hasBracketedPaste: bracketPasteFlag === '1', isInMode: inModeFlag === '1' }
+}
+
 export async function tmuxSessionExists(name: string): Promise<boolean> {
   try {
     // '=' forces an exact match on the session name. Without it, tmux's -t
@@ -518,9 +186,7 @@ export async function tmuxSessionExists(name: string): Promise<boolean> {
 }
 
 // Returns the tty device path of the given iTerm2 session, or null if no
-// session with that id is currently open / iTerm2 scripting fails. Exported
-// for sessionIsClientOf (see Change 4 in tech-design.md), which needs it to
-// check whether a specific tab is a client of a specific tmux session.
+// session with that id is currently open / iTerm2 scripting fails.
 export async function getSessionTty(sessionId: string): Promise<string | null> {
   const script = `tell application "iTerm2"
   repeat with aWindow in windows
@@ -614,9 +280,9 @@ async function openNewTabRunning(command: string): Promise<string> {
   // `write text "..."` literal early and fail with an AppleScript syntax
   // error, not a permissions error, which is easy to misdiagnose.
   const escapedCommand = command.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-  // No `activate`, and no early `return` from inside the iTerm2 block — see
-  // pasteIntoSession's comment for why (an AppleScript `return` inside a
-  // `tell` exits the whole script, which would skip the focus restore).
+  // No `activate`, and no early `return` from inside the iTerm2 block (an
+  // AppleScript `return` inside a `tell` exits the whole script, which would
+  // skip the focus restore).
   // Every planning/dev/QA/CR/annotate dispatch opens a tab through here;
   // removing the bare `activate` alone isn't sufficient — iTerm2 raises
   // itself as a side effect of creating/writing to a new tab regardless —
@@ -813,54 +479,6 @@ export async function reattachOrFocus(
   return 'none'
 }
 
-export type TrackedSessionPasteResult =
-  | { status: 'ok'; reattached: boolean }
-  | { status: 'reattach-paste-failed' }
-  | { status: 'no-session'; hadRecordedSession: boolean }
-
-// Resolves a task's own recorded session to something writable and pastes
-// `message` into it: paste into the recorded iTerm session; failing that (tab
-// closed), reattach its detached-but-alive tmux session into a fresh tab,
-// re-record the new id at target.sessionFilePath, and retry once. Used by
-// POST /pipelinely-handover/:slug so a task's own session gets the same reattach-and-retry
-// resilience /stage-skill's orchestrator-target branch already has via
-// writeToOrchestrator — /stage-skill's own-session branch currently has none
-// (`sessionId = task.itermSessionId ?? ''`, dead tab is a flat 503).
-//
-// Deliberately does not carry writeToOrchestrator's stray-shell-detection or
-// adopt-already-attached-tab steps: those exist because the orchestrator's
-// tmux pane can silently fall back to a shell after an unrelated crash, and
-// because the orchestrator's tab is opened once and expected to live for a
-// whole session. A task's own session doesn't share either failure mode in
-// the same way, and `TrackedSessionPasteResult` has no 'stray-process'
-// status — folding that check in here would need a status this feature's
-// callers have nothing to do with.
-export async function pasteIntoTrackedSession(
-  target: { sessionId: string | null; tmuxSession: string | null; sessionFilePath: string },
-  message: string,
-  options?: Partial<SessionWriteOptions>,
-): Promise<TrackedSessionPasteResult> {
-  const writeOptions: SessionWriteOptions = { submit: true, focus: false, ...options }
-
-  if (target.sessionId && await writeToSession(target.sessionId, message, writeOptions)) {
-    return { status: 'ok', reattached: false }
-  }
-
-  if (!target.tmuxSession || !(await tmuxSessionExists(target.tmuxSession))) {
-    return { status: 'no-session', hadRecordedSession: !!target.sessionId }
-  }
-
-  const newSessionId = await reattachAndRecord(target.tmuxSession, target.sessionFilePath)
-  if (!newSessionId) {
-    return { status: 'no-session', hadRecordedSession: true }
-  }
-
-  if (await writeToSession(newSessionId, message, writeOptions)) {
-    return { status: 'ok', reattached: true }
-  }
-  return { status: 'reattach-paste-failed' }
-}
-
 // Returns id->tty pairs for every currently-open iTerm2 session, or null if
 // iTerm2 isn't running / scripting isn't available. Building block for
 // findSessionAttachedToTmux — getLiveSessionIds returns ids only.
@@ -914,36 +532,10 @@ export async function findSessionAttachedToTmux(tmuxSession: string): Promise<st
 // is named after its version (`2.1.251`), which changes on every auto-update.
 // The two failure directions are not symmetric. A wrong allow-list fails
 // closed on a HEALTHY orchestrator, bricking every dispatch button; a wrong
-// deny-list at worst lets a write reach some non-shell leftover, which is
-// exactly the behavior shipping today.
+// deny-list at worst lets a write reach some non-shell leftover.
 const STRAY_SHELL_COMMANDS = new Set([
   'sh', 'bash', 'zsh', 'dash', 'fish', 'ksh', 'tcsh', 'csh', 'login',
 ])
-
-// Returns the foreground command of `tmuxSession`'s ACTIVE pane, or null if
-// the session is gone / tmux isn't running / the call failed. The active
-// pane is deliberately the target rather than every pane in the session
-// (`list-panes`): it is where keystrokes sent by an attached client actually
-// land, which is precisely what this check is about. `=` forces exact
-// session-name matching — same guard, same reason, as tmuxSessionExists' own
-// comment about tmux's prefix-matching fallback. The trailing `:` (empty
-// window/pane) is required, not decorative: measured on this machine (tmux
-// 3.7b), `display-message -t '=name'` with no window/pane part fails to
-// resolve to any pane at all (empty output, no error) — only session-level
-// commands (has-session, list-clients, kill-session) tolerate a bare
-// `=name`. `=name:` resolves to that session's current window's active pane,
-// which is exactly what's wanted, while still refusing a same-prefixed
-// session name (`=foo:` never matches session `foobar`).
-async function getTmuxPaneCommand(tmuxSession: string): Promise<string | null> {
-  try {
-    const { stdout } = await execa('tmux', [
-      'display-message', '-p', '-t', `=${tmuxSession}:`, '#{pane_current_command}',
-    ])
-    return stdout.trim() || null
-  } catch {
-    return null
-  }
-}
 
 // Pure. `null` counts as stray, i.e. this gate fails CLOSED: it only ever
 // runs after tmuxSessionExists has already confirmed the session is there,
@@ -951,32 +543,4 @@ async function getTmuxPaneCommand(tmuxSession: string): Promise<string | null> {
 // point is to not type into a destination we could not verify.
 export function isStrayShellCommand(paneCommand: string | null): boolean {
   return paneCommand === null || STRAY_SHELL_COMMANDS.has(paneCommand)
-}
-
-// Whether tmuxSession's active pane has fallen back to a shell — the claude
-// REPL that used to own it is gone, even though the session and its attached
-// clients still look perfectly healthy. Owns the console.error for the stray
-// case: it is the only scope that has the offending pane command to name,
-// and both call sites in writeToOrchestrator would otherwise duplicate the
-// same log line.
-export async function tmuxPaneIsStrayShell(tmuxSession: string): Promise<boolean> {
-  const paneCommand = await getTmuxPaneCommand(tmuxSession)
-  const stray = isStrayShellCommand(paneCommand)
-  if (stray) {
-    console.error(
-      `ORCHESTRATOR_TMUX session "${tmuxSession}" is alive but its pane is at a shell prompt (${paneCommand ?? 'unreadable'}) — claude is not running there; refusing to type into it`,
-    )
-  }
-  return stray
-}
-
-// Whether the recorded iTerm2 tab is currently an attached client of
-// `tmuxSession` — i.e. text sent to that tab lands in that tmux pane.
-// Composed from the primitives that already exist in this file (getSessionTty
-// + getTmuxClientTtys + the pure isTtyAttached, the same trio
-// waitForTmuxAttach polls on).
-export async function sessionIsClientOf(sessionId: string, tmuxSession: string): Promise<boolean> {
-  const tty = await getSessionTty(sessionId)
-  const clientTtys = await getTmuxClientTtys(tmuxSession)
-  return isTtyAttached(tty, clientTtys)
 }

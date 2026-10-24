@@ -4,7 +4,6 @@ import chokidar from 'chokidar'
 import { createApprovalPollState, createApprovalTicker, pollApprovalPrompts, productionApprovalWatchDeps } from './approvalWatch.js'
 import type { ApprovalPrompt } from './approvalPrompt.js'
 import {
-  parseAllTasks,
   computeActiveProject,
   parseBacklog,
   groupDoneTasksByDate,
@@ -29,7 +28,9 @@ import {
   stripSummarySection,
   parseOrchestratorMetrics,
   isBacklogProject,
+  isCreaturePlacement,
 } from './taskParser.js'
+import { assignMissingCreatures } from './creature.js'
 import type { PlanTestGroup } from './types.js'
 import { runAutoActions } from './autoActions.js'
 import { renderMarkdownToHtml } from './markdown.js'
@@ -38,23 +39,21 @@ import {
   reattachOrFocus,
   openVSCode,
   openBrowserUrl,
-  pasteIntoSession,
-  pasteIntoSessionQuiet,
-  stageInSession,
-  tmuxSessionExists,
   reattachAndRecord,
   findSessionAttachedToTmux,
-  tmuxPaneIsStrayShell,
-  sessionIsClientOf,
   openAnnotationSession,
-  pasteIntoTrackedSession,
+  focusITermTab,
   normalizeWhitespace,
-  type TrackedSessionPasteResult,
 } from './focusTab.js'
 import { commitAndRemoveWorktree, findPrByBranch, openPrInBrowser, readPrHeadBranch } from './gitOps.js'
-import { attachResolvedPrNumbers, createPrNumberCache, repoPrNumberLookup } from './prLookup.js'
+import { loadTasks, type TaskLookups } from './loadTasks.js'
+import { createPrMergeStateCache, createPrNumberCache, repoPrMergeStateLookup, repoPrNumberLookup } from './prLookup.js'
+import { applyDesignApproval } from './designApproval.js'
+import { resolveDesignQaAsset } from './designQaAssets.js'
 import { markTaskDone, mergeTask } from './taskCompletion.js'
-import { formatBranchMismatch, formatMergeBlockers } from './mergeGate.js'
+import { formatBranchMismatch, formatMergeBlockers, readPrMergeState } from './mergeGate.js'
+import { effectiveWeeklyFocus, isWeeklyFocusEnabled, readStoredWeeklyFocus, WEEKLY_FOCUS_FILE } from './weeklyFocus.js'
+import { writeTextToTmuxSession, type TmuxPaneWriteResult, type TmuxPaneWriteRefusal, type TmuxPaneWriteStep } from './tmuxPaneWrite.js'
 import { withOrchestratorLock, OrchestratorLockTimeoutError } from './orchestratorLock.js'
 import { composeBatchMessage, SAFE_TOKEN, renderBacklogProjectClause } from './batchDispatch.js'
 import { ActiveProjectProgress, AutoModeOverride, BacklogItem, DoneDateGroup, Settings, Snapshot, Stage, Task } from './types.js'
@@ -73,9 +72,11 @@ import { readOrchestratorTmux } from './orchestratorTmux.js'
 import { BAD_REQUEST_RESPONSE, UNKNOWN_TASK_RESPONSE, parseAnswerBody, responseForAnswerResult, responseForGuardRefusal } from './answerDialogRoute.js'
 import type { AnswerDialogResponseBody } from './answerDialogWire.js'
 import { installRemoteAuth, requestAccess } from './remoteAuth.js'
+import { deleteBookmark, isBookmarkId, listBookmarks, resolveBookmarksDir } from './bookmarks.js'
 import { REMOTE_TOKEN_FILE_ENV_VAR, readRemoteToken, resolveRemoteTokenPath } from './remoteToken.js'
 import { sanitizeInheritedEnv, SERVER_STARTUP_LEAK_VARS } from './sanitizeInheritedEnv.js'
 import { findResultDoc } from './resultDoc.js'
+import { decisionContext, dispatchTimelineNote, isQaStartPolicy, planSweep } from './nextAction.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -143,7 +144,7 @@ function docsGuidePath(): string {
     ? path.resolve(process.env.DOCS_GUIDE_PATH)
     : path.join(__dirname, '..', 'docs', 'user-guide.md')
 }
-const WEEKLY_FOCUS_PATH = path.join(TASKS_DIR, 'WEEKLY_FOCUS')
+const WEEKLY_FOCUS_PATH = path.join(TASKS_DIR, WEEKLY_FOCUS_FILE)
 // BACKLOG.md is a sibling file at the top of TASKS_DIR, not a task
 // subdirectory — parsed separately from parseAllTasks.
 const BACKLOG_PATH = path.join(TASKS_DIR, 'BACKLOG.md')
@@ -167,44 +168,157 @@ const HELP_FEEDBACK_COMMAND = '/pipelinely-feedback'
 
 type OrchestratorWriteResult =
   | { status: 'ok' }
-  | { status: 'reattached-failed' }
   | { status: 'stray-process' }
-  | { status: 'no-session'; hadRecordedSession: boolean }
   | { status: 'locked' }
   | { status: 'not-canonical' }
+  | { status: 'not-tmux-backed' }
+  | { status: 'pane-not-ready'; reason: PaneNotReadyReason }
+  | { status: 'write-failed'; step: TmuxPaneWriteStep; error: string }
+  | { status: 'write-rejected'; reason: WriteRejectedReason }
 
-// Writes `text` into the orchestrator's own iTerm2 session (registered via
-// ORCHESTRATOR_SESSION by /pipelinely), reattaching a
-// detached-but-alive tmux session first if the recorded tab is gone — and
-// verifying, before every write, that the tmux pane it is about to write
-// into has not fallen back to a shell (see tmuxPaneIsStrayShell). `write` is
-// the only thing that varies between callers: pasteIntoSession (types and
-// sends — /backlog/dispatch, the /focus/:slug fallback) or stageInSession
-// (types and leaves it unsent for review — /stage-skill,
-// /orchestrator/pipelinely-handover). The liveness-check -> reattach -> retry logic
-// lives here and nowhere else.
+// How a write is delivered: 'send' types and submits without raising iTerm2,
+// 'stage' types and leaves the command unsent for review, then brings the tab
+// forward so the developer can find it.
+type DispatchWriteMode = 'send' | 'stage'
+
+function shouldSubmitMode(mode: DispatchWriteMode): boolean {
+  return mode !== 'stage'
+}
+
+// Retrying cannot help: the cause is the text or a corrupt pointer file, not
+// the state of the pane.
+type WriteRejectedReason = Extract<TmuxPaneWriteRefusal, 'unsafe-text' | 'unsafe-session-name'>
+type PaneNotReadyReason = Exclude<TmuxPaneWriteRefusal, 'stray-shell' | 'no-pane' | WriteRejectedReason>
+
+// Maps a tmux writer outcome onto the statuses the routes know. A stray shell
+// is a 503, and a missing pane reads as "not tmux-backed": either way the
+// recorded tmux session is not a live claude to type into, and there is no
+// keystroke fallback.
+function toTmuxWriteFailure(result: Exclude<TmuxPaneWriteResult, { status: 'ok' }>): TmuxWriteFailure {
+  if (result.status === 'failed') return { status: 'write-failed', step: result.step, error: result.error }
+  if (result.reason === 'stray-shell') return { status: 'stray-process' }
+  if (result.reason === 'no-pane') return { status: 'not-tmux-backed' }
+  if (result.reason === 'unsafe-text' || result.reason === 'unsafe-session-name') return { status: 'write-rejected', reason: result.reason }
+  return { status: 'pane-not-ready', reason: result.reason }
+}
+
+// After a tmux write landed: keep the pointer file on the tab that is really
+// attached to the session (→ Terminal reads it), and for a staged command
+// bring that tab forward — reattaching one if none is attached, since a
+// staged command nobody can find is useless. Never changes the outcome: the
+// text is already in the pane, so a failure here is only logged.
+async function surfaceTmuxSessionTab(tmuxSession: string, sessionFilePath: string, shouldFocus: boolean): Promise<string | null> {
+  try {
+    let tabId = await findSessionAttachedToTmux(tmuxSession)
+    if (tabId) await fs.writeFile(sessionFilePath, tabId)
+    else if (shouldFocus) tabId = await reattachAndRecord(tmuxSession, sessionFilePath)
+    if (tabId && shouldFocus) await focusITermTab(tmuxSession, tabId)
+    return tabId
+  } catch (err) {
+    console.error(`[tmux-dispatch] wrote to ${tmuxSession} but could not surface its tab:`, err)
+    return null
+  }
+}
+
+const TASK_NOT_TMUX_BACKED_ERROR =
+  "This task's tab is not tmux-backed (no TMUX_SESSION recorded or the session is gone), so nothing was typed. Dispatch writes need tmux."
+
+const NOT_TMUX_BACKED_ERROR =
+  'Orchestrator is not running inside tmux (or its recorded tmux session is gone) — start it with `orch`. Dispatch writes need tmux.'
+
+const PANE_NOT_READY_ERROR: Record<PaneNotReadyReason, string> = {
+  'dialog-open': 'The pane is showing a dialog — answer it first, then click again.',
+  'pane-in-mode': 'The pane is in copy mode — leave it, then click again.',
+  'no-bracketed-paste': 'The pane has not turned on bracketed paste, so nothing was typed.',
+}
+
+const WRITE_REJECTED_ERROR: Record<WriteRejectedReason, string> = {
+  'unsafe-text': 'The text contains control characters that cannot be pasted safely, so nothing was typed. Retrying will not help.',
+  'unsafe-session-name': 'The recorded tmux session name is not safe to address (check the ORCHESTRATOR_TMUX / TMUX_SESSION file), so nothing was typed. Retrying will not help.',
+}
+
+type TmuxOnlyFailure = Extract<OrchestratorWriteResult, { status: 'not-tmux-backed' | 'pane-not-ready' | 'write-failed' | 'write-rejected' }>
+type TmuxWriteFailure = TmuxOnlyFailure | Extract<OrchestratorWriteResult, { status: 'stray-process' }>
+
+// The own-session counterpart of writeToOrchestrator: a task's TMUX_SESSION
+// is its identity, so there is no lock, no iTerm id check and no
+// reattach-then-write — and no keystroke fallback when it is missing.
+async function writeToTaskSessionViaTmux(task: Task, slug: string, text: string, mode: DispatchWriteMode): Promise<{ status: 'ok' } | TmuxWriteFailure> {
+  if (!task.tmuxSession) {
+    console.error(`[tmux-dispatch] ${slug} has no TMUX_SESSION — refusing to write`)
+    return { status: 'not-tmux-backed' }
+  }
+
+  const result = await writeTextToTmuxSession(task.tmuxSession, text, { submit: shouldSubmitMode(mode) })
+  if (result.status !== 'ok') return toTmuxWriteFailure(result)
+
+  const tabId = await surfaceTmuxSessionTab(task.tmuxSession, path.join(TASKS_DIR, slug, 'ITERM_SESSION'), mode === 'stage')
+  // surfaceTmuxSessionTab may have rewritten ITERM_SESSION (a reattach or an
+  // adopted tab); without a refresh currentTasks keeps the dead id until the
+  // next 5-minute refresh.
+  if (tabId && tabId !== task.itermSessionId) await refreshTasks()
+  return { status: 'ok' }
+}
+
+function respondTaskTmuxFailure(res: express.Response, result: TmuxWriteFailure): void {
+  if (result.status === 'stray-process') {
+    res.status(503).json({ error: "This task's tmux pane is sitting at a shell prompt — claude is not running there; check it manually" })
+    return
+  }
+  respondTmuxPaneFailure(res, result, TASK_NOT_TMUX_BACKED_ERROR)
+}
+
+// The HTTP body for the three tmux-only failures, shared by every route
+// (and the own-session helper below). A failed submit is the one case where
+// text did land, so its wording says "staged, not sent".
+function respondTmuxPaneFailure(res: express.Response, result: TmuxOnlyFailure, notTmuxBackedError = NOT_TMUX_BACKED_ERROR): void {
+  if (result.status === 'not-tmux-backed') {
+    res.status(503).json({ error: notTmuxBackedError })
+    return
+  }
+  if (result.status === 'pane-not-ready') {
+    res.status(409).json({ reason: result.reason, error: PANE_NOT_READY_ERROR[result.reason] })
+    return
+  }
+  if (result.status === 'write-rejected') {
+    console.error(`[tmux-dispatch] write rejected (${result.reason}); not retryable`)
+    res.status(500).json({ reason: result.reason, error: WRITE_REJECTED_ERROR[result.reason] })
+    return
+  }
+  const error = result.step === 'submit'
+    ? `The text was staged but not sent (${result.error}) — check the pane.`
+    : `Writing to tmux failed at the ${result.step} step: ${result.error}`
+  res.status(500).json({ step: result.step, error })
+}
+
+// Writes `text` into the orchestrator's tmux pane (the session name recorded in
+// ORCHESTRATOR_TMUX by /pipelinely) through the tmux pane writer, which
+// pins the pane, refuses a shell prompt, a dialog or copy mode, and never
+// falls back to keystrokes. `mode` is the only thing that varies between
+// callers: 'send' (types and submits — /backlog/dispatch, the /focus/:slug
+// fallback, auto mode, a phone-triggered stage) or 'stage' (types and leaves
+// it unsent for review, then brings the tab forward — /stage-skill,
+// /orchestrator/pipelinely-handover).
 //
 // The whole read-decide-write body runs under withOrchestratorLock: every
-// caller (the four listed above, plus POST /orchestrator/tab, which reads
+// caller (the ones listed above, plus POST /orchestrator/tab, which reads
 // and can rewrite the same two pointer files directly) used to run this
 // independently, with nothing stopping two concurrent callers from reading
 // the pointers, deciding, and writing out of order with each other — see
-// FINDINGS.md's "Mechanism A" for the incident this caused (a message meant
-// for one target landing, via a stale/racily-adopted session id, in a
-// different live pane). The lock makes "read the pointers, decide how to
-// heal them, type into the result" one atomic unit with respect to every
-// other pointer-touching caller in this process, so no caller can ever act
-// on a pointer value another caller is concurrently changing underneath it.
+// FINDINGS.md's "Mechanism A" for the incident this caused. The lock makes
+// "read the pointers, type into the result, re-record the attached tab" one
+// atomic unit with respect to every other pointer-touching caller in this
+// process.
 async function writeToOrchestrator(
   text: string,
-  write: (sessionId: string, text: string) => Promise<boolean>,
+  mode: DispatchWriteMode,
 ): Promise<OrchestratorWriteResult> {
   // Checked first, before ever touching the lock file or ORCHESTRATOR_SESSION
   // — a non-canonical instance has no business reading or racing over those
   // pointer files at all, only rejecting outright.
   if (!isCanonicalDispatchInstance()) return { status: 'not-canonical' }
   try {
-    return await withOrchestratorLock(TASKS_DIR, () => writeToOrchestratorLocked(text, write))
+    return await withOrchestratorLock(TASKS_DIR, () => writeToOrchestratorLocked(text, mode))
   } catch (error) {
     if (error instanceof OrchestratorLockTimeoutError) {
       console.error(error.message)
@@ -214,96 +328,32 @@ async function writeToOrchestrator(
   }
 }
 
-async function writeToOrchestratorLocked(
-  text: string,
-  write: (sessionId: string, text: string) => Promise<boolean>,
-): Promise<OrchestratorWriteResult> {
-  const sessionId = (await fs.readFile(ORCHESTRATOR_SESSION_PATH, 'utf-8').catch(() => '')).trim()
-  // The session to reattach to when the recorded iTerm tab is gone; an unreadable file counts as none.
-  const tmuxSession = (await readOrchestratorTmux(TASKS_DIR).catch(() => null)) ?? ''
-
-  // Identity (FINDINGS.md item 2): the lock alone does nothing about a
-  // pointer that was already wrong when the critical section opened — a
-  // live-but-unrelated recorded tab still accepts a `write text` cleanly, so
-  // the fast path below must not trust the recorded id on sight. When
-  // ORCHESTRATOR_TMUX names a live session, the recorded tab must actually
-  // be a client of it to count as "the orchestrator"; if it's absent, dead,
-  // or names a session this tab isn't attached to (pipelinely only
-  // writes that file when $TMUX is set, and never clears it, so it can be
-  // stale), there is nothing to verify and the recorded tab is trusted
-  // exactly as before. Computed once and shared with the stray-shell gate
-  // below rather than calling sessionIsClientOf twice. Also short-circuits
-  // on an empty sessionId — no tab was ever recorded, so there's nothing to
-  // check identity against, and both `sessionId &&`-guarded callers below
-  // ignore this value anyway; skipping avoids a wasted osascript/tmux round
-  // trip whose result is guaranteed false.
-  const tmuxRecordedAndLive = !!tmuxSession && await tmuxSessionExists(tmuxSession)
-  const recordedTabIsTheOrchestrator =
-    !tmuxRecordedAndLive || !sessionId || await sessionIsClientOf(sessionId, tmuxSession)
-
-  // Step 0 — before the fast-path write. Only meaningful when the recorded
-  // tab is genuinely a client of the recorded tmux session — then, and only
-  // then, is that pane's foreground command a statement about where our
-  // keystrokes are going. If identity doesn't hold, there's nothing to
-  // inspect here; the routing below (fall through to adopt/reattach) is what
-  // handles it.
-  if (
-    sessionId && tmuxRecordedAndLive && recordedTabIsTheOrchestrator &&
-    await tmuxPaneIsStrayShell(tmuxSession)
-  ) {
-    return { status: 'stray-process' }
+// The recorded tmux session IS the orchestrator's identity, so there are no
+// iTerm-id checks, no adopt and no reattach-then-write steps here, and
+// nothing ever falls back to a keystroke writer.
+async function writeToOrchestratorLocked(text: string, mode: DispatchWriteMode): Promise<OrchestratorWriteResult> {
+  const tmuxSession = (await readOrchestratorTmux(TASKS_DIR).catch((err) => {
+    console.error('[tmux-dispatch] could not read ORCHESTRATOR_TMUX:', err)
+    return null
+  })) ?? ''
+  if (!tmuxSession) {
+    console.error('[tmux-dispatch] no ORCHESTRATOR_TMUX recorded — the orchestrator is not inside tmux; refusing to write')
+    return { status: 'not-tmux-backed' }
   }
 
-  // Identity-gated: a recorded tab that is live but NOT a client of a live
-  // ORCHESTRATOR_TMUX is routed away from here — this is a routing decision,
-  // not a new refusal path, so it falls through to the adopt/reattach heal
-  // below rather than returning any new status.
-  if (sessionId && recordedTabIsTheOrchestrator && await write(sessionId, text)) return { status: 'ok' }
+  const result = await writeTextToTmuxSession(tmuxSession, text, { submit: shouldSubmitMode(mode) })
+  if (result.status !== 'ok') return toTmuxWriteFailure(result)
 
-  // The recorded iTerm session is gone (tab closed) or was never recorded,
-  // or ORCHESTRATOR_TMUX itself is absent/dead — nothing to reattach/adopt.
-  if (!tmuxRecordedAndLive) {
-    return { status: 'no-session', hadRecordedSession: !!sessionId }
-  }
-
-  // Step 3 — before adopt and before reattach: one check in front of both
-  // heal branches, since they're both about to write into this same pane.
-  if (await tmuxPaneIsStrayShell(tmuxSession)) {
-    return { status: 'stray-process' }
-  }
-
-  // A tab is already attached to this tmux session (e.g. the recorded id
-  // went stale while the orchestrator's tab stayed on screen the whole
-  // time) — adopt it rather than reattach, which would forcibly detach it.
-  const adoptedSessionId = await findSessionAttachedToTmux(tmuxSession)
-  if (adoptedSessionId) {
-    await fs.writeFile(ORCHESTRATOR_SESSION_PATH, adoptedSessionId)
-    if (await write(adoptedSessionId, text)) return { status: 'ok' }
-    return { status: 'reattached-failed' }
-  }
-
-  // No local tab is attached, so reattachTmuxSession's `-d` is now correct.
-  // reattachTmuxSession only returns once it has *verified* the new tab's
-  // tmux client actually attached (see its own comment) — not just that the
-  // tab exists — so the pty is already live by the time we get here and an
-  // immediate retry write is safe. No arbitrary sleep needed: confirmed by
-  // repeated live testing against a real orchestrator session (reattach +
-  // immediate paste succeeded every trial).
-  const newSessionId = await reattachAndRecord(tmuxSession, ORCHESTRATOR_SESSION_PATH)
-  if (newSessionId) {
-    if (await write(newSessionId, text)) return { status: 'ok' }
-    return { status: 'reattached-failed' }
-  }
-
-  return { status: 'no-session', hadRecordedSession: !!sessionId }
+  await surfaceTmuxSessionTab(tmuxSession, ORCHESTRATOR_SESSION_PATH, mode === 'stage')
+  return { status: 'ok' }
 }
 
 // Submits `/cockpit-<skill> <slug>` into the orchestrator's own session for
 // a stage whose STAGE_SKILL entry targets it. THE single automated dispatch
 // path: the wave-batch route (POST /pipelinely-dev/:slug) and auto mode's
 // advancement pass both go through here, so a second unattended dispatcher
-// cannot fork a path that skips the liveness/self-heal checks
-// writeToOrchestrator owns.
+// cannot fork a path that skips the pane checks writeToOrchestrator's
+// tmux writer owns.
 //
 // Returns the write result verbatim rather than an HTTP status: the route
 // wants a 409/503 with its own wording, the auto-advance pass wants a
@@ -316,9 +366,9 @@ async function dispatchStageToOrchestrator(
   if (!route || route.target !== 'orchestrator') {
     // Unreachable via either caller — both gate on the stage first. Guarded
     // anyway so a future caller cannot silently address the task's own tab.
-    return { status: 'no-session', hadRecordedSession: false }
+    throw new Error(`dispatchStageToOrchestrator: stage ${stage} does not target the orchestrator`)
   }
-  return writeToOrchestrator(composeStageCommand(route.skillName, slug), pasteIntoSession)
+  return writeToOrchestrator(composeStageCommand(route.skillName, slug), 'send')
 }
 
 // ---------------------------------------------------------------------------
@@ -371,11 +421,11 @@ async function runAutoAdvancePass(): Promise<void> {
 }
 
 function autoDispatchFailureReason(result: OrchestratorWriteResult): string {
-  if (result.status === 'reattached-failed') return 'orchestrator reattached but the retry failed'
   if (result.status === 'stray-process') return 'orchestrator tmux session found but not running claude'
-  if (result.status === 'no-session') {
-    return result.hadRecordedSession ? 'orchestrator tab not found' : 'orchestrator not running'
-  }
+  if (result.status === 'not-tmux-backed') return 'orchestrator not running inside tmux'
+  if (result.status === 'pane-not-ready') return `orchestrator pane not ready (${result.reason})`
+  if (result.status === 'write-failed') return `tmux write failed at ${result.step}`
+  if (result.status === 'write-rejected') return `tmux write rejected (${result.reason})`
   return 'unknown failure'
 }
 
@@ -389,7 +439,7 @@ function autoDispatchFailureReason(result: OrchestratorWriteResult): string {
 async function dispatchAndRecordAuto(slug: string, stage: Stage): Promise<void> {
   const result = await dispatchStageToOrchestrator(stage, slug)
   const ok = result.status === 'ok'
-  const note = ok ? 'auto-dispatched — auto mode' : `auto-dispatch failed — ${autoDispatchFailureReason(result)}`
+  const note = ok ? dispatchTimelineNote('auto mode') : `auto-dispatch failed — ${autoDispatchFailureReason(result)}`
 
   if (!ok) {
     console.error(`[auto-mode] dispatch failed for ${slug} -> ${stage}: ${autoDispatchFailureReason(result)}`)
@@ -420,9 +470,10 @@ async function runAutoAdvancePassOnce(): Promise<void> {
   const toDispatch: { slug: string; stage: Stage; skipReason?: string }[] = []
   const seenSlugs = new Set<string>()
 
+  const ctx = decisionContext(currentSettings)
   for (const task of currentTasks) {
     seenSlugs.add(task.slug)
-    const auto = computeAutoDispatch(task)
+    const auto = computeAutoDispatch(task, ctx)
     const key = auto?.key ?? null
 
     // A task seen for the first time (server start, or a brand-new task
@@ -462,32 +513,14 @@ function respondOrchestratorLocked(res: express.Response): void {
   res.status(503).json({ error: 'Another orchestrator operation is already in progress — try again in a moment' })
 }
 
-// The reattached-failed / stray-process / locked / no-session -> HTTP mapping
-// shared by every route whose write goes through writeToOrchestrator and
-// isn't a plain 'ok'. `logContext` names the calling route in the log line;
-// `retryHint` is the one sentence of caller-specific wording appended to the
-// 409 body (e.g. "Click Run again." vs "Click Start again."). The 409 log
-// line reads "the retry write still failed" — not "paste" — because a
-// staged route (POST /batch-dispatch) never attempts a paste at all, and
-// this body is shared with a route that does (/backlog/dispatch); a verb
-// true of both is the only one that can't misreport what either route did.
+// The stray-process / locked / tmux-failure -> HTTP mapping shared by every
+// route whose write goes through writeToOrchestrator and isn't a plain 'ok'.
 function respondOrchestratorWriteFailure(
   res: express.Response,
   result: Exclude<OrchestratorWriteResult, { status: 'ok' }>,
-  logContext: string,
-  retryHint: string,
 ): void {
   if (result.status === 'not-canonical') {
     res.status(403).json({ error: NOT_CANONICAL_ERROR })
-    return
-  }
-
-  if (result.status === 'reattached-failed') {
-    console.error(`${logContext}: reattached orchestrator but the retry write still failed`)
-    res.status(409).json({
-      reattached: true,
-      error: `Orchestrator was detached — reattached it in a new tab, but the message still failed to send. ${retryHint}`,
-    })
     return
   }
 
@@ -503,38 +536,7 @@ function respondOrchestratorWriteFailure(
     return
   }
 
-  res.status(503).json({
-    error: result.hadRecordedSession
-      ? 'Orchestrator tab not found — it may have closed'
-      : 'Orchestrator not running — no ORCHESTRATOR_SESSION found',
-  })
-}
-
-// The reattach-paste-failed / no-session -> HTTP mapping shared by every
-// route whose write goes through pasteIntoTrackedSession — the own-session
-// sibling of respondOrchestratorWriteFailure. `wording` carries the phrases
-// that differ per caller so the response bodies stay caller-specific without
-// copying the mapping itself.
-function respondTrackedSessionWriteFailure(
-  res: express.Response,
-  result: Exclude<TrackedSessionPasteResult, { status: 'ok' }>,
-  wording: { logContext: string; failedRetry: string; noSessionVerb: string },
-): void {
-  if (result.status === 'reattach-paste-failed') {
-    console.error(`${wording.logContext}: reattached its session but the retry write still failed`)
-    res.status(409).json({
-      reattached: true,
-      error: `Session was gone — reattached a new tab, but ${wording.failedRetry}. Click again.`,
-    })
-    return
-  }
-
-  console.error(`${wording.logContext}: no live session and no tmux session to reattach (hadRecordedSession=${result.hadRecordedSession})`)
-  res.status(503).json({
-    error: result.hadRecordedSession
-      ? "This task's own tab not found — it may have closed"
-      : `This task has no recorded session to ${wording.noSessionVerb}`,
-  })
+  respondTmuxPaneFailure(res, result)
 }
 
 async function isRemoteAccessEnabled(): Promise<boolean> {
@@ -573,7 +575,7 @@ function buildSnapshot(): Snapshot {
   return {
     tasks: currentTasks,
     activeProject: currentActiveProject,
-    weeklyFocus: currentWeeklyFocus,
+    weeklyFocus: effectiveWeeklyFocus(currentSettings, currentWeeklyFocus),
     backlog: currentBacklog,
     doneGroups: currentDoneGroups,
     settings: currentSettings,
@@ -595,14 +597,19 @@ function broadcastTasks(): void {
 
 const prNumberCache = createPrNumberCache()
 const lookUpPrNumber = repoPrNumberLookup(findPrByBranch, TASKS_DIR)
+const prMergeStateCache = createPrMergeStateCache()
+const lookUpPrMergeState = repoPrMergeStateLookup(readPrMergeState, TASKS_DIR)
+const taskLookups: TaskLookups = { lookUpPrNumber, lookUpPrMergeState, prNumberCache, prMergeStateCache }
 
 // slug -> the dialog a worker's tmux session is stopped on, owned by the
 // approval poll below and stamped onto tasks by parseAllTasks.
 let currentApprovalPrompts = new Map<string, ApprovalPrompt>()
 
 async function refreshTasks(): Promise<void> {
-  const parsedTasks = await parseAllTasks(TASKS_DIR, currentSettings, currentApprovalPrompts)
-  currentTasks = await attachResolvedPrNumbers(parsedTasks, lookUpPrNumber, prNumberCache)
+  // Before the auto pass below: it must see a conflicting PR to hold back QA,
+  // CR and the QA skip (computeAutoDispatch).
+  currentTasks = await loadTasks(TASKS_DIR, currentSettings, taskLookups, currentApprovalPrompts)
+  await assignMissingCreatures(currentTasks, TASKS_DIR, console.error)
   currentActiveProject = computeActiveProject(currentTasks)
   currentDoneGroups = groupDoneTasksByDate(currentTasks)
   await runAutoAdvancePass()
@@ -616,8 +623,9 @@ async function refreshSettings(): Promise<void> {
 
 async function refreshWeeklyFocus(): Promise<void> {
   try {
-    currentWeeklyFocus = (await fs.readFile(WEEKLY_FOCUS_PATH, 'utf-8')).trim()
-  } catch {
+    currentWeeklyFocus = await readStoredWeeklyFocus(TASKS_DIR)
+  } catch (err) {
+    console.error('[weekly-focus] failed to read WEEKLY_FOCUS:', err)
     currentWeeklyFocus = ''
   }
   broadcastTasks()
@@ -703,13 +711,74 @@ app.get('/help', sendDashboardShell)
 // (mirrors GET /help's own reasoning).
 app.get('/docs', sendDashboardShell)
 
-// GET /backlog, GET /done, GET /you — same dashboard shell, opened straight
+// GET /bookmarks — same dashboard shell, opened straight into the Bookmarks
+// page (mirrors GET /docs' own reasoning).
+app.get('/bookmarks', sendDashboardShell)
+
+// GET /backlog, GET /done, GET /usage — same dashboard shell, opened straight
 // into that board tab. '/' itself is the fourth board tab (In Progress) —
 // see the client's own DEFAULT_TAB/tabUrl, which is why it doesn't need a
 // route of its own here.
 app.get('/backlog', sendDashboardShell)
 app.get('/done', sendDashboardShell)
-app.get('/you', sendDashboardShell)
+app.get('/usage', sendDashboardShell)
+
+// The Usage tab was the You tab until dashboard-v3-update M0; keep old
+// bookmarks and shared links working. Not a shell route, so no client entry.
+app.get(/^\/you\/?$/, (_req, res) => res.redirect('/usage'))
+
+// Bookmarks are personal data kept in files on this Mac, so they are served to
+// this Mac only: a signed-in phone can see the board but gets a 403 here.
+// installRemoteAuth already refuses a loopback request driven from another
+// site; this is the extra "and not a remote device" test both routes share.
+function refuseUnlessLoopback(res: express.Response): boolean {
+  if (requestAccess(res) === 'loopback') return false
+  res.status(403).json({ error: 'Bookmarks are only available on this Mac' })
+  return true
+}
+
+// The folder is resolved per request, so a changed PIPELINELY_BOOKMARKS_DIR
+// takes effect without a restart. Bookmarks never ride the shared task
+// snapshot: every client, remote ones included, receives that.
+const currentBookmarksDir = () => resolveBookmarksDir(process.env, os.homedir())
+
+// GET /api/bookmarks — every readable bookmark, newest first, each saying
+// whether its task is still on the board (worked out here on every list, never
+// stored), plus the names of files that could not be read.
+app.get('/api/bookmarks', async (_req, res) => {
+  if (refuseUnlessLoopback(res)) return
+  try {
+    const { bookmarks, unreadable } = await listBookmarks(currentBookmarksDir())
+    const boardSlugs = new Set(currentTasks.map((task) => task.slug))
+    res.json({
+      bookmarks: bookmarks.map((bookmark) => ({ ...bookmark, taskOnBoard: bookmark.source.taskSlug !== null && boardSlugs.has(bookmark.source.taskSlug) })),
+      unreadable,
+    })
+  } catch (err) {
+    // listBookmarks has already logged the folder and error code; nothing from
+    // a file's content may reach a log.
+    console.error('[bookmarks] GET /api/bookmarks failed:', (err as NodeJS.ErrnoException).code ?? 'unreadable folder')
+    res.status(500).json({ error: 'Could not read the bookmarks folder' })
+  }
+})
+
+// DELETE /api/bookmarks/:id — remove one bookmark's file.
+app.delete('/api/bookmarks/:id', async (req, res) => {
+  if (refuseUnlessLoopback(res)) return
+  const { id } = req.params
+  if (!isBookmarkId(id)) {
+    res.status(400).json({ error: 'Not a bookmark id' })
+    return
+  }
+  try {
+    const outcome = await deleteBookmark(currentBookmarksDir(), id)
+    if (outcome === 'not-found') res.status(404).json({ error: 'No such bookmark' })
+    else res.status(204).end()
+  } catch (err) {
+    console.error(`[bookmarks] DELETE /api/bookmarks/${id} failed:`, (err as NodeJS.ErrnoException).code ?? 'unknown error')
+    res.status(500).json({ error: 'Could not delete the bookmark' })
+  }
+})
 
 // GET /api/tasks — snapshot for initial page load
 app.get('/api/tasks', (_, res) => {
@@ -729,6 +798,9 @@ app.get('/api/access', (req, res) => {
 
 // POST /weekly-focus — free-text banner describing this week's focus
 app.post('/weekly-focus', async (req, res) => {
+  // A disabled pane has no editor, so an edit can only be a stale client or
+  // a script — refuse it loudly rather than writing text nothing will show.
+  if (!isWeeklyFocusEnabled(currentSettings)) return res.status(409).json({ error: 'weekly focus is disabled' })
   try {
     const text = typeof req.body?.text === 'string' ? req.body.text : ''
     await fs.writeFile(WEEKLY_FOCUS_PATH, text)
@@ -740,15 +812,42 @@ app.post('/weekly-focus', async (req, res) => {
   }
 })
 
-// POST /settings — the global auto-mode switch. Body: { autoMode: boolean }.
+// Whichever settings fields the body carries, each validated; null when a
+// present field is invalid or the body carries none of them.
+function parseSettingsPatch(body: unknown): Partial<Settings> | null {
+  const { autoMode, creaturePlacement, weeklyFocusEnabled, qaStartPolicy } = (body ?? {}) as { autoMode?: unknown; creaturePlacement?: unknown; weeklyFocusEnabled?: unknown; qaStartPolicy?: unknown }
+  const patch: Partial<Settings> = {}
+  if (autoMode !== undefined) {
+    if (typeof autoMode !== 'boolean') return null
+    patch.autoMode = autoMode
+  }
+  if (creaturePlacement !== undefined) {
+    if (!isCreaturePlacement(creaturePlacement)) return null
+    patch.creaturePlacement = creaturePlacement
+  }
+  if (weeklyFocusEnabled !== undefined) {
+    if (typeof weeklyFocusEnabled !== 'boolean') return null
+    patch.weeklyFocusEnabled = weeklyFocusEnabled
+  }
+  if (qaStartPolicy !== undefined) {
+    if (!isQaStartPolicy(qaStartPolicy)) return null
+    patch.qaStartPolicy = qaStartPolicy
+  }
+  return Object.keys(patch).length === 0 ? null : patch
+}
+
+// POST /settings — the global switches. Body: { autoMode?: boolean,
+// creaturePlacement?: 'header' | 'off', weeklyFocusEnabled?: boolean,
+// qaStartPolicy?: 'ask-every-time' | 'cockpit-ai-ui-preapproved' }, merged
+// into the file.
 // Rejects a non-boolean rather than coercing: this is the switch that
 // decides whether the machine spends money unattended, and "truthy" is not
 // a good enough answer.
 app.post('/settings', async (req, res) => {
   try {
-    const autoMode = req.body?.autoMode
-    if (typeof autoMode !== 'boolean') return res.sendStatus(400)
-    await fs.writeFile(SETTINGS_PATH, JSON.stringify({ autoMode }))
+    const patch = parseSettingsPatch(req.body)
+    if (patch === null) return res.sendStatus(400)
+    await fs.writeFile(SETTINGS_PATH, JSON.stringify({ ...currentSettings, ...patch }))
     await refreshSettings()
     res.sendStatus(200)
   } catch (err) {
@@ -880,18 +979,10 @@ app.post('/focus/:slug', async (req, res) => {
     // outcome === 'none': neither the recorded iTerm session nor its tmux
     // session is alive. Mirror what a developer would do by hand.
     const message = buildDeadSessionMessage(req.params.slug, task, TASKS_DIR)
-    const result = await writeToOrchestrator(message, pasteIntoSession)
+    const result = await writeToOrchestrator(message, 'send')
     if (result.status === 'ok') return res.status(202).json({ fallback: true })
 
     if (result.status === 'not-canonical') return res.status(403).json({ error: NOT_CANONICAL_ERROR })
-
-    if (result.status === 'reattached-failed') {
-      console.error(`Focus fallback for ${req.params.slug}: reattached orchestrator but the retry paste still failed`)
-      return res.status(409).json({
-        reattached: true,
-        error: 'Session was gone — reattached the orchestrator in a new tab, but the resume message still failed to send. Click again.',
-      })
-    }
 
     if (result.status === 'stray-process') {
       return res.status(503).json({
@@ -903,12 +994,7 @@ app.post('/focus/:slug', async (req, res) => {
       return respondOrchestratorLocked(res)
     }
 
-    console.error(`Focus fallback for ${req.params.slug}: no live session and orchestrator unreachable (${result.status})`)
-    return res.status(503).json({
-      error: result.hadRecordedSession
-        ? 'Session gone and orchestrator tab not found — it may have closed'
-        : 'Session gone and orchestrator not running — no ORCHESTRATOR_SESSION found',
-    })
+    return respondTmuxPaneFailure(res, result)
   } catch (err) {
     console.error(`Failed to focus/reattach ${req.params.slug}:`, err)
     res.sendStatus(500)
@@ -918,12 +1004,12 @@ app.post('/focus/:slug', async (req, res) => {
 // POST /orchestrator/tab — bring the orchestrator's own tab back: focus it
 // if it is still live, otherwise reattach its surviving tmux session into a
 // fresh tab. The same primitive the per-task "→ Terminal" button uses
-// (reattachOrFocus), one level up. Distinct from the automatic heal in
-// writeToOrchestrator: this is the developer asking for the tab itself, with
-// nothing to dispatch into it — so it deliberately does not run Change 4's
-// stray-shell gate (see that change's own scope note): refusing to even open
-// the tab because claude isn't running there would block exactly the moment
-// a developer wants to look at it, to restart claude themselves.
+// (reattachOrFocus), one level up. Distinct from writeToOrchestrator: this is
+// the developer asking for the tab itself, with nothing to dispatch into it —
+// so it deliberately does not run the tmux writer's stray-shell gate:
+// refusing to even open the tab because claude isn't running there would
+// block exactly the moment a developer wants to look at it, to restart
+// claude themselves.
 //
 // Still canonical-gated, though, same as every other reader/writer of
 // ORCHESTRATOR_SESSION/ORCHESTRATOR_TMUX: this route reads and can rewrite
@@ -980,11 +1066,40 @@ app.post('/orchestrator/tab', async (req, res) => {
 // auto-submits.
 app.post('/orchestrator/pipelinely-handover', async (_req, res) => {
   try {
-    const result = await writeToOrchestrator(HANDOVER_COMMAND, stageInSession)
+    const result = await writeToOrchestrator(HANDOVER_COMMAND, 'stage')
     if (result.status === 'ok') return res.sendStatus(200)
-    return respondOrchestratorWriteFailure(res, result, 'Orchestrator handover', 'Click Handover again.')
+    return respondOrchestratorWriteFailure(res, result)
   } catch (err) {
     console.error('Failed to stage /pipelinely-handover into the orchestrator:', err)
+    res.sendStatus(500)
+  }
+})
+
+const LOAD_DECIMALS = 10
+function roundLoad(load1: number): number {
+  return Math.round(load1 * LOAD_DECIMALS) / LOAD_DECIMALS
+}
+
+// POST /babysit — the Push forward pill. Plans one sweep with the same
+// planSweep the /pipelinely-babysit skill runs, and only when it has something to
+// push submits that skill into the orchestrator's own session (the same
+// submit path auto mode uses). The click is the consent to one sweep; the
+// skill itself refuses every hard stop. Load-too-high and nothing-to-do write
+// nothing, so the pill never reports a sweep that was not started.
+app.post('/babysit', async (_req, res) => {
+  try {
+    const load1 = os.loadavg()[0]
+    const plan = planSweep(currentTasks, { load1 }, decisionContext(currentSettings))
+    // The raw reading is a long float; the pill prints it as given.
+    if (plan.isLoadTooHigh) return res.json({ outcome: 'load-too-high', load1: roundLoad(load1) })
+    if (plan.actions.length === 0) return res.json({ outcome: 'nothing' })
+
+    const result = await writeToOrchestrator(composeStageCommand('babysit', null), 'send')
+    if (result.status === 'ok') return res.json({ outcome: 'sent', planned: plan.actions.length })
+    console.error(`[babysit] sweep not sent: ${result.status}`, result)
+    return respondOrchestratorWriteFailure(res, result)
+  } catch (err) {
+    console.error('[babysit] Failed to submit /pipelinely-babysit into the orchestrator:', err)
     res.sendStatus(500)
   }
 })
@@ -1002,10 +1117,10 @@ app.post('/help/pipelinely-feedback', async (req, res) => {
 
     const result = await writeToOrchestrator(
       `${HELP_FEEDBACK_COMMAND} ${normalizeWhitespace(message)}`,
-      stageInSession,
+      'stage',
     )
     if (result.status === 'ok') return res.sendStatus(200)
-    return respondOrchestratorWriteFailure(res, result, 'Help feedback', 'Click Send again.')
+    return respondOrchestratorWriteFailure(res, result)
   } catch (err) {
     console.error('Failed to stage /pipelinely-feedback into the orchestrator:', err)
     res.sendStatus(500)
@@ -1262,10 +1377,10 @@ app.post('/mark-done/:slug', async (req, res) => {
   try {
     const task = currentTasks.find(t => t.slug === req.params.slug)
     if (!task) return res.sendStatus(404)
-    const { cleanupError } = await markTaskDone(TASKS_DIR, task)
+    const { cleanupError, sessions } = await markTaskDone(TASKS_DIR, task)
 
     await refreshTasks()
-    res.json({ cleaned: cleanupError === null, cleanupError })
+    res.json({ cleaned: cleanupError === null, cleanupError, sessions })
   } catch (err) {
     console.error(`Failed to mark ${req.params.slug} done:`, err)
     res.sendStatus(500)
@@ -1388,7 +1503,7 @@ app.post('/merge-pr/:slug', async (req, res) => {
         return res.status(503).json({ error: result.error })
       case 'merged':
         await refreshTasks()
-        return res.json({ merged: true, prNumber: result.prNumber, cleaned: result.cleanupError === null, cleanupError: result.cleanupError })
+        return res.json({ merged: true, prNumber: result.prNumber, cleaned: result.cleanupError === null, cleanupError: result.cleanupError, sessions: result.sessions })
     }
   } catch (err) {
     console.error(`Failed to merge PR for ${req.params.slug}:`, err)
@@ -1447,7 +1562,7 @@ app.post('/qa-triage/:slug', async (req, res) => {
 })
 
 // POST /backlog/dispatch — paste a backlog item into the orchestrator's own
-// iTerm2 session (registered via ORCHESTRATOR_SESSION by /pipelinely),
+// tmux session (registered via ORCHESTRATOR_TMUX by /pipelinely),
 // as if the developer had typed "let's do this". The orchestrator runs its
 // normal promote-to-task flow from there — PM expansion, repo/branch
 // determination, opening the worker tab, and removing the item from
@@ -1467,9 +1582,9 @@ app.post('/backlog/dispatch', async (req, res) => {
       ? `Let's do this backlog item${projectClause}: ${description} — ${context}`
       : `Let's do this backlog item${projectClause}: ${description}`
 
-    const result = await writeToOrchestrator(message, pasteIntoSession)
+    const result = await writeToOrchestrator(message, 'send')
     if (result.status === 'ok') return res.sendStatus(200)
-    return respondOrchestratorWriteFailure(res, result, 'Backlog dispatch', 'Click Start again.')
+    return respondOrchestratorWriteFailure(res, result)
   } catch (err) {
     console.error('Failed to dispatch backlog item to orchestrator:', err)
     res.sendStatus(500)
@@ -1492,9 +1607,9 @@ app.post('/batch-dispatch', async (req, res) => {
       console.error('Batch dispatch: rejected a malformed batch request', { kind: req.body?.kind })
       return res.sendStatus(400)
     }
-    const result = await writeToOrchestrator(message, stageInSession)
+    const result = await writeToOrchestrator(message, 'stage')
     if (result.status === 'ok') return res.sendStatus(200)
-    return respondOrchestratorWriteFailure(res, result, 'Batch dispatch', 'Click Run again.')
+    return respondOrchestratorWriteFailure(res, result)
   } catch (err) {
     console.error('Failed to stage batch dispatch to orchestrator:', err)
     res.sendStatus(500)
@@ -1502,8 +1617,8 @@ app.post('/batch-dispatch', async (req, res) => {
 })
 
 // POST /stage-skill/:slug — stage the correct /cockpit-<stage> [<slug>]
-// invocation into the right iTerm2 session (the orchestrator's own tab for
-// most stages, the task's own tab for qa-fixes/comment-fix), unsent, for the
+// invocation into the right tmux session (the orchestrator's own for most
+// stages, the task's own for qa-fixes/comment-fix), unsent, for the
 // developer to review before running it. Body: { stage: Stage }.
 app.post('/stage-skill/:slug', async (req, res) => {
   try {
@@ -1530,28 +1645,20 @@ app.post('/stage-skill/:slug', async (req, res) => {
     // rather than a truthy check so a client sending a string or a number
     // gets the safe answer too.
     //
-    // pasteIntoSessionQuiet, never pasteIntoSession: this write fires
-    // unattended, triggered from a phone while the developer may be working
-    // in an unrelated app on the desktop, so it must not raise iTerm2 to the
-    // OS foreground. See that function's own comment.
+    // A 'send' never raises iTerm2: this write fires unattended, triggered
+    // from a phone while the developer may be working in an unrelated app on
+    // the desktop.
     const shouldAutoSubmit = req.body?.autoSubmit === true && requestIsRemote(req) && requestAccess(res) === 'remote-authenticated'
-    const write = shouldAutoSubmit ? pasteIntoSessionQuiet : stageInSession
+    const mode: DispatchWriteMode = shouldAutoSubmit ? 'send' : 'stage'
 
     if (route.target === 'orchestrator') {
       // No currentTasks lookup here on purpose: an undispatched milestone
       // (e.g. "Start Dev" on fanout-parent-m1) has no task dir yet — that's
       // exactly what /pipelinely-dev is about to create. writeToOrchestrator
       // reads ORCHESTRATOR_SESSION/ORCHESTRATOR_TMUX itself.
-      const result = await writeToOrchestrator(text, write)
+      const result = await writeToOrchestrator(text, mode)
       if (result.status === 'ok') return res.json({ submitted: shouldAutoSubmit })
       if (result.status === 'not-canonical') return res.status(403).json({ error: NOT_CANONICAL_ERROR })
-      if (result.status === 'reattached-failed') {
-        console.error(`Stage /pipelinely-${stage} for ${req.params.slug}: reattached the orchestrator but the retry stage still failed`)
-        return res.status(409).json({
-          reattached: true,
-          error: 'Orchestrator was detached — reattached it in a new tab, but the command still failed to stage. Click again.',
-        })
-      }
       if (result.status === 'stray-process') {
         return res.status(503).json({
           error: 'Orchestrator tmux session found but is not running claude — it is sitting at a shell prompt; check it manually',
@@ -1560,103 +1667,34 @@ app.post('/stage-skill/:slug', async (req, res) => {
       if (result.status === 'locked') {
         return respondOrchestratorLocked(res)
       }
-      return res.status(503).json({
-        error: result.hadRecordedSession
-          ? 'Orchestrator tab not found — it may have closed'
-          : 'Orchestrator not running — no ORCHESTRATOR_SESSION found',
-      })
+      return respondTmuxPaneFailure(res, result)
     }
 
     const task = currentTasks.find(t => t.slug === req.params.slug)
     if (!task) return res.sendStatus(404)
 
-    // TODO: this branch has no stray-shell gate. The orchestrator branch above
-    // gets one from writeToOrchestrator (tmuxPaneIsStrayShell before every
-    // write); this one writes to the task's own session directly, with no
-    // lock and no pane inspection — true today for staging, and auto-submit
-    // raises the stakes: submitting into a task tab that has fallen back to a
-    // shell runs `/pipelinely-qa-fixes` as a shell command and gets `command not
-    // found`. That is a visible annoyance in the task's own scratch tab, not
-    // the class of incident the peer-address gate exists to prevent, so it is
-    // accepted for now — see tech-design.md's "Known, accepted gap". Closing
-    // it means plumbing task.tmuxSession through a new gate: a separate
-    // change.
-    //
-    // pasteIntoTrackedSession, not a flat write to task.itermSessionId: gives
-    // this branch the same reattach-and-retry resilience the orchestrator
-    // branch above already has via writeToOrchestrator, and /pipelinely-handover/:slug
-    // already has via this same helper — a closed tab whose tmux session is
-    // still alive gets reattached into a fresh tab and re-recorded, rather
-    // than a flat 503 the moment the tab that started this task's dev/CR/QA
-    // stage happens to have closed since.
-    const result = await pasteIntoTrackedSession(
-      {
-        sessionId: task.itermSessionId,
-        tmuxSession: task.tmuxSession,
-        sessionFilePath: path.join(TASKS_DIR, req.params.slug, 'ITERM_SESSION'),
-      },
-      text,
-      { submit: shouldAutoSubmit, focus: !shouldAutoSubmit },
-    )
-
-    if (result.status === 'ok') {
-      // Mirrors /pipelinely-handover/:slug: a reattach rewrites ITERM_SESSION on disk,
-      // and without this currentTasks keeps the dead id until the next
-      // 5-minute refresh, so a second click before then would reattach again
-      // and open a duplicate tab.
-      if (result.reattached) await refreshTasks()
-      return res.json({ submitted: shouldAutoSubmit })
-    }
-
-    return respondTrackedSessionWriteFailure(res, result, {
-      logContext: `Stage /pipelinely-${stage} for ${req.params.slug}`,
-      failedRetry: 'the command still failed to stage',
-      noSessionVerb: 'stage into',
-    })
+    const tmuxResult = await writeToTaskSessionViaTmux(task, req.params.slug, text, mode)
+    if (tmuxResult.status === 'ok') return res.json({ submitted: shouldAutoSubmit })
+    return respondTaskTmuxFailure(res, tmuxResult)
   } catch (err) {
     console.error(`Failed to stage /pipelinely-${req.body?.stage} for ${req.params.slug}:`, err)
     res.sendStatus(500)
   }
 })
 
-// POST /pipelinely-handover/:slug — stage `/pipelinely-handover` into the task's own tracked
-// session, unsent, for the developer to review before running it. Goes
-// through pasteIntoTrackedSession (not /stage-skill's own-session branch),
-// which brings reattach-and-retry for a closed-tab-but-live-tmux task —
-// /stage-skill's own-session branch lacks that and just 503s flat.
-// `focus: true`: a staged-but-unsent command the developer can't find is
-// useless — see stageInSession's own reasoning.
+// POST /pipelinely-handover/:slug — stage `/pipelinely-handover` into the task's own tmux session,
+// unsent, for the developer to review before running it. Staging brings the
+// task's tab forward (reattaching one if none is attached): a staged command
+// the developer can't find is useless.
 app.post('/pipelinely-handover/:slug', async (req, res) => {
   const { slug } = req.params
   try {
     const task = currentTasks.find((t) => t.slug === slug)
     if (!task) return res.sendStatus(404)
 
-    const result = await pasteIntoTrackedSession(
-      {
-        sessionId: task.itermSessionId,
-        tmuxSession: task.tmuxSession,
-        sessionFilePath: path.join(TASKS_DIR, slug, 'ITERM_SESSION'),
-      },
-      HANDOVER_COMMAND,
-      { submit: false, focus: true },
-    )
-
-    if (result.status === 'ok') {
-      // Refreshing after the response would leave currentTasks holding the
-      // dead session id, so a second click would reattach again and open a
-      // duplicate tab. Scoped to the reattached case only, so the common
-      // case's response isn't delayed by an SSE broadcast re-rendering the
-      // card out from under it.
-      if (result.reattached) await refreshTasks()
-      return res.sendStatus(200)
-    }
-
-    return respondTrackedSessionWriteFailure(res, result, {
-      logContext: `Handover for ${slug}`,
-      failedRetry: 'the handover command still failed to stage',
-      noSessionVerb: 'stage into',
-    })
+    const tmuxResult = await writeToTaskSessionViaTmux(task, slug, HANDOVER_COMMAND, 'stage')
+    if (tmuxResult.status === 'ok') return res.sendStatus(200)
+    return respondTaskTmuxFailure(res, tmuxResult)
   } catch (err) {
     console.error(`Failed to stage /pipelinely-handover for ${slug}:`, err)
     res.sendStatus(500)
@@ -1708,6 +1746,49 @@ app.post('/skip-stage/:slug', async (req, res) => {
     res.sendStatus(200)
   } catch (err) {
     console.error(`Failed to skip ${req.body?.stage} for ${req.params.slug}:`, err)
+    res.sendStatus(500)
+  }
+})
+
+// POST /design-approval/:slug — the designer's gate in the ds pipeline. Body:
+// { decision: 'approve' } or { decision: 'request-changes', notes }. Writes the
+// same TIMELINE + STATUS a stage's worker would (see applyDesignApproval), so
+// the merge gate and the next-stage hand-offs read it like any other stage.
+app.post('/design-approval/:slug', async (req, res) => {
+  const task = currentTasks.find(t => t.slug === req.params.slug)
+  if (!task) return res.sendStatus(404)
+
+  try {
+    const outcome = await applyDesignApproval(TASKS_DIR, task, req.body)
+    switch (outcome) {
+      case 'not-at-gate':
+        console.error(`Design approval refused for ${task.slug}: not waiting at the design-approval gate`)
+        return res.status(409).json({ error: 'This task is not waiting for design approval' })
+      case 'blank-notes':
+        return res.status(400).json({ error: 'Change notes are required to request changes' })
+      case 'invalid-decision':
+        return res.status(400).json({ error: "decision must be 'approve' or 'request-changes'" })
+      case 'approved':
+      case 'changes-requested':
+        await refreshTasks()
+        return res.json({ decision: outcome })
+    }
+  } catch (err) {
+    console.error(`Failed to record the design approval decision for ${task.slug}:`, err)
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) })
+  }
+})
+
+// GET /task-asset/:slug/design-qa/:file — design QA's Storybook and Figma
+// screenshots, which live in the tasks dir outside every static mount. Serves
+// only an image directly inside <task>/design-qa/ (see resolveDesignQaAsset).
+app.get('/task-asset/:slug/design-qa/:file', async (req, res) => {
+  try {
+    const asset = await resolveDesignQaAsset(TASKS_DIR, req.params.slug, req.params.file)
+    if (!asset.ok) return res.sendStatus(asset.status)
+    res.type(asset.contentType).sendFile(asset.filePath)
+  } catch (err) {
+    console.error(`Failed to serve design QA asset ${req.params.slug}/${req.params.file}:`, err)
     res.sendStatus(500)
   }
 })
@@ -1884,7 +1965,7 @@ app.post('/backlog/resume/:index', async (req, res) => {
 
 // Chokidar watcher
 const watcher = chokidar.watch(
-  path.join(TASKS_DIR, '**', '{STATUS,METRICS,METRICS-*.json,DEV_URL,PLAN.md,VERIFY,TIMELINE,QA_REPORT.md,task-pr-review.md,tech-design.md,RESULT.md,AUDIT.md,DESIGN.md,FINDINGS.md,TASK.md,TRIAGE.json,QA_TRIAGE.json,AUTO_MODE}'),
+  path.join(TASKS_DIR, '**', '{STATUS,METRICS,METRICS-*.json,DEV_URL,PLAN.md,VERIFY,TIMELINE,QA_REPORT.md,task-pr-review.md,tech-design.md,RESULT.md,AUDIT.md,DESIGN.md,FINDINGS.md,TASK.md,TRIAGE.json,QA_TRIAGE.json,AUTO_MODE,CREATURE,KIND,DESIGN_QA.md,DESIGN_FEEDBACK.md}'),
   { ignoreInitial: true, usePolling: false }
 )
 watcher.on('all', () => { refreshTasks().catch(console.error) })

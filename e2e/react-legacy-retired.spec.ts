@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
-import { selectBoardTab } from './fixtures/boardTabs.js'
+import { openSidebarItem, selectBoardTab } from './fixtures/boardTabs.js'
 
 // M7 of react-migration (see tech-design-react-migration.md): the last
 // milestone. Every dashboard view lives in React, so the legacy host — the
@@ -23,7 +23,7 @@ const ROUTES = [
   { path: '/', route: 'inprogress', view: 'active-sessions' },
   { path: '/backlog', route: 'backlog', view: 'backlog-section' },
   { path: '/done', route: 'done', view: 'done-section' },
-  { path: '/you', route: 'you', view: 'you-section' },
+  { path: '/usage', route: 'usage', view: 'usage-section' },
   { path: '/settings', route: 'settings', view: 'settings-page' },
   { path: '/help', route: 'help', view: 'help-page' },
   { path: '/docs', route: 'docs', view: 'docs-page' },
@@ -170,7 +170,7 @@ test.describe('legacy host retired', () => {
       await page.goto('/')
       await expect(demoCard(page)).toBeVisible()
 
-      await page.getByTestId('sidebar-docs-btn').click()
+      await openSidebarItem(page, 'sidebar-docs-btn')
       expect(pathOf(page)).toBe('/docs')
       await expect(shell(page)).toHaveAttribute('data-route', 'docs')
       await expect(page.getByTestId('docs-page')).toBeVisible()

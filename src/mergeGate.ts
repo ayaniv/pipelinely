@@ -1,7 +1,8 @@
 import { execa } from 'execa'
+import type { PrMergeState } from './types.js'
 
 export type MergeBlocker =
-  | { kind: 'not-open' | 'draft' | 'conflicts' | 'mergeability-unknown' | 'blocked' | 'malformed'; detail: string }
+  | { kind: 'not-open' | 'draft' | 'conflicts' | 'mergeability-unknown' | 'blocked' | 'malformed' | 'design-approval-required'; detail: string }
   | { kind: 'check-failed' | 'check-pending'; name: string; link: string | null; detail: string }
 
 export type MergeReadiness =
@@ -21,6 +22,15 @@ const FAILED_CHECK_CONCLUSIONS = new Set(['FAILURE', 'TIMED_OUT', 'CANCELLED', '
 const PASSING_CHECK_CONCLUSIONS = new Set(['SUCCESS', 'NEUTRAL', 'SKIPPED'])
 const PENDING_STATUS_STATES = new Set(['PENDING', 'EXPECTED'])
 const FAILED_STATUS_STATES = new Set(['FAILURE', 'ERROR'])
+
+// The one reading of GitHub's two conflict signals, shared by the gate below
+// (which refuses on 'conflicting') and the dashboard's merge state (which
+// offers the conflict fix on it): DIRTY alone counts, even beside a stale
+// MERGEABLE. Anything not positively mergeable or conflicting is 'unknown'.
+export function classifyPrMergeState(mergeable: unknown, mergeStateStatus: unknown): PrMergeState {
+  if (mergeable === 'CONFLICTING' || mergeStateStatus === 'DIRTY') return 'conflicting'
+  return mergeable === 'MERGEABLE' ? 'mergeable' : 'unknown'
+}
 
 const MALFORMED: MergeReadiness = {
   ready: false,
@@ -53,7 +63,7 @@ export function evaluateMergeReadiness(prView: unknown): MergeReadiness {
   if (v.state !== 'OPEN') blockers.push({ kind: 'not-open', detail: `PR is not open (state: ${v.state})` })
   if (v.isDraft) blockers.push({ kind: 'draft', detail: 'PR is still a draft' })
 
-  if (v.mergeable === 'CONFLICTING' || v.mergeStateStatus === 'DIRTY') {
+  if (classifyPrMergeState(v.mergeable, v.mergeStateStatus) === 'conflicting') {
     blockers.push({ kind: 'conflicts', detail: 'PR has merge conflicts' })
   } else if (v.mergeable === 'UNKNOWN') {
     blockers.push({ kind: 'mergeability-unknown', detail: "GitHub has not finished computing this PR's mergeability yet" })
@@ -162,4 +172,37 @@ export async function checkMergeReadiness(
   }
   // Unreachable — the loop always returns by its last iteration.
   throw new Error('checkMergeReadiness: exhausted retries without returning')
+}
+
+const GH_PR_MERGE_STATE_FIELDS = 'state,mergeable,mergeStateStatus,headRefName'
+// One hung gh must not stall the snapshot broadcast that awaits this read.
+const PR_MERGE_STATE_TIMEOUT_MS = 15_000
+
+// The dashboard's read of an open PR's merge state: one `gh pr view`, never
+// re-read while GitHub is still computing (unlike checkMergeReadiness — a
+// refresh must not wait seconds, and the next refresh asks again). null when
+// the PR is no longer open. Every failure (gh, unexpected output, a PR whose
+// head is not this task's branch) answers 'unknown', logged: that state never
+// changes what the dashboard offers, and the merge gate re-checks for real.
+export async function readPrMergeState(repoPath: string, prNumber: string, expectedBranch: string): Promise<PrMergeState | null> {
+  let view: unknown
+  try {
+    const { stdout } = await execa('gh', ['pr', 'view', prNumber, '--json', GH_PR_MERGE_STATE_FIELDS], { cwd: repoPath, timeout: PR_MERGE_STATE_TIMEOUT_MS })
+    view = JSON.parse(stdout)
+  } catch (err) {
+    console.error(`Failed to read PR #${prNumber}'s merge state in ${repoPath}:`, err)
+    return 'unknown'
+  }
+
+  if (!view || typeof view !== 'object' || Array.isArray(view)) {
+    console.error(`Failed to read PR #${prNumber}'s merge state in ${repoPath}: gh pr view returned data in an unexpected shape`)
+    return 'unknown'
+  }
+  const { state, mergeable, mergeStateStatus, headRefName } = view as Record<string, unknown>
+  if (state !== 'OPEN') return null
+  if (headRefName !== expectedBranch) {
+    console.error(`PR #${prNumber} in ${repoPath} is for branch ${String(headRefName)}, not ${expectedBranch} — not reporting its merge state`)
+    return 'unknown'
+  }
+  return classifyPrMergeState(mergeable, mergeStateStatus)
 }

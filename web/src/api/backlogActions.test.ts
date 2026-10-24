@@ -30,8 +30,14 @@ describe('postBacklogDispatch', () => {
     expect(opts.log).not.toHaveBeenCalled()
   })
 
+  test('a 409 surfaces the server\'s pane-not-ready message, or a generic one without it', async () => {
+    const withMessage = options(jsonResponse(409, { reason: 'dialog-open', error: 'The pane is showing a dialog — answer it first, then click again.' }))
+    expect(await postBacklogDispatch(item, withMessage)).toEqual({ ok: false, label: 'The pane is showing a dialog — answer it first, then click again.' })
+    expect(withMessage.log).toHaveBeenCalledWith('[action] POST /backlog/dispatch failed', new Error('HTTP 409'))
+    expect(await postBacklogDispatch(item, options(new Response(null, { status: 409 })))).toEqual({ ok: false, label: 'not ready — click again' })
+  })
+
   test.each([
-    [409, 'reattached — click again'],
     [503, 'no orchestrator'],
     [403, 'read-only instance'],
     [500, 'failed'],
@@ -160,7 +166,7 @@ describe('postBatchDispatch', () => {
   })
 
   test.each([
-    [409, 'reattached — retry'],
+    [409, 'not ready — retry'],
     [503, 'no orchestrator'],
   ])('a %i response reports "%s" with the server\'s detail, and logs', async (status, label) => {
     const opts = options(jsonResponse(status, { error: 'tab is gone' }))

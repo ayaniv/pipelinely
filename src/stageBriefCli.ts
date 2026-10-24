@@ -1,13 +1,13 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { resolveTaskDirArg } from './batchDispatch.js'
-import { writeStageBrief } from './stageBrief.js'
+import { isBriefStage, writeStageBrief } from './stageBrief.js'
 import { worktreesDir } from './taskParser.js'
 import { resolveTasksDir } from './tasksDir.js'
 
-const SUPPORTED_STAGE = 'code-review'
 const PR_NUMBER_RE = /^[1-9]\d*$/
 const SKILLS_DIR = path.resolve(import.meta.dirname, '..', '.claude', 'skills')
+const USAGE = 'usage: stage-brief code-review <slug> <PR number> | stage-brief merge-conflicts <slug>'
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -20,13 +20,15 @@ function fail(message: string): void {
 
 // What `.claude/skills/pipelinely-cr/SKILL.md` tells the orchestrator to run
 // (`npm --prefix $HOME/Dev/pipelinely run --silent stage-brief -- code-review
-// <slug> <PR>`). Prints the written path on stdout; every failure is one
-// stderr line and exit 1, so the skill can report it verbatim and stop.
+// <slug> <PR>`), and `.claude/skills/pipelinely-merge-conflicts/SKILL.md` too
+// (`... stage-brief -- merge-conflicts <slug>`, its PR read from TIMELINE).
+// Prints the written path on stdout; every failure is one stderr line and
+// exit 1, so the skill can report it verbatim and stop.
 async function main(): Promise<void> {
   const [stage, slug, pr] = process.argv.slice(2)
-  if (stage !== SUPPORTED_STAGE) return fail(`usage: stage-brief ${SUPPORTED_STAGE} <slug> <PR number> — '${stage ?? ''}' is not a supported stage`)
-  if (!slug) return fail(`usage: stage-brief ${SUPPORTED_STAGE} <slug> <PR number>`)
-  if (!pr || !PR_NUMBER_RE.test(pr)) return fail(`'${pr ?? ''}' is not a PR number (a positive integer)`)
+  if (!isBriefStage(stage)) return fail(`${USAGE} — '${stage ?? ''}' is not a supported stage`)
+  if (!slug) return fail(USAGE)
+  if (stage === 'code-review' && (!pr || !PR_NUMBER_RE.test(pr))) return fail(`'${pr ?? ''}' is not a PR number (a positive integer)`)
 
   const tasksDir = resolveTasksDir(process.cwd(), process.env.TASKS_DIR)
   const taskDir = resolveTaskDirArg(tasksDir, slug)
@@ -36,14 +38,10 @@ async function main(): Promise<void> {
     return fail(`no task '${slug}' in ${tasksDir}`)
   }
 
-  const briefPath = await writeStageBrief({
-    stage: SUPPORTED_STAGE,
-    slug,
-    prNumber: Number(pr),
-    tasksDir,
-    worktreesDir: worktreesDir(),
-    skillsDir: SKILLS_DIR,
-  })
+  const locations = { slug, tasksDir, worktreesDir: worktreesDir(), skillsDir: SKILLS_DIR }
+  const briefPath = await writeStageBrief(
+    stage === 'code-review' ? { stage, prNumber: Number(pr), ...locations } : { stage, ...locations },
+  )
   console.log(briefPath)
 }
 

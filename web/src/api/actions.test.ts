@@ -1,7 +1,8 @@
 import { describe, expect, test, vi } from 'vitest'
 import {
-  postAction, postAutoMode, postFocus, postHandover, postHelpFeedback, postMarkDone, postMergePr,
-  isNothingSent, postAnswerDialog, postOrchestratorHandover, postOrchestratorTab, postShelve, postSkipStage, postStageSkill, postTaskAutoMode, postTriage, postWeeklyFocus,
+  requestBookmarkDelete,
+  postAction, postAutoMode, postCreaturePlacement, postQaStartPolicy, postFocus, postHandover, postHelpFeedback, postMarkDone, postMergePr,
+  isNothingSent, postAnswerDialog, postDesignApproval, postOrchestratorHandover, postOrchestratorTab, postShelve, postSkipStage, postStageSkill, postTaskAutoMode, postTriage, postWeeklyFocus,
 } from './actions'
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -151,6 +152,35 @@ describe('postMergePr', () => {
   })
 })
 
+describe('postDesignApproval', () => {
+  test('posts the decision as JSON and labels what was recorded', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
+
+    const approved = await postDesignApproval('my-task', { decision: 'approve' }, { fetchImpl, log: vi.fn() })
+    const changed = await postDesignApproval('my-task', { decision: 'request-changes', notes: 'Needs 8px' }, { fetchImpl, log: vi.fn() })
+
+    expect(approved).toEqual({ ok: true, label: '✓ approved' })
+    expect(changed).toEqual({ ok: true, label: '✓ changes requested' })
+    expect(fetchImpl).toHaveBeenLastCalledWith('/design-approval/my-task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision: 'request-changes', notes: 'Needs 8px' }) })
+  })
+
+  test.each([[409, 'not at the gate'], [400, 'notes required'], [500, 'failed']])('a %i response is not ok, says "%s", and is logged', async (status, label) => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response('{}', { status }))
+    const log = vi.fn()
+
+    expect(await postDesignApproval('my-task', { decision: 'approve' }, { fetchImpl, log })).toEqual({ ok: false, label })
+    expect(log).toHaveBeenCalledWith('[action] POST /design-approval/my-task failed', expect.any(Error))
+  })
+
+  test('a network failure reports no server and is logged', async () => {
+    const log = vi.fn()
+    const fetchImpl = vi.fn().mockRejectedValue(new Error('offline'))
+
+    expect(await postDesignApproval('my-task', { decision: 'approve' }, { fetchImpl, log })).toEqual({ ok: false, label: 'no server' })
+    expect(log).toHaveBeenCalled()
+  })
+})
+
 describe('postSkipStage', () => {
   test('a 2xx response resolves ok and sends the stage in a JSON body', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 200 }))
@@ -188,12 +218,18 @@ describe('postFocus', () => {
     expect(result).toEqual({ ok: true, label: '↻ resuming via orchestrator' })
   })
 
-  test('409 resolves not-ok with "reattached — click again" and logs [action]', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 409 }))
+  test('409 surfaces the server\'s pane-not-ready message and logs [action]', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(409, { reason: 'dialog-open', error: 'The pane is showing a dialog — answer it first, then click again.' }))
     const log = vi.fn()
     const result = await postFocus('my-task', { fetchImpl, log })
-    expect(result).toEqual({ ok: false, label: 'reattached — click again' })
+    expect(result).toEqual({ ok: false, label: 'The pane is showing a dialog — answer it first, then click again.' })
     expect(log).toHaveBeenCalledWith(expect.stringContaining('[action]'), expect.any(Error))
+  })
+
+  test('409 without a server message falls back to the generic not-ready label', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 409 }))
+    const result = await postFocus('my-task', { fetchImpl, log: vi.fn() })
+    expect(result).toEqual({ ok: false, label: 'not ready — click again' })
   })
 
   test('503 resolves not-ok with "no orchestrator"', async () => {
@@ -234,11 +270,11 @@ describe('postHandover', () => {
     expect(result).toEqual({ ok: true, label: '✓ staged' })
   })
 
-  test('409 resolves not-ok with "reattached — click again" and logs [action]', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 409 }))
+  test('409 surfaces the server\'s pane-not-ready message and logs [action]', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(409, { reason: 'pane-in-mode', error: 'The pane is in copy mode — leave it, then click again.' }))
     const log = vi.fn()
     const result = await postHandover('my-task', { fetchImpl, log })
-    expect(result).toEqual({ ok: false, label: 'reattached — click again' })
+    expect(result).toEqual({ ok: false, label: 'The pane is in copy mode — leave it, then click again.' })
     expect(log).toHaveBeenCalledWith(expect.stringContaining('[action]'), expect.any(Error))
   })
 
@@ -320,6 +356,46 @@ describe('postOrchestratorTab', () => {
   })
 })
 
+describe('postCreaturePlacement', () => {
+  test('POSTs only the placement as JSON and resolves true on 2xx', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 200 }))
+    expect(await postCreaturePlacement('off', { fetchImpl, log: vi.fn() })).toBe(true)
+    expect(fetchImpl).toHaveBeenCalledWith('/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ creaturePlacement: 'off' }),
+    })
+  })
+
+  test('a non-2xx or a thrown fetch resolves false and logs with the [settings] prefix', async () => {
+    const log = vi.fn()
+    expect(await postCreaturePlacement('off', { fetchImpl: vi.fn().mockResolvedValue(new Response(null, { status: 500 })), log })).toBe(false)
+    expect(await postCreaturePlacement('header', { fetchImpl: vi.fn().mockRejectedValue(new Error('down')), log })).toBe(false)
+    expect(log).toHaveBeenCalledTimes(2)
+    expect(log).toHaveBeenCalledWith('[settings] POST /settings failed', expect.any(Error))
+  })
+})
+
+describe('postQaStartPolicy', () => {
+  test('POSTs only the policy as JSON and resolves true on 2xx', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 200 }))
+    expect(await postQaStartPolicy('cockpit-ai-ui-preapproved', { fetchImpl, log: vi.fn() })).toBe(true)
+    expect(fetchImpl).toHaveBeenCalledWith('/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ qaStartPolicy: 'cockpit-ai-ui-preapproved' }),
+    })
+  })
+
+  test('a non-2xx or a thrown fetch resolves false and logs with the [settings] prefix', async () => {
+    const log = vi.fn()
+    expect(await postQaStartPolicy('cockpit-ai-ui-preapproved', { fetchImpl: vi.fn().mockResolvedValue(new Response(null, { status: 500 })), log })).toBe(false)
+    expect(await postQaStartPolicy('ask-every-time', { fetchImpl: vi.fn().mockRejectedValue(new Error('down')), log })).toBe(false)
+    expect(log).toHaveBeenCalledTimes(2)
+    expect(log).toHaveBeenCalledWith('[settings] POST /settings failed', expect.any(Error))
+  })
+})
+
 describe('postAutoMode', () => {
   test('POSTs the new value as JSON and resolves true on 2xx', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 200 }))
@@ -369,13 +445,13 @@ describe('postStageSkill', () => {
     expect(await postStageSkill('t', 'dev', false, { fetchImpl, log: vi.fn() })).toEqual({ ok: true, label: '✓ staged' })
   })
 
-  test('a 409 asks the user to click again and logs [action]', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 409 }))
+  test('a 409 surfaces the server\'s pane-not-ready message and logs [action]', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(409, { reason: 'dialog-open', error: 'The pane is showing a dialog — answer it first, then click again.' }))
     const log = vi.fn()
 
     const result = await postStageSkill('t', 'dev', false, { fetchImpl, log })
 
-    expect(result).toEqual({ ok: false, label: 'reattached — click again' })
+    expect(result).toEqual({ ok: false, label: 'The pane is showing a dialog — answer it first, then click again.' })
     expect(log).toHaveBeenCalledWith(expect.stringContaining('[action]'), expect.any(Error))
   })
 
@@ -615,5 +691,34 @@ describe('isNothingSent', () => {
 
   test.each(['answered', 'unconfirmed', 'send-failed', 'internal', 'no-server', 'failed'] as const)('%s does not: a key went out or may have', (outcome) => {
     expect(isNothingSent(outcome)).toBe(false)
+  })
+})
+
+describe('requestBookmarkDelete', () => {
+  test('DELETEs the bookmark by id and reports success on a 204', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    await expect(requestBookmarkDelete('20261004T000000Z-dddddd', { fetchImpl, log: vi.fn() })).resolves.toEqual({ ok: true, label: '✓' })
+    expect(fetchImpl).toHaveBeenCalledWith('/api/bookmarks/20261004T000000Z-dddddd', { method: 'DELETE', keepalive: true })
+  })
+
+  test('a bookmark that is already gone (404) is what the caller wanted, not a failure', async () => {
+    const log = vi.fn()
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 404 }))
+    await expect(requestBookmarkDelete('20261004T000000Z-dddddd', { fetchImpl, log })).resolves.toMatchObject({ ok: true })
+    expect(log).not.toHaveBeenCalled()
+  })
+
+  test('a server error is reported and logged without the bookmark content', async () => {
+    const log = vi.fn()
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 500 }))
+    await expect(requestBookmarkDelete('20261004T000000Z-dddddd', { fetchImpl, log })).resolves.toMatchObject({ ok: false })
+    expect(log).toHaveBeenCalledWith('[action] DELETE /api/bookmarks/20261004T000000Z-dddddd failed', expect.any(Error))
+  })
+
+  test('a network failure is reported and logged', async () => {
+    const log = vi.fn()
+    const fetchImpl = vi.fn().mockRejectedValue(new Error('network down'))
+    await expect(requestBookmarkDelete('20261004T000000Z-dddddd', { fetchImpl, log })).resolves.toEqual({ ok: false, label: 'no server' })
+    expect(log).toHaveBeenCalledWith('[action] DELETE /api/bookmarks/20261004T000000Z-dddddd failed', expect.any(Error))
   })
 })

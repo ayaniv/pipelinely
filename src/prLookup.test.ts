@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest'
-import { attachResolvedPrNumbers, createPrNumberCache } from './prLookup.js'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { attachPrMergeStates, attachResolvedPrNumbers, createPrMergeStateCache, createPrNumberCache, prMergeStateTtlMs } from './prLookup.js'
 import { findPrNumber } from './taskParser.js'
 import type { Task } from './types.js'
 
@@ -159,5 +159,127 @@ describe('attachResolvedPrNumbers', () => {
     const resolved = await attachResolvedPrNumbers(tasks, lookup, createPrNumberCache())
     expect(lookup).toHaveBeenCalledTimes(1)
     expect(resolved.map((t) => t.prNumber)).toEqual(['108', '108'])
+  })
+})
+
+describe('attachPrMergeStates', () => {
+  const withPr = (overrides: Partial<Task> = {}) => makeTask({ prNumber: '149', ...overrides })
+  let errorSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    errorSpy.mockRestore()
+    delete process.env.COCKPIT_PR_MERGE_STATE_TTL_MS
+  })
+
+  it("attaches the open PR's merge state, asking with the task's repo, PR number and branch", async () => {
+    const lookup = vi.fn().mockResolvedValue('conflicting')
+    const [task] = await attachPrMergeStates([withPr()], lookup, createPrMergeStateCache())
+    expect(task.prMergeState).toBe('conflicting')
+    expect(lookup).toHaveBeenCalledWith('cockpit-ai', '149', 'claude/fix-header')
+  })
+
+  it('leaves the field off when the PR is not open (the lookup answers null)', async () => {
+    const lookup = vi.fn().mockResolvedValue(null)
+    const [task] = await attachPrMergeStates([withPr()], lookup, createPrMergeStateCache())
+    expect(task).not.toHaveProperty('prMergeState')
+  })
+
+  it.each([
+    ['no PR', { prNumber: undefined }],
+    ['done', { status: 'done' }],
+    ['shelved', { status: 'shelved' }],
+  ] as const)('never asks GitHub for a task with %s', async (_label, overrides) => {
+    const lookup = vi.fn()
+    const [task] = await attachPrMergeStates([withPr(overrides as Partial<Task>)], lookup, createPrMergeStateCache())
+    expect(lookup).not.toHaveBeenCalled()
+    expect(task).not.toHaveProperty('prMergeState')
+  })
+
+  it('uses a PR named only in a TIMELINE note (resolved by findPrNumber), not just the attached prNumber', async () => {
+    const lookup = vi.fn().mockResolvedValue('mergeable')
+    const noted = makeTask({ stageHistory: [{ stage: 'dev', at: 'x', note: 'PR #42 opened: my change' }] })
+    const [task] = await attachPrMergeStates([noted], lookup, createPrMergeStateCache())
+    expect(lookup).toHaveBeenCalledWith('cockpit-ai', '42', 'claude/fix-header')
+    expect(task.prMergeState).toBe('mergeable')
+  })
+
+  it('maps a throwing lookup to unknown and logs it', async () => {
+    const lookup = vi.fn().mockRejectedValue(new Error('gh exploded'))
+    const [task] = await attachPrMergeStates([withPr()], lookup, createPrMergeStateCache())
+    expect(task.prMergeState).toBe('unknown')
+    expect(errorSpy).toHaveBeenCalled()
+  })
+
+  it('is cached per PR within the TTL — one gh call across refreshes — and re-read after it', async () => {
+    const lookup = vi.fn().mockResolvedValueOnce('conflicting').mockResolvedValueOnce('mergeable')
+    const cache = createPrMergeStateCache()
+    let now = 0
+    await attachPrMergeStates([withPr()], lookup, cache, () => now)
+    now = prMergeStateTtlMs() - 1
+    const [inside] = await attachPrMergeStates([withPr()], lookup, cache, () => now)
+    expect(inside.prMergeState).toBe('conflicting')
+    expect(lookup).toHaveBeenCalledTimes(1)
+
+    now = prMergeStateTtlMs()
+    const [after] = await attachPrMergeStates([withPr()], lookup, cache, () => now)
+    expect(after.prMergeState).toBe('mergeable')
+  })
+
+  it('has a short default TTL, overridable through COCKPIT_PR_MERGE_STATE_TTL_MS', () => {
+    expect(prMergeStateTtlMs()).toBe(60_000)
+    process.env.COCKPIT_PR_MERGE_STATE_TTL_MS = '250'
+    expect(prMergeStateTtlMs()).toBe(250)
+  })
+
+  it('falls back to the default TTL, and logs, for an unusable override', () => {
+    process.env.COCKPIT_PR_MERGE_STATE_TTL_MS = 'soon'
+    expect(prMergeStateTtlMs()).toBe(60_000)
+    expect(errorSpy).toHaveBeenCalled()
+  })
+})
+
+// parseAllTasks stitches each dispatched milestone child onto its parent as the
+// SAME object as the top-level task. Attaching resolved fields copies the task,
+// so the parent's milestone must be relinked to the resolved copy, or the
+// milestone card reads a child with no PR number and no merge state.
+describe('milestone children see the resolved fields', () => {
+  function parentWith(child: Task): Task {
+    return makeTask({
+      slug: 'proj',
+      branch: 'claude/proj',
+      stage: 'dev',
+      milestones: [{ id: 'M0', name: 'First', needs: [], wave: 1, state: 'dispatched', task: child }] as unknown as Task['milestones'],
+    })
+  }
+
+  it("attachPrMergeStates: the parent's milestone task is the resolved child, with its merge state", async () => {
+    const child = makeTask({ slug: 'proj-m0', branch: 'claude/proj-m0', prNumber: '149' })
+    const lookup = vi.fn().mockResolvedValue('conflicting')
+    const [parent, resolvedChild] = await attachPrMergeStates([parentWith(child), child], lookup, createPrMergeStateCache())
+
+    expect(resolvedChild.prMergeState).toBe('conflicting')
+    expect(parent.milestones![0].task).toBe(resolvedChild)
+  })
+
+  it("attachResolvedPrNumbers: the parent's milestone task carries the branch-derived PR number", async () => {
+    const child = makeTask({ slug: 'proj-m0', branch: 'claude/proj-m0' })
+    const lookup = vi.fn(async (_repo: string, branch: string) => (branch === 'claude/proj-m0' ? openPr('150') : null))
+    const [parent, resolvedChild] = await attachResolvedPrNumbers([parentWith(child), child], lookup, createPrNumberCache())
+
+    expect(resolvedChild.prNumber).toBe('150')
+    expect(parent.milestones![0].task).toBe(resolvedChild)
+  })
+
+  it('leaves a queued milestone (no child task yet) alone', async () => {
+    const parent = makeTask({
+      slug: 'proj',
+      milestones: [{ id: 'M0', name: 'First', needs: [], wave: 1, state: 'queued', task: null }] as unknown as Task['milestones'],
+    })
+    const [resolved] = await attachPrMergeStates([parent], vi.fn(), createPrMergeStateCache())
+    expect(resolved.milestones![0].task).toBeNull()
   })
 })

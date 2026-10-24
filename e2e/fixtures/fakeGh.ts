@@ -30,6 +30,10 @@ export function fakeGhEnv(): Record<string, string> {
     // PR #908's fixture reports mergeable UNKNOWN forever; the real 2s
     // re-read delay would only add wall clock to prove the same refusal.
     COCKPIT_MERGEABILITY_RETRY_DELAY_MS: '50',
+    // The dashboard re-reads an open PR's merge state once a minute; a spec
+    // that flips a canned PR's mergeable (cta-fix-merge-conflicts.spec.ts)
+    // would otherwise wait that long for the card to follow.
+    COCKPIT_PR_MERGE_STATE_TTL_MS: '1000',
   }
 }
 

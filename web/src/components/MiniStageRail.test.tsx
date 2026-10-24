@@ -25,9 +25,37 @@ describe('MiniStageRail', () => {
   })
 
   test('the first node has no leading connector, every other node does', () => {
-    const { container } = render(<MiniStageRail task={makeTask({ stage: 'dev' })} stageIds={['planning', 'dev']} />)
-    const wrappers = container.querySelectorAll('[data-testid="mini-stage-node"]')
-    expect(wrappers[0].previousSibling).toBeNull()
-    expect(wrappers[1].previousSibling).not.toBeNull()
+    render(<MiniStageRail task={makeTask({ stage: 'dev' })} stageIds={['planning', 'dev']} />)
+    expect(screen.getAllByTestId('mini-stage-connector')).toHaveLength(1)
+  })
+
+  test('draws the current node and the done nodes in the tone colour', () => {
+    render(<MiniStageRail task={makeTask({ stage: 'code-review' })} stageIds={['planning', 'dev', 'cr']} tone="cr" />)
+    const nodes = screen.getAllByTestId('mini-stage-node')
+    const [done, current] = [nodes[0], nodes[2]]
+    expect(current.getAttribute('style')).toContain('var(--crC)')
+    expect(done.getAttribute('style')).toContain('var(--crC)')
+  })
+
+  test('without a tone it keeps the accent colour', () => {
+    render(<MiniStageRail task={makeTask({ stage: 'dev' })} stageIds={['planning', 'dev']} />)
+    expect(screen.getAllByTestId('mini-stage-node')[1].getAttribute('style')).toContain('var(--accent)')
+  })
+
+  test('labels every node under the rail when asked, the current one marked', () => {
+    render(<MiniStageRail task={makeTask({ stage: 'code-review' })} stageIds={['planning', 'dev', 'cr', 'qa', 'merge']} tone="cr" showLabels />)
+    const labels = screen.getAllByTestId('mini-stage-label')
+    expect(labels.map((l) => l.textContent)).toEqual(['Plan', 'Dev', 'CR', 'QA', 'Merge'])
+    expect(labels.map((l) => l.dataset.current)).toEqual(['false', 'false', 'true', 'false', 'false'])
+  })
+
+  test('shows no labels by default', () => {
+    render(<MiniStageRail task={makeTask({ stage: 'dev' })} stageIds={['planning', 'dev']} />)
+    expect(screen.queryAllByTestId('mini-stage-label')).toHaveLength(0)
+  })
+
+  test('a finished task has no current label', () => {
+    render(<MiniStageRail task={makeTask({ status: 'done', stage: null, stageHistory: [] })} stageIds={['planning', 'dev']} showLabels />)
+    expect(screen.getAllByTestId('mini-stage-label').every((l) => l.dataset.current === 'false')).toBe(true)
   })
 })

@@ -41,6 +41,8 @@ export const TOKEN = {
   driftSoft: 'rgb(247, 230, 236)', // #f7e6ec
   driftInk: 'rgb(138, 63, 92)', // #8a3f5c
   grid: 'rgb(226, 232, 232)', // #e2e8e8
+  // v3 stage palette (Pipelinely Dashboard v3/v4 `--devC`).
+  devC: 'rgb(143, 134, 176)', // #8f86b0
 } as const
 
 // The design's page wrapper, verbatim:
@@ -85,3 +87,21 @@ export async function cssOf(
     property
   )
 }
+
+// The design v3 stage palette (CLAUDE_CODE_PROMPT_v3.md "Stage palette",
+// Pipelinely Dashboard v3.dc.html lines 21-25, light theme), as rgb() — C is
+// the main colour (rail, ctx fill, badge dot), soft the callout background,
+// ink the callout/label text. Shared by the v3 cards and task-view specs.
+export const STAGE_TONE = {
+  plan: { c: 'rgb(109, 148, 168)', soft: 'rgb(233, 240, 243)', ink: 'rgb(51, 86, 106)' }, // #6d94a8 #e9f0f3 #33566a
+  dev: { c: 'rgb(143, 134, 176)', soft: 'rgb(239, 237, 244)', ink: 'rgb(76, 68, 112)' }, // #8f86b0 #efedf4 #4c4470
+  cr: { c: 'rgb(176, 113, 139)', soft: 'rgb(245, 234, 238)', ink: 'rgb(122, 58, 84)' }, // #b0718b #f5eaee #7a3a54
+  qa: { c: 'rgb(189, 154, 99)', soft: 'rgb(245, 239, 228)', ink: 'rgb(109, 83, 38)' }, // #bd9a63 #f5efe4 #6d5326
+  merge: { c: 'rgb(138, 162, 131)', soft: 'rgb(235, 240, 233)', ink: 'rgb(70, 96, 63)' }, // #8aa283 #ebf0e9 #46603f
+} as const
+
+// Dark-theme counterparts, for the one spec case that checks the tokens are
+// redefined under data-theme="dark" rather than inherited from light.
+export const STAGE_TONE_DARK = {
+  dev: { c: 'rgb(169, 161, 201)', soft: 'rgb(40, 37, 58)', ink: 'rgb(208, 202, 230)' }, // #a9a1c9 #28253a #d0cae6
+} as const

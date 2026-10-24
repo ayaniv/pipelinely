@@ -10,9 +10,10 @@ import { GraphSlot } from './GraphSlot'
 // the slot picks and what it hands it.
 vi.mock('./StageChainGraph', () => ({
   StageChainGraph: ({ child, stages }: { child: Task | null; stages: string }) => <div data-testid="stage-chain-stub" data-child={child?.slug ?? ''} data-stages={stages} />,
+  ParentChartGraph: ({ task }: { task: Task }) => <div data-testid="parent-chart-stub" data-task={task.slug} />,
 }))
-vi.mock('./MilestoneGraph', () => ({
-  MilestoneGraph: ({ milestones }: { milestones: unknown[] }) => <div data-testid="milestone-graph-stub" data-count={milestones.length} />,
+vi.mock('./WaveGraph', () => ({
+  WaveGraph: ({ task }: { task: Task }) => <div data-testid="wave-graph-stub" data-task={task.slug} />,
 }))
 
 function renderSlot(task: Task, nav: Partial<TaskDetailNav> = {}) {
@@ -38,19 +39,17 @@ describe('GraphSlot', () => {
     expect(await screen.findByTestId('stage-chain-stub')).toHaveAttribute('data-stages', 'milestone')
   })
 
-  test('a fan-out parent\'s Dev tab shows the project summary above the milestone graph', async () => {
-    renderSlot(parent)
-
-    expect(await screen.findByTestId('milestone-graph-stub')).toHaveAttribute('data-count', '2')
-    expect(screen.getByTestId('project-summary-slot')).toBeInTheDocument()
-    expect(screen.getByTestId('project-summary')).toBeInTheDocument()
+  test.each(['planning', 'plan-review', 'dev', 'cr', 'qa', 'merge'] as const)('a fan-out parent draws its own chart on the %s stage', async (l1Tab) => {
+    renderSlot(parent, { l1Tab })
+    expect(await screen.findByTestId('parent-chart-stub')).toHaveAttribute('data-task', 'proj')
+    expect(screen.queryByTestId('stage-chain-stub')).toBeNull()
   })
 
-  test.each(['plan', 'plan-review'] as const)('a fan-out parent\'s %s tab draws no graph at all', (l1Tab) => {
-    const { container } = renderSlot(parent, { l1Tab })
-    expect(screen.queryByTestId('milestone-graph-stub')).toBeNull()
+  test('the wave graph is the panel\'s now, so the slot never draws it or the project summary', async () => {
+    renderSlot(parent)
+    await screen.findByTestId('parent-chart-stub')
+    expect(screen.queryByTestId('wave-graph-stub')).toBeNull()
     expect(screen.queryByTestId('project-summary-slot')).toBeNull()
-    expect(container).toBeEmptyDOMElement()
   })
 
   test('a drilled-into milestone shows its head and its own chain, and the head steps back to the list', async () => {
@@ -58,7 +57,7 @@ describe('GraphSlot', () => {
 
     expect(await screen.findByTestId('stage-chain-stub')).toHaveAttribute('data-child', 'proj-m1')
     expect(screen.getByTestId('milestone-detail-head-slot')).toBeInTheDocument()
-    expect(screen.queryByTestId('milestone-graph-stub')).toBeNull()
+    expect(screen.queryByTestId('parent-chart-stub')).toBeNull()
 
     fireEvent.click(screen.getByTestId('milestone-parent-link'))
     expect(api.leaveMilestone).toHaveBeenCalledTimes(1)
@@ -69,8 +68,8 @@ describe('GraphSlot', () => {
     expect(await screen.findByTestId('stage-chain-stub')).toHaveAttribute('data-child', '')
   })
 
-  test('a milestone the plan no longer declares falls back to the milestone graph', async () => {
+  test('a milestone the plan no longer declares falls back to the parent chart', async () => {
     renderSlot(parent, { milestoneId: 'M9' })
-    expect(await screen.findByTestId('milestone-graph-stub')).toBeInTheDocument()
+    expect(await screen.findByTestId('parent-chart-stub')).toBeInTheDocument()
   })
 })

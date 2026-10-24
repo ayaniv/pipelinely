@@ -7,7 +7,7 @@ import { withOrchestratorSessionLock } from '../fixtures/orchestratorSessionLock
 // Covers the QA card's full Playwright case list (pass + fail, not just
 // failures — see renderDetailQaCases / parseQaCases in taskParser.ts) and
 // the "Start QA" button (POST /stage-skill/:slug with { stage: 'qa'}
-// → stageInSession — stages the command unsent, same as the other 5
+// → a 'stage' write — pastes the command unsent, same as the other 5
 // pipeline-stage CTAs, rather than auto-dispatching). Fixture data lives in
 // e2e/fixtures/tasks/qa-all-pass and qa-with-failures (see
 // playwright.config.ts for the fixture TASKS_DIR).
@@ -18,7 +18,7 @@ import { withOrchestratorSessionLock } from '../fixtures/orchestratorSessionLock
 // local preview server would (see TASK.md: canonical-dispatch-gate). That
 // means POST /stage-skill/:slug's orchestrator-target branch (qa, like dev/
 // code-review/plan-review) always 403s here now, even with a real iTerm2
-// scratch session registered as ORCHESTRATOR_SESSION — the canonical gate
+// tmux session recorded as ORCHESTRATOR_TMUX — the canonical gate
 // runs before writeToOrchestrator ever attempts to stage into it. Real
 // staging into a live orchestrator session once canonical is covered
 // instead by src/server.canonicalGate.test.ts's vitest suite, which can
@@ -90,8 +90,8 @@ test.describe('QA case list', () => {
   // dispatched child is qa-spec-preview-parent-m0.
   test('QA card previews planned cases for a milestone child drilled into from its parent', async ({ page }) => {
     await page.goto('/task/qa-spec-preview-parent')
-    await page.getByTestId('l1-tab-dev').click()
-    await page.locator('[data-testid="milestone-card"][data-milestone-id="M0"]').click()
+    await page.getByTestId('stage-chain-dev').click()
+    await page.getByTestId('wave-task-M0').click()
     await page.getByTestId('stage-chain-qa').click()
 
     const rows = page.getByTestId('planned-qa-case-row')

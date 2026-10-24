@@ -1,5 +1,5 @@
 import type { Stage, Task } from '../../src/types'
-import { isQaNotApplicable } from '../../src/nextStageCta'
+import { hasConflictingPr, isAtMergeHandoff } from '../../src/nextStageCta'
 import { findPrNumber } from './taskScope'
 
 // The waiting-reason → next-stage table itself (NEXT_STAGE_BY_WAITING_REASON /
@@ -15,12 +15,22 @@ export const CARD_CTA_LABEL: Partial<Record<Stage, string>> = {
   'comment-fix': 'Run CR fixes',
   qa: 'Start QA',
   'qa-fixes': 'Run QA fixes',
+  'merge-conflicts': 'Fix conflicts',
+  'design-qa': 'Start design QA',
+  'design-fixes': 'Run design fixes',
+  adopt: 'Run adopt',
 }
 
-// What a card offers when it has no dispatchable next stage — a parent whose
-// dev work is dispatched per milestone, or a leaf waiting on a decision only
-// a human can make.
-export const SEE_DETAILS_LABEL = 'See details'
+// What a card offers when it has no dispatchable next stage — a leaf waiting
+// on a decision only a human can make.
+export const SHOW_TASK_LABEL = 'Show task'
+
+export const READ_PLAN_LABEL = 'Read plan'
+
+// The outlined companion to a fixes run: opens the triage checklist.
+export const TRIAGE_COMMENTS_LABEL = 'Triage comments'
+
+export const OPEN_PR_LABEL = 'Open PR'
 
 // The card's label for a research task whose deliverable document awaits
 // the developer — opens the task page on its Result tab.
@@ -34,6 +44,10 @@ export const TRIAGE_CR_COMMENTS_LABEL = 'Triage CR comments'
 // glance, so it must not offer merge-and-mark-done to a task still
 // mid-pipeline. A task whose QA is not applicable is past its last stage that
 // has anything to run, so it counts as merge-ready before the skip is recorded.
+// The explicit "ready to merge" STATUS counts too: task.stage reads TIMELINE's
+// last line, so a CR approval that lands after QA leaves the stage on
+// code-review while the hand-off itself already says merge. A conflicting PR
+// is never merge-ready: the conflict fix comes first (computeNextStageCta).
 export function isCardMergeReady(task: Task): boolean {
-  return (task.stage === 'merge' || isQaNotApplicable(task)) && !!findPrNumber(task)
+  return isAtMergeHandoff(task) && !!findPrNumber(task) && !hasConflictingPr(task)
 }

@@ -6,7 +6,10 @@ import { computeNextStageCta } from '../../src/nextStageCta'
 // and the default tab for a task. The next-stage table itself is not here:
 // it comes from src/nextStageCta.ts, shared with the server.
 
-export type ChainStageId = 'planning' | 'plan-review' | 'dev' | 'cr' | 'cr-fixes' | 'qa' | 'qa-fixes' | 'merge'
+export type ChainStageId =
+  | 'planning' | 'plan-review' | 'dev' | 'cr' | 'cr-fixes' | 'qa' | 'qa-fixes' | 'merge'
+  // Only the design-system chain draws these.
+  | 'design-intake' | 'design-qa' | 'design-approval' | 'design-fixes' | 'adopt'
 
 export interface ChainStage {
   id: ChainStageId
@@ -29,7 +32,30 @@ export const FLAT_CHAIN_STAGES: ChainStage[] = [
   ...MILESTONE_CHAIN_STAGES,
 ]
 
-export const STAGE_TO_CHAIN_ID = Object.fromEntries(FLAT_CHAIN_STAGES.map((s) => [s.stage, s.id])) as Record<Stage, ChainStageId>
+// The design-system pipeline: the doc's steps around the shared dev stages.
+// design-intake runs inside the planning worker but gets its own node because
+// it is its own step in the doc.
+export const DS_CHAIN_STAGES: ChainStage[] = [
+  { id: 'design-intake', stage: 'design-intake', label: 'Design Intake' },
+  ...FLAT_CHAIN_STAGES.filter((s) => s.id !== 'merge'),
+  { id: 'design-qa', stage: 'design-qa', label: 'Design QA' },
+  { id: 'design-approval', stage: 'design-approval', label: 'Design Approval' },
+  { id: 'design-fixes', stage: 'design-fixes', label: 'Design fixes' },
+  { id: 'merge', stage: 'merge', label: 'Merge' },
+  { id: 'adopt', stage: 'adopt', label: 'Adopt' },
+]
+
+// Every node any chain can draw, once. The id lookups below read this rather
+// than one chain, so a ds-only id is a known id.
+export const ALL_CHAIN_STAGES: ChainStage[] = DS_CHAIN_STAGES
+
+// merge-conflicts has no chain node of its own (it is off the main line,
+// entered from wherever the task stood): it lives on the Merge tab, which is
+// where its Fix conflicts button replaces Merge.
+export const STAGE_TO_CHAIN_ID = {
+  ...Object.fromEntries(ALL_CHAIN_STAGES.map((s) => [s.stage, s.id])),
+  'merge-conflicts': 'merge',
+} as Record<Stage, ChainStageId>
 
 // Display-only grouping for the stage chain: a fresh-eyes plan review really
 // is its own dispatch, and cr-fixes/qa-fixes really are their own tabs with
@@ -40,25 +66,40 @@ export const STAGE_CHAIN_GROUPS: Record<string, ChainStageId[]> = {
   planning: ['plan-review'],
   cr: ['cr-fixes'],
   qa: ['qa-fixes'],
+  'design-approval': ['design-fixes'],
 }
 
 // A flat task does its own planning; a dispatched milestone child never does
 // (its plan lives in the parent's tech-design.md), so it gets the six-stage
-// chain.
-export type StageChainKind = 'flat' | 'milestone'
+// chain; a ds task gets the design-system one.
+export type StageChainKind = 'flat' | 'milestone' | 'ds'
 
-export function chainStagesFor(kind: StageChainKind): ChainStage[] {
-  return kind === 'flat' ? FLAT_CHAIN_STAGES : MILESTONE_CHAIN_STAGES
+const CHAIN_STAGES_BY_KIND: Record<StageChainKind, ChainStage[]> = {
+  flat: FLAT_CHAIN_STAGES,
+  milestone: MILESTONE_CHAIN_STAGES,
+  ds: DS_CHAIN_STAGES,
 }
 
-const CHAIN_STAGE_IDS: ReadonlySet<string> = new Set(FLAT_CHAIN_STAGES.map((s) => s.id))
+export function chainStagesFor(kind: StageChainKind): ChainStage[] {
+  return CHAIN_STAGES_BY_KIND[kind]
+}
+
+// The one place a task's chain is chosen, shared by the graph slot and the
+// panel slot so they can never disagree. A milestone child's chain is decided
+// by projectTitle alone (ds tasks are always flat, never milestones).
+export function stageChainKindFor(task: Task): StageChainKind {
+  if (task.projectTitle) return 'milestone'
+  return task.kind === 'ds' ? 'ds' : 'flat'
+}
+
+const CHAIN_STAGE_IDS: ReadonlySet<string> = new Set(ALL_CHAIN_STAGES.map((s) => s.id))
 
 export function isChainStageId(value: string): value is ChainStageId {
   return CHAIN_STAGE_IDS.has(value)
 }
 
 export function chainStageById(id: ChainStageId): ChainStage {
-  return FLAT_CHAIN_STAGES.find((s) => s.id === id)!
+  return ALL_CHAIN_STAGES.find((s) => s.id === id)!
 }
 
 // The tab to show when nothing has been explicitly clicked yet. Prefers the
@@ -73,30 +114,13 @@ export function defaultStageTab(child: Task | null): ChainStageId {
   return 'dev'
 }
 
-// Level 1 of a fan-out parent's drill-down. Plan and Plan Review are not a
-// one-way gate — a review can send the plan back — so each tab carries a
-// round counter (the count of its `stage`'s TIMELINE entries) rather than a
-// checkmark.
-export type L1TabId = 'plan' | 'plan-review' | 'dev'
+// The stage a fan-out parent's chart has selected. Planning and Plan Review
+// are one chart node (STAGE_CHAIN_GROUPS) but two panels, so both ids exist;
+// the other four are the parent's summary of its milestones at that stage.
+export type ParentStageId = 'planning' | 'plan-review' | 'dev' | 'cr' | 'qa' | 'merge'
 
-export interface L1Tab {
-  id: L1TabId
-  label: string
-  stage: Stage
-}
-
-export const L1_TABS: L1Tab[] = [
-  { id: 'plan', label: 'Plan', stage: 'planning' },
-  { id: 'plan-review', label: 'Plan Review', stage: 'plan-review' },
-  { id: 'dev', label: 'Dev', stage: 'dev' },
-]
-
-export function isL1TabId(value: string): value is L1TabId {
-  return L1_TABS.some((tab) => tab.id === value)
-}
-
-// The six stages every chain shares, i.e. everything a stage panel (as
-// opposed to the plan tab) renders.
+// Every chain node that gets a stage panel (as opposed to the plan tab),
+// including the ds-only nodes.
 export type StagePanelTabId = Exclude<ChainStageId, 'planning' | 'plan-review'>
 
 export function isStagePanelTabId(id: ChainStageId): id is StagePanelTabId {
@@ -114,15 +138,15 @@ export function resolveStageTab(selected: ChainStageId | null, chain: ChainStage
   return isInChain(fallback) ? fallback : 'dev'
 }
 
-// Which L1 tab a fan-out parent opens on. A parent already in its Dev state
-// opens straight to the Dev tab (its wave overview) — Plan/Plan Review only
-// matter while it is still in those stages. Reads the waitingReason-derived
-// "real next stage" as well as raw task.stage, which lags behind reality
-// mid-stage: a parent whose plan review just finished (STATUS "plan reviewed,
-// ready for dev") still reads task.stage as 'plan-review' until dev's own
-// TIMELINE entry lands.
-export function initialL1Tab(task: Task): L1TabId {
-  return task.stage === 'dev' || computeNextStageCta(task)?.stage === 'dev' ? 'dev' : 'plan'
+// Which stage a fan-out parent opens on. A parent already in its Dev state
+// opens straight to Dev (its wave overview) — Planning only matters while it
+// is still in planning or plan review. Reads the waitingReason-derived "real
+// next stage" as well as raw task.stage, which lags behind reality mid-stage:
+// a parent whose plan review just finished (STATUS "plan reviewed, ready for
+// dev") still reads task.stage as 'plan-review' until dev's own TIMELINE entry
+// lands.
+export function initialParentStage(task: Task): ParentStageId {
+  return task.stage === 'dev' || computeNextStageCta(task)?.stage === 'dev' ? 'dev' : 'planning'
 }
 
 // The tab a stage chain highlights as selected: the explicitly selected one if

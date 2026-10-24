@@ -1,3 +1,4 @@
+import { makeTask } from './testTask'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { BacklogItem } from '../../../../src/types'
@@ -20,7 +21,7 @@ function setup(overrides: Partial<BacklogViewProps> = {}) {
   const onResumed = vi.fn()
   const backlog = overrides.backlog ?? ITEMS
   const props: BacklogViewProps = {
-    rows: visibleBacklogRows(backlog, new Set()), backlog, isCanonical: true, projectOptions: ['acme-api', 'acme-web'],
+    rows: visibleBacklogRows(backlog, new Set()), backlog, plannedParents: [], isCanonical: true, projectOptions: ['acme-api', 'acme-web'],
     onOpenTask, onResumed, fetchImpl, log, ...overrides,
   }
   const view = render(<BacklogView {...props} />)
@@ -40,7 +41,9 @@ describe('BacklogView rows', () => {
     setup()
 
     expect(screen.getAllByTestId('backlog-row')).toHaveLength(3)
-    expect(within$(0).getByTestId('backlog-row-date')).toHaveTextContent('2026-08-20')
+    expect(within$(0).getByTestId('backlog-row-date')).toHaveTextContent('Aug 20')
+    // The full date stays one hover away.
+    expect(within$(0).getByTestId('backlog-row-date')).toHaveAttribute('title', '2026-08-20')
     expect(within$(0).getByTestId('backlog-row-project')).toHaveTextContent('acme-api')
     expect(within$(0).getByTestId('backlog-row-title')).toHaveTextContent('First')
     expect(rowAt(0).querySelector('.backlog-row-context')).toHaveTextContent('some context')
@@ -71,6 +74,13 @@ describe('BacklogView rows', () => {
   test('an empty list renders the shared empty state', () => {
     setup({ rows: [], backlog: [] })
     expect(screen.getByTestId('board-empty-state')).toBeInTheDocument()
+  })
+
+  test('a planned parent is listed before the items, and with nothing else the empty state stays away', () => {
+    const queued = { id: 'M0', name: 'n', needs: [], estimate: null, specFile: null, wave: 1, task: null, state: 'queued' as const }
+    setup({ rows: [], backlog: [], plannedParents: [makeTask({ slug: 'billing', title: 'Workspace billing', milestones: [queued] })] })
+    expect(screen.getByTestId('backlog-planned-parent')).toHaveAttribute('data-slug', 'billing')
+    expect(screen.queryByTestId('board-empty-state')).not.toBeInTheDocument()
   })
 
   test('a done item has no checkbox and no edit or run button, but can still be waived', () => {

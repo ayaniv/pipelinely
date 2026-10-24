@@ -1,4 +1,4 @@
-import { useLayoutEffect, type ReactNode } from 'react'
+import { useLayoutEffect, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { Logger } from '../log'
 
@@ -21,11 +21,18 @@ export interface FrameSlotProps {
 }
 
 export function FrameSlot({ containerId, children, classToggles, log = console.error }: FrameSlotProps) {
-  const container = document.getElementById(containerId)
+  // A container the frame switches on in the same update that mounts this
+  // slot (the weekly-focus hero, on re-enabling it in Settings) isn't in the
+  // document yet at render time — it is by the layout effect, which picks it
+  // up here rather than giving up on it.
+  const [lateContainer, setLateContainer] = useState<HTMLElement | null>(null)
+  const container = document.getElementById(containerId) ?? lateContainer
 
   useLayoutEffect(() => {
     if (!container) {
-      log('[frame-slot] container not found in the app frame — its view cannot render', containerId)
+      const committedContainer = document.getElementById(containerId)
+      if (committedContainer) setLateContainer(committedContainer)
+      else log('[frame-slot] container not found in the app frame — its view cannot render', containerId)
       return
     }
     const toggles = Object.entries(classToggles ?? {})

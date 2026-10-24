@@ -176,21 +176,20 @@ test.describe('session card', () => {
     expect(await card.innerText()).not.toContain('NaN')
   })
 
-  test('a paused card renders its footer CTA as the primary action, terminal as a plain icon', async ({ page }) => {
+  test('a paused card offers an outlined "Show task" and no terminal button', async ({ page }) => {
     await page.goto('/')
 
     // resume-dead-session has no dispatchable next stage (paused, not
-    // 'waiting') — cardFooterHtml falls back to its "See details" CTA, still
-    // the one primary button; the terminal icon (resume-btn, since status is
-    // paused) is a secondary, un-primaried affordance, in the card's header
-    // row rather than beside the CTA as of the design-v2 follow-up round.
+    // 'waiting'), so the footer falls back to "Show task" — outlined, never
+    // primary (v3). A parked session has no live terminal, so the header
+    // carries no terminal button; the card menu's "Open terminal" is the way
+    // back in.
     const card = page.locator('[data-testid="task-card"][data-slug="resume-dead-session"]')
     await expect(card).toBeVisible()
-    await expect(card.getByTestId('card-cta-btn')).toHaveAttribute('data-primary', 'true')
-    await expect(card.getByTestId('resume-btn')).not.toHaveAttribute('data-primary', 'true')
-    // Exactly one primary per card — the design's single accent-tinted
-    // button with everything else as a ghost.
-    await expect(card.locator('button[data-primary="true"]')).toHaveCount(1)
+    await expect(card.getByTestId('card-cta-btn')).toHaveAttribute('data-primary', 'false')
+    await expect(card.getByTestId('resume-btn')).toHaveCount(0)
+    await expect(card.getByTestId('focus-btn')).toHaveCount(0)
+    await expect(card.locator('button[data-primary="true"]')).toHaveCount(0)
   })
 
   test('a needs-you card renders its stage CTA as the primary action, terminal as a plain icon', async ({ page }) => {

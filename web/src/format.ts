@@ -102,3 +102,19 @@ export function formatWhen(iso: string): string {
   const date = new Date(iso)
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
+
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const BACKLOG_DATE = /^(\d{4})-(\d{2})-(\d{2})$/
+const LAST_DAY_OF_MONTH = 31
+
+// A backlog item's YYYY-MM-DD date as the design's "Sep 02". Read from its
+// parts, not through Date(), which would take it as UTC midnight and show the
+// day before west of Greenwich. Anything else is shown as written.
+export function formatBacklogDate(date: string): string {
+  const match = BACKLOG_DATE.exec(date)
+  if (!match) return date
+  const month = SHORT_MONTHS[Number(match[2]) - 1]
+  const day = Number(match[3])
+  if (!month || day < 1 || day > LAST_DAY_OF_MONTH) return date
+  return `${month} ${match[3]}`
+}

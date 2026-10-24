@@ -176,7 +176,7 @@ test.describe('a backlog item carries a project', () => {
     const row = backlogRow(page, UNTAGGED_INDEX)
     await expect(row).toBeVisible()
     await expect(row.getByTestId('backlog-row-title')).not.toBeEmpty()
-    await expect(row.getByTestId('backlog-row-date')).toHaveText('2026-08-20')
+    await expect(row.getByTestId('backlog-row-date')).toHaveText('Aug 20')
     await expect(row.getByTestId('backlog-play-btn')).toBeVisible()
     await expect(row.getByTestId('backlog-edit-btn')).toBeVisible()
   })
@@ -272,13 +272,16 @@ test.describe('the project filter narrows the Backlog panel', () => {
   })
 
   test('the backlog tab count follows the filter', async ({ page }) => {
+    // The tab also counts plan-approved parents waiting on their first wave
+    // (the fixture tree has one, in BOARD_PROJECT), which are rows of their own.
+    const plannedParents = page.getByTestId('backlog-planned-parent')
     await openBacklogWithFilters(page)
-    expect(await backlogTabCount(page)).toBe(await backlogRows(page).count())
+    expect(await backlogTabCount(page)).toBe(await backlogRows(page).count() + await plannedParents.count())
 
     await projectChip(page, BOARD_PROJECT).click()
 
-    expect(await backlogTabCount(page)).toBe(await backlogRows(page).count())
-    expect(await backlogTabCount(page)).toBe(1)
+    expect(await backlogTabCount(page)).toBe(await backlogRows(page).count() + await plannedParents.count())
+    expect(await backlogRows(page).count()).toBe(1)
   })
 
 })

@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { BacklogItem } from '../../../../src/types'
+import type { BacklogItem, Task } from '../../../../src/types'
 import type { PostActionOptions } from '../../api/actions'
 import { backlogDispatchPayload, postBacklogDismiss, postBatchDispatch } from '../../api/backlogActions'
 import { ERROR_FLASH_MS, useActionFlash } from '../../components/useActionFlash'
 import { useTransientValue } from '../../components/useTransientValue'
+import type { OpenTask } from '../../shell/appNavigation'
 import { BacklogBatchBar } from './BacklogBatchBar'
 import { BacklogDeleteModal } from './BacklogDeleteModal'
 import { BacklogEditForm } from './BacklogEditForm'
 import { BacklogRow } from './BacklogRow'
 import type { BacklogRowModel } from './boardModel'
 import { EmptyState } from './EmptyState'
+import { PlannedParentRow } from './PlannedParentRow'
 
 // The Backlog panel: not-yet-dispatched task ideas from BACKLOG.md.
 //
@@ -27,9 +29,12 @@ export interface BacklogViewProps extends Partial<PostActionOptions> {
   // hidden-by-filter selection must never be dispatched but a row's index is
   // an index into this.
   backlog: BacklogItem[]
+  // Plan-approved parents whose first wave has not started, under the same
+  // project filter: read-only rows listed before the BACKLOG.md items.
+  plannedParents: Task[]
   isCanonical: boolean
   projectOptions: string[]
-  onOpenTask: (slug: string) => void
+  onOpenTask: OpenTask
   // A resumed item lands on In Progress.
   onResumed: () => void
 }
@@ -60,7 +65,7 @@ function without(set: ReadonlySet<string>, descriptions: string[]): ReadonlySet<
   return next
 }
 
-export function BacklogView({ rows, backlog, isCanonical, projectOptions, onOpenTask, onResumed, fetchImpl = fetch, log = console.error }: BacklogViewProps) {
+export function BacklogView({ rows, backlog, plannedParents, isCanonical, projectOptions, onOpenTask, onResumed, fetchImpl = fetch, log = console.error }: BacklogViewProps) {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [editing, setEditing] = useState<EditTarget | null>(null)
   const [pendingDeletion, setPendingDeletion] = useState<PendingDeletion | null>(null)
@@ -172,7 +177,8 @@ export function BacklogView({ rows, backlog, isCanonical, projectOptions, onOpen
         onRun={runBatch}
       />
       <ul className="backlog-list">
-        {rows.length === 0 ? (
+        {plannedParents.map((task) => <PlannedParentRow key={task.slug} task={task} onOpenPlan={onOpenTask} />)}
+        {rows.length === 0 && plannedParents.length === 0 ? (
           <li><EmptyState /></li>
         ) : (
           rows.map(({ item, index }) => (

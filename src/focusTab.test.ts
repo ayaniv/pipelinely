@@ -8,9 +8,6 @@ import {
   isTtyAttached,
   isStrayShellCommand,
   reattachAndRecord,
-  buildSessionWriteScript,
-  buildPasteIntoSessionWriteScript,
-  pasteIntoTrackedSession,
   getLiveTmuxSessions,
 } from './focusTab.js'
 
@@ -134,131 +131,29 @@ describe('reattachAndRecord', () => {
   })
 })
 
-describe('buildSessionWriteScript', () => {
-  it('submit: true sends the text unterminated, then a second empty write with newline yes', () => {
-    const script = buildSessionWriteScript('sess-1', 'hello', { submit: true, focus: true })
-    expect(script).toContain('write text "hello" newline no')
-    expect(script).toContain('write text "" newline yes')
+// Dispatch writes go through the tmux pane writer only; the iTerm2 module
+// keeps focusing, enumerating and opening tabs, none of which types into an
+// existing window.
+describe('the AppleScript write path is gone', () => {
+  it.each([
+    'pasteIntoSession',
+    'pasteIntoSessionQuiet',
+    'stageInSession',
+    'pasteIntoTrackedSession',
+    'buildSessionWriteScript',
+    'buildPasteIntoSessionWriteScript',
+    'sessionIsClientOf',
+    'tmuxPaneIsStrayShell',
+  ])('does not export %s', async (name) => {
+    const focusTab = await import('./focusTab.js')
+    expect(Object.keys(focusTab)).not.toContain(name)
   })
 
-  it('submit: false omits the trailing Return write entirely', () => {
-    const script = buildSessionWriteScript('sess-1', 'hello', { submit: false, focus: true })
-    expect(script).toContain('write text "hello" newline no')
-    expect(script).not.toContain('newline yes')
-  })
-
-  it('focus: true includes activate and select', () => {
-    const script = buildSessionWriteScript('sess-1', 'hello', { submit: true, focus: true })
-    expect(script).toContain('activate')
-    expect(script).toContain('select aTab')
-    expect(script).toContain('select aWindow')
-  })
-
-  // This exact option pair is pasteIntoSessionQuiet's — the auto-submitted
-  // mobile stage-dispatch path. All four assertions matter together: it must
-  // really submit (both write lines) while really not activating, since the
-  // whole reason that export exists is to run unattended without jumping the
-  // developer's windows. `select` stays either way — it is what makes
-  // delivery reliable, and unlike `activate` it never raises iTerm2 to the OS
-  // foreground.
-  it('focus: false omits activate (must not steal OS focus) but still selects the tab/window (needed for reliable delivery — see this function\'s own comment) and still submits', () => {
-    const script = buildSessionWriteScript('sess-1', 'hello', { submit: true, focus: false })
-    expect(script).not.toContain('activate')
-    expect(script).toContain('select aTab')
-    expect(script).toContain('select aWindow')
-    expect(script).toContain('write text "hello" newline no')
-    expect(script).toContain('write text "" newline yes')
-  })
-
-  it('escapes a backslash and a double quote in the text so the literal is not terminated early', () => {
-    const script = buildSessionWriteScript('sess-1', 'say "hi" \\ bye', { submit: true, focus: true })
-    expect(script).toContain('write text "say \\"hi\\" \\\\ bye" newline no')
-  })
-
-  it('escapes a backslash and a double quote in the session id', () => {
-    const script = buildSessionWriteScript('sess"1\\x', 'hello', { submit: true, focus: true })
-    expect(script).toContain('id of aSession is "sess\\"1\\\\x"')
-  })
-
-  it('escapes an embedded \\n as the two-character AppleScript escape rather than a raw line break', () => {
-    const script = buildSessionWriteScript('sess-1', 'line one\nline two', { submit: true, focus: true })
-    expect(script).toContain('write text "line one\\nline two" newline no')
-    expect(script.split('\n').some((line) => line.includes('line one') && !line.includes('line two'))).toBe(false)
-  })
-
-  it('escapes an embedded \\r\\n the same way as a bare \\n', () => {
-    const script = buildSessionWriteScript('sess-1', 'line one\r\nline two', { submit: true, focus: true })
-    expect(script).toContain('write text "line one\\nline two" newline no')
-  })
-})
-
-describe('buildPasteIntoSessionWriteScript', () => {
-  // Regression test for a real double-dispatch: auto mode landed
-  // `/pipelinely-cr` twice in the orchestrator session while other tasks
-  // churned concurrently (e2e/integration/orchestrator-auto-mode.spec.ts's
-  // "dispatches exactly once, even as other tasks churn" case). Root cause —
-  // a first fix attempt (commit 29f2a0f) moved the `return` up to right
-  // after a write+confirm-poll branch, but the confirm-poll itself was still
-  // AHEAD of that return: it repeatedly reads `contents of aSession`, which
-  // can throw under real multi-session AppleEvent load exactly like the
-  // enclosing loops' live tab/window re-enumeration this file's header
-  // comment documents ("Can't get item N ... Invalid index" when a sibling
-  // session opens/closes a tab mid-walk). Any throw between the write firing
-  // and the script's return — whichever loop it comes from — makes
-  // runOsascriptWithTabListRaceRetry blindly retry the WHOLE script,
-  // including a fresh `write text`, even though the first write had already
-  // landed. The write script now contains no confirm-poll at all: nothing
-  // enumerable, and nothing that reads iTerm2 state more than once, sits
-  // between the write firing and the return.
-  it('returns immediately once the write fires — nothing else executes between the write and the return', () => {
-    const script = buildPasteIntoSessionWriteScript('sess-1', 'hello')
-    const writeIndex = script.indexOf('write text "hello" newline no')
-    expect(writeIndex).toBeGreaterThan(-1)
-
-    const returnIndex = script.indexOf('return "ok"', writeIndex)
-    expect(returnIndex).toBeGreaterThan(-1)
-
-    const tailToReturn = script.slice(writeIndex, returnIndex)
-    expect(tailToReturn).not.toMatch(/\brepeat\b/)
-    expect(tailToReturn).not.toContain('contents of aSession')
-    expect(tailToReturn).toContain('tell application process frontApp to set frontmost to true')
-  })
-
-  it('the not-found path (no matching session) still restores frontmost and returns — safe to retry, since no write occurred', () => {
-    const script = buildPasteIntoSessionWriteScript('sess-1', 'hello')
-    // The write only ever fires inside the `if id of aSession is ...` match
-    // branch, which this same script's own "ok" test already pins down —
-    // this test just confirms the OUTER not-found path (the id never
-    // matching anything) still ends in its own restore + return, reached
-    // only if that branch's `return "ok"` never fired.
-    expect(script.trim().endsWith('return "not-found"')).toBe(true)
-    const lastReturnIndex = script.lastIndexOf('return "not-found"')
-    const precedingLines = script.slice(0, lastReturnIndex).trimEnd()
-    expect(precedingLines.endsWith('end tell')).toBe(true)
-    expect(precedingLines).toContain('tell application process frontApp to set frontmost to true')
-  })
-
-  it('escapes a backslash and a double quote in the text so the literal is not terminated early', () => {
-    const script = buildPasteIntoSessionWriteScript('sess-1', 'say "hi" \\ bye')
-    expect(script).toContain('write text "say \\"hi\\" \\\\ bye" newline no')
-  })
-
-  it('escapes a backslash and a double quote in the session id', () => {
-    const script = buildPasteIntoSessionWriteScript('sess"1\\x', 'hello')
-    expect(script).toContain('id of aSession is "sess\\"1\\\\x"')
-  })
-})
-
-describe('pasteIntoTrackedSession', () => {
-  // Pure exit: no sessionId means the paste attempt is skipped outright (no
-  // osascript call), and no tmuxSession means there is nothing to reattach
-  // either — no execa call of any kind, so this needs no live iTerm2/tmux.
-  it('reports no-session, hadRecordedSession: false when neither a session nor a tmux session is recorded', async () => {
-    const result = await pasteIntoTrackedSession(
-      { sessionId: null, tmuxSession: null, sessionFilePath: '/tmp/unused-pointer' },
-      'irrelevant message',
-    )
-    expect(result).toEqual({ status: 'no-session', hadRecordedSession: false })
+  it('still exports the non-typing tab helpers', async () => {
+    const focusTab = await import('./focusTab.js')
+    for (const name of ['focusITermTab', 'findSessionAttachedToTmux', 'reattachAndRecord', 'reattachOrFocus', 'readPaneState', 'sendKeysToPane']) {
+      expect(Object.keys(focusTab)).toContain(name)
+    }
   })
 })
 

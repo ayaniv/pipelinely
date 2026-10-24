@@ -10,8 +10,8 @@ const formatWhen = (iso: string) => `at ${iso}`
 
 const event = (stageValue: string, note: string | null = null): StageEvent => ({ stage: stageValue as StageEvent['stage'], at: `2026-01-01T00:00:00Z`, note })
 
-function build(child: ReturnType<typeof makeTask> | null, resolvedTab: ChainStageId | null, stages = FLAT_STAGES) {
-  return buildStageChainModel({ child, stages, groups: STAGE_CHAIN_GROUPS, resolvedTab, formatWhen })
+function build(child: ReturnType<typeof makeTask> | null, resolvedTab: ChainStageId | null, stages = FLAT_STAGES, taskStageId: ChainStageId | null = null) {
+  return buildStageChainModel({ child, stages, groups: STAGE_CHAIN_GROUPS, resolvedTab, taskStageId, formatWhen })
 }
 
 describe('buildStageChainModel: nodes', () => {
@@ -50,7 +50,7 @@ describe('buildStageChainModel: nodes', () => {
     const model = build(task, 'plan-review')
 
     const planning = model.nodes[0]
-    expect(planning.isCurrent).toBe(true)
+    expect(planning.isSelected).toBe(true)
     expect(planning.tabId).toBe('plan-review')
   })
 
@@ -73,7 +73,7 @@ describe('buildStageChainModel: nodes', () => {
 
     expect(model.nodes.find((n) => n.id === 'dev')?.stateClass).toBe('is-done')
     expect(model.nodes.find((n) => n.id === 'qa')?.stateClass).toBe('is-unrecorded')
-    expect(model.nodes.some((n) => n.isCurrent)).toBe(false)
+    expect(model.nodes.some((n) => n.isSelected)).toBe(false)
   })
 
   test('an undispatched milestone (no child) renders every node pending with nothing current', () => {
@@ -117,15 +117,15 @@ describe('buildStageChainModel: nodes', () => {
 })
 
 describe('buildStageChainModel: edges', () => {
-  test('an edge is traversed when the node it leaves is done or current', () => {
+  test('an edge is reached when the stage it enters has been recorded or is the task\'s own', () => {
     const task = makeTask({ stageHistory: [event('planning'), event('dev')] })
     const model = build(task, 'dev')
 
     expect(model.edges).toEqual([
-      { sourceId: 'planning', targetId: 'dev', isTraversed: true },
-      { sourceId: 'dev', targetId: 'cr', isTraversed: true },
-      { sourceId: 'cr', targetId: 'qa', isTraversed: false },
-      { sourceId: 'qa', targetId: 'merge', isTraversed: false },
+      { sourceId: 'planning', targetId: 'dev', isReached: true },
+      { sourceId: 'dev', targetId: 'cr', isReached: false },
+      { sourceId: 'cr', targetId: 'qa', isReached: false },
+      { sourceId: 'qa', targetId: 'merge', isReached: false },
     ])
   })
 
@@ -174,11 +174,73 @@ describe('buildStageChainModel: empty stage list', () => {
   test('a chain whose every stage is folded away is empty too', () => {
     const model = buildStageChainModel({
       child: makeTask(),
+      taskStageId: null,
       stages: [MILESTONE_STAGES[0]],
       groups: { dev: ['dev'] },
       resolvedTab: null,
       formatWhen,
     })
     expect(model.nodes).toEqual([])
+  })
+})
+
+describe('buildStageChainModel: isTaskStage', () => {
+  const taskStageNodes = (model: ReturnType<typeof build>) => model.nodes.filter((n) => n.isTaskStage).map((n) => n.id)
+
+  test('marks the node of the task\'s own stage, whatever tab is selected', () => {
+    expect(taskStageNodes(build(makeTask(), 'dev', FLAT_STAGES, 'qa'))).toEqual(['qa'])
+  })
+
+  test('a folded stage marks its parent node', () => {
+    expect(taskStageNodes(build(makeTask(), 'dev', FLAT_STAGES, 'cr-fixes'))).toEqual(['cr'])
+    expect(taskStageNodes(build(makeTask(), 'dev', FLAT_STAGES, 'plan-review'))).toEqual(['planning'])
+  })
+
+  test('no task stage (a done task, an undispatched milestone) marks nothing', () => {
+    expect(taskStageNodes(build(makeTask(), 'dev', FLAT_STAGES, null))).toEqual([])
+  })
+
+  test('a stage this chain does not draw marks nothing', () => {
+    expect(taskStageNodes(build(makeTask(), 'dev', MILESTONE_STAGES, 'planning'))).toEqual([])
+  })
+})
+
+describe('buildStageChainModel: chart node fields', () => {
+  const stateById = (model: ReturnType<typeof build>) => Object.fromEntries(model.nodes.map((n) => [n.id, n.state]))
+
+  test('the task\'s own stage is current, recorded stages are done, the rest todo, whichever tab is selected', () => {
+    const task = makeTask({ stageHistory: [event('planning'), event('plan-review'), event('dev')] })
+    expect(stateById(build(task, 'qa', FLAT_STAGES, 'dev'))).toEqual({ planning: 'done', dev: 'current', cr: 'todo', qa: 'todo', merge: 'todo' })
+  })
+
+  test('a recorded stage stays done while it is the selected tab', () => {
+    const task = makeTask({ stageHistory: [event('planning'), event('dev')] })
+    const model = build(task, 'planning', FLAT_STAGES, 'dev')
+    expect(model.nodes[0]).toMatchObject({ state: 'done', isSelected: true })
+  })
+
+  test('a task with no stage of its own (done, undispatched) has no current node', () => {
+    const task = makeTask({ status: 'done', stage: null, stageHistory: [event('dev')] })
+    expect(Object.values(stateById(build(task, null))).includes('current')).toBe(false)
+    expect(Object.values(stateById(build(null, null, MILESTONE_STAGES))).every((state) => state === 'todo')).toBe(true)
+  })
+
+  test('the subtitle is the stage\'s own status pill text, and a missing child reads as not started', () => {
+    const task = makeTask({ stageHistory: [event('planning'), event('dev')], stage: 'dev' })
+    const model = build(task, 'dev', FLAT_STAGES, 'dev')
+    expect(model.nodes.find((n) => n.id === 'dev')?.sub).toBe('in progress')
+    expect(model.nodes.find((n) => n.id === 'planning')?.sub).toBe('round 1')
+    expect(build(null, null, MILESTONE_STAGES).nodes.every((n) => n.sub === 'not started')).toBe(true)
+  })
+
+  test('each node carries its stage tone, a folded child sharing its parent\'s', () => {
+    const tones = Object.fromEntries(build(makeTask(), 'dev').nodes.map((n) => [n.id, n.tone]))
+    expect(tones).toEqual({ planning: 'plan', dev: 'dev', cr: 'cr', qa: 'qa', merge: 'merge' })
+  })
+
+  test('edges into a reached stage are reached; an edge into a todo stage is not', () => {
+    const task = makeTask({ stageHistory: [event('planning'), event('dev')] })
+    const model = build(task, 'dev', FLAT_STAGES, 'dev')
+    expect(model.edges.map((e) => [e.targetId, e.isReached])).toEqual([['dev', true], ['cr', false], ['qa', false], ['merge', false]])
   })
 })

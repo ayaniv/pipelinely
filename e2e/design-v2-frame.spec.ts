@@ -170,9 +170,9 @@ test.describe('720px caps are gone', () => {
   })
 
   // Split out of the case above when the heatmap moved to the You tab (see
-  // e2e/you-tab.spec.ts) — same uncapped-width rule, different panel.
+  // e2e/usage-tab.spec.ts) — same uncapped-width rule, different panel.
   test('the work-density card fills the column on the You tab', async ({ page }) => {
-    await gotoBoardTab(page, 'you')
+    await gotoBoardTab(page, 'usage')
 
     expect(await cssOf(page.locator('.work-density'), 'max-width')).toBe('none')
   })
@@ -269,8 +269,10 @@ test.describe('sidebar app mark', () => {
 // The header used to be `position: sticky; top: 0`, pinning the spend/live/
 // home/theme pills (and, on a task-detail view, the Back pill) across the
 // top independent of scroll — a floating strip rather than part of the
-// page's own layout. It should now scroll away with the rest of the page,
-// and line up with the same 1180px column the board's own content uses.
+// page's own layout. On the board it should scroll away with the rest of the
+// page, and line up with the same 1180px column the board's own content uses.
+// The task-detail view is sticky again (dashboard-v4 M0), covered by
+// dashboard-v4-top-bar.spec.ts; its cases here only check column alignment.
 test.describe('header is not pinned', () => {
   test('the header is not sticky-positioned', async ({ page }) => {
     await page.goto('/')
@@ -307,7 +309,7 @@ test.describe('header is not pinned', () => {
     await page.setViewportSize(WIDE)
     await page.goto('/')
 
-    const header = await page.getByTestId('app-header').boundingBox()
+    const header = await page.getByTestId('app-header-inner').boundingBox()
     const column = await page.getByTestId('board-column').boundingBox()
     expect(header).not.toBeNull()
     expect(column).not.toBeNull()
@@ -322,7 +324,7 @@ test.describe('header is not pinned', () => {
     await page.goto('/task/dev-ready')
     await expect(page.getByTestId('task-detail')).toBeVisible()
 
-    const header = await page.getByTestId('app-header').boundingBox()
+    const header = await page.getByTestId('app-header-inner').boundingBox()
     const detail = await page.getByTestId('task-detail').boundingBox()
     expect(header).not.toBeNull()
     expect(detail).not.toBeNull()

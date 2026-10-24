@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url'
 import { gotoBoardTab, selectBoardTab } from '../fixtures/boardTabs.js'
 import { BACKLOG_PATH, appendShelvedEntry, withBacklogFileLock, withRestoredBacklog } from '../fixtures/backlogFile.js'
 import { withOrchestratorSessionLock } from '../fixtures/orchestratorSessionLock.js'
-import { openScratchSession, closeScratchSession, readSessionContents } from '../fixtures/itermSessions.js'
+import { createOrchestratorTmuxSession, readTmuxPaneContents, killTmuxSession } from '../fixtures/itermSessions.js'
+import { startCanonicalServer, stopCanonicalServer } from '../fixtures/canonicalServer.js'
 
 // Covers demoting an in-progress task back to the backlog without losing the
 // work already built for it, and promoting it back again.
@@ -43,6 +44,9 @@ import { openScratchSession, closeScratchSession, readSessionContents } from '..
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const TASKS_DIR = path.join(__dirname, '..', 'fixtures', 'tasks')
 const ORCHESTRATOR_SESSION_PATH = path.join(TASKS_DIR, 'ORCHESTRATOR_SESSION')
+const ORCHESTRATOR_TMUX_PATH = path.join(TASKS_DIR, 'ORCHESTRATOR_TMUX')
+// Suffixed with the worker's pid so two workers can never collide on the name.
+const ORCHESTRATOR_TMUX_SESSION = `cockpit-e2e-shelve-resume-${process.pid}`
 
 // Committed fixtures, restored verbatim after any test that writes them.
 const SHELVE_CANDIDATE = { slug: 'shelve-candidate', status: 'working\n' }
@@ -329,38 +333,29 @@ test.describe('a shelved backlog entry resumes instead of dispatching fresh', ()
     })
   })
 
-  // QUARANTINED — not because of this feature. This case is a real
-  // osascript round trip into a scratch iTerm2 window, and pasteIntoSession
-  // cannot confirm its own write there: the scratch window runs a plain
-  // zsh, which *executes* the pasted line (the message is full of
-  // backticks), so the text never reads back off the session verbatim and
-  // POST /focus answers 503 instead of 202. Verified pre-existing: the
-  // identical test in resume-dead-session-fallback.spec.ts fails exactly
-  // the same way against a clean HEAD with this task's changes stashed, so
-  // unskipping this one means fixing that shared fixture, not this feature.
-  //
-  // The behaviour it was written to check — that the fallback message gains
-  // the `git worktree add` recreate clause when, and only when, the
-  // worktree is gone and the task dir named a repo and branch — is covered
-  // deterministically instead by buildDeadSessionMessage's own cases in
-  // src/taskParser.test.ts, which assert the exact string in all three
-  // branches rather than whatever a live shell left on screen.
-  test.skip("resuming a task whose worktree is already gone: the orchestrator is told to recreate it", async ({ page }) => {
+  // The /focus fallback's write goes through writeToOrchestrator, which
+  // rejects a non-canonical instance outright, so this case runs against its
+  // own canonical server rather than the shared webServer.
+  test('resuming a task whose worktree is already gone: the orchestrator is told to recreate it', async ({ page }) => {
     // resume-worktree-gone is already 'paused: resumed from backlog' (as if
     // Resume had just run) with no fixture worktree dir, and a dead
     // ITERM_SESSION/TMUX_SESSION pair — the exact shape
     // resume-dead-session-fallback.spec.ts's own fixtures use to force
-    // decideReattachAction into its 'none' outcome. This is real
-    // osascript/tmux automation end to end, matching that suite's own
-    // precedent: the dashboard is inherently macOS+iTerm2-only, so a real
-    // round trip is the only honest verifier of what actually gets pasted.
-    const sessionId = await openScratchSession()
+    // decideReattachAction into its 'none' outcome. The orchestrator is a
+    // fake claude in a uniquely named tmux session, so the pane itself is
+    // what shows what actually got pasted — a plain zsh tab would execute the
+    // backtick-laden message instead of holding it.
+    const canonicalUrl = await startCanonicalServer()
     try {
       await withOrchestratorSessionLock(async () => {
-        await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
+        await createOrchestratorTmuxSession(ORCHESTRATOR_TMUX_SESSION)
+        await fs.writeFile(ORCHESTRATOR_TMUX_PATH, ORCHESTRATOR_TMUX_SESSION + '\n')
         try {
-          await page.goto('/')
-          const btn = page.locator(`.card[data-slug="${RESUME_WORKTREE_GONE.slug}"] [data-testid="resume-btn"]`)
+          await page.goto(`${canonicalUrl}/`)
+          // A paused card's resume path is the card menu's "Open terminal".
+          const resumedCard = page.locator(`.card[data-slug="${RESUME_WORKTREE_GONE.slug}"]`)
+          await resumedCard.getByTestId('card-menu-btn').click()
+          const btn = resumedCard.getByTestId('card-menu-focus')
 
           const [res] = await Promise.all([
             page.waitForResponse((r) => r.url().includes(`/focus/${RESUME_WORKTREE_GONE.slug}`) && r.request().method() === 'POST'),
@@ -368,13 +363,15 @@ test.describe('a shelved backlog entry resumes instead of dispatching fresh', ()
           ])
           expect(res.status()).toBe(202)
 
-          await expect.poll(() => readSessionContents(sessionId)).toContain('worktree add')
+          await expect.poll(() => readTmuxPaneContents(ORCHESTRATOR_TMUX_SESSION)).toContain('worktree add')
         } finally {
+          await killTmuxSession(ORCHESTRATOR_TMUX_SESSION)
+          await fs.rm(ORCHESTRATOR_TMUX_PATH, { force: true })
           await fs.rm(ORCHESTRATOR_SESSION_PATH, { force: true })
         }
       })
     } finally {
-      await closeScratchSession(sessionId)
+      await stopCanonicalServer(canonicalUrl)
     }
   })
 })

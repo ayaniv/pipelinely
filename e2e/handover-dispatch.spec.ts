@@ -9,22 +9,21 @@ import { openWithSnapshot, pushSnapshot } from './fixtures/snapshotStub.js'
 //     /pipelinely-handover/:slug -> the task's own tracked session
 //   - the top bar's Handover segment (fused into the orchestrator ctx pill)
 //     -> POST /orchestrator/pipelinely-handover -> the orchestrator's own session
-// Both STAGE the text unsent (stageInSession / pasteIntoTrackedSession with
-// submit:false) — that half is proved at the vitest level against the real
+// Both STAGE the text unsent (a tmux paste in 'stage' mode, no Enter) — that half is proved at the vitest level against the real
 // route handlers (src/server.handover.test.ts), where the focusTab write
 // functions can be mocked. This file proves what the dashboard SENDS and how
 // it reports the outcome.
 //
 // `ui` project, local-safe by construction:
 //   - every orchestrator-side case is route-stubbed. The unstubbed route
-//     reads the shared fixture ORCHESTRATOR_SESSION pointer, which the
-//     integration suite writes real scratch session ids into under a lock
+//     reads the shared fixture ORCHESTRATOR_TMUX pointer, which the
+//     integration suite writes real scratch tmux session names into under a lock
 //     this project cannot take (orchestratorSessionLock.ts asserts an
 //     isolated environment at import) — so this file never lets that route
 //     reach the real server.
 //   - the one unstubbed task-side case targets `handover-hot`, a fixture
-//     with no ITERM_SESSION and no TMUX_SESSION: pasteIntoTrackedSession's
-//     pure no-session exit, zero osascript/tmux calls.
+//     with no ITERM_SESSION and no TMUX_SESSION: the writer's pure
+//     no-session exit, zero osascript/tmux calls.
 //
 // Selectors are data-testid only; no assertion selects by visible copy.
 //

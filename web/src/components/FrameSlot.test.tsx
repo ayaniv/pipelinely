@@ -31,6 +31,21 @@ describe('FrameSlot', () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining('[frame-slot]'), 'does-not-exist')
   })
 
+  test('finds a container that is committed in the same render as the slot, without logging', () => {
+    const log = vi.fn()
+    // The slot renders before its container exists — what happens when a
+    // frame region is switched on in the same update that mounts its view.
+    render(
+      <>
+        <FrameSlot containerId="late-container" log={log}><span data-testid="child" /></FrameSlot>
+        <div id="late-container" data-testid="late-container" />
+      </>,
+    )
+
+    expect(screen.getByTestId('late-container')).toContainElement(screen.getByTestId('child'))
+    expect(log).not.toHaveBeenCalled()
+  })
+
   test('applies class toggles to the container and reverts them on unmount', () => {
     const container = addContainer('global-progress')
     const { rerender, unmount } = render(<FrameSlot containerId="global-progress" classToggles={{ 'is-visible': true }}>x</FrameSlot>)

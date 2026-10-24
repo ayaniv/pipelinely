@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { defaultPortForCwd } from './src/derivePort.js'
-import { FIXTURE_REMOTE_TOKEN_FILE, FIXTURE_REPOS_DIR, FIXTURE_TASKS_DIR, FIXTURE_WORKTREES_DIR } from './e2e/fixtures/fixtureDirs.js'
+import { FIXTURE_REMOTE_TOKEN_FILE, FIXTURE_REPOS_DIR, FIXTURE_TASKS_DIR, FIXTURE_BOOKMARKS_DIR, FIXTURE_WORKTREES_DIR } from './e2e/fixtures/fixtureDirs.js'
 import { fakeGhEnv } from './e2e/fixtures/fakeGh.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -64,6 +64,11 @@ export default defineConfig({
       WORKTREES_DIR: FIXTURE_WORKTREES_DIR,
       // The fixture server must never read the developer's real token.
       PIPELINELY_REMOTE_TOKEN_FILE: FIXTURE_REMOTE_TOKEN_FILE,
+      // ...nor read or write the developer's real bookmarks.
+      PIPELINELY_BOOKMARKS_DIR: FIXTURE_BOOKMARKS_DIR,
+      // Mark done / Merge specs must not list or kill the developer's live
+      // tmux sessions (see retireTaskSessions.ts).
+      COCKPIT_DISABLE_SESSION_RETIREMENT: '1',
       // `gh` resolves to e2e/fixtures/bin/gh for this server — no e2e run can
       // reach a real GitHub PR, and the merge gate's PR states are canned.
       ...fakeGhEnv(),
@@ -76,7 +81,7 @@ export default defineConfig({
       // already held" e2e test costs 15s of wall clock to prove a timeout
       // the same logic proves just as well at 10. This value is shared by
       // every e2e test on this server, not just that one — it must stay
-      // comfortably above pasteIntoSession's real ~4s worst case (see
+      // comfortably above a tmux write's real worst case (see
       // orchestratorLock.ts) so "two dispatches fired at once both land
       // intact" never mistakes the other writer's real critical section for
       // a stuck lock. 2000ms was tried first and was too tight: it's

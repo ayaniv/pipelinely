@@ -14,7 +14,7 @@ function renderNav(task = makeTask(), url = '/task/demo-task') {
 describe('useTaskDetailNavState', () => {
   it('opens a parent already in dev on the Dev tab, and any other on Plan', () => {
     expect(renderNav(makeTask({ stage: 'dev' })).result.current.api.nav.l1Tab).toBe('dev')
-    expect(renderNav(makeTask({ stage: 'planning', status: 'working' })).result.current.api.nav.l1Tab).toBe('plan')
+    expect(renderNav(makeTask({ stage: 'planning', status: 'working' })).result.current.api.nav.l1Tab).toBe('planning')
   })
 
   it('reads the selected stage from ?stage=, and ignores a value that is not a chain node', () => {
@@ -37,9 +37,9 @@ describe('useTaskDetailNavState', () => {
     act(() => result.current.api.selectMilestone('M0'))
     expect(result.current.api.nav.milestoneId).toBe('M0')
 
-    act(() => result.current.api.selectL1Tab('plan-review'))
+    act(() => result.current.api.selectL1Tab('cr'))
 
-    expect(result.current.api.nav).toMatchObject({ l1Tab: 'plan-review', milestoneId: null })
+    expect(result.current.api.nav).toMatchObject({ l1Tab: 'cr', milestoneId: null })
   })
 
   it("selecting a milestone drops the previous milestone's stage selection from the URL", () => {

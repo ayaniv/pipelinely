@@ -16,8 +16,8 @@ import { makeTask } from './testTask'
 // app frame owns, driven by the snapshot cache, the project filter and the
 // active tab (which the frame derives from the router's location).
 
-const SLOT_IDS = ['tab-bar', 'sidebar-account-slot', 'backlog-section', 'done-groups', 'work-density', 'standup-slot']
-const PANEL_TABS = ['inprogress', 'backlog', 'done', 'you']
+const SLOT_IDS = ['tab-bar', 'sidebar-bookmarks-slot', 'sidebar-account-slot', 'backlog-section', 'done-groups', 'work-density', 'standup-slot']
+const PANEL_TABS = ['inprogress', 'backlog', 'done', 'usage']
 
 const backlogItem = (description: string, project: string | null): BacklogItem =>
   ({ description, date: null, context: null, done: false, shelvedSlug: null, project })
@@ -33,6 +33,8 @@ function snapshotWith(overrides: Partial<Snapshot> = {}): Snapshot {
     settings: { autoMode: false }, orchestratorContextPct: null, isCanonical: true, ...overrides,
   } as Snapshot
 }
+
+const BOOKMARKS_RESPONSE = { bookmarks: [{ id: 'a' }, { id: 'b' }, { id: 'c' }], unreadable: [] }
 
 let queryClient: QueryClient
 
@@ -53,10 +55,13 @@ beforeEach(() => {
     el.id = id
     document.body.appendChild(el)
   }
-  queryClient = new QueryClient()
+  queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  // The Bookmarks item counts bookmarks; the board's own tests don't care about them.
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(BOOKMARKS_RESPONSE), { status: 200 })))
   sidebarStore.openMobile()
 })
 afterEach(() => {
+  vi.unstubAllGlobals()
   document.body.innerHTML = ''
   document.body.className = ''
   sidebarStore.closeMobile()
@@ -175,9 +180,9 @@ describe('BoardTabs panels', () => {
     expect(screen.getByTestId('tab-btn-inprogress')).not.toHaveClass('is-active')
   })
 
-  test('a cold load of /you activates the account row', () => {
-    renderTabs(snapshotWith(), { path: '/you' })
-    expect(screen.getByTestId('sidebar-account')).toHaveClass('is-active')
+  test('a cold load of /usage marks the Usage item as the current page', () => {
+    renderTabs(snapshotWith(), { path: '/usage' })
+    expect(screen.getByTestId('sidebar-usage-btn')).toHaveAttribute('aria-current', 'page')
   })
 
   test('the standup button exists on the Done tab only', async () => {
@@ -187,8 +192,52 @@ describe('BoardTabs panels', () => {
     await act(() => router.navigate('/done'))
     expect(screen.getByTestId('standup-btn')).toBeInTheDocument()
 
-    await act(() => router.navigate('/you'))
+    await act(() => router.navigate('/usage'))
     expect(screen.queryByTestId('standup-btn')).not.toBeInTheDocument()
+  })
+})
+
+describe('BoardTabs Bookmarks item', () => {
+  test('sits in its own slot under the counted tabs, never inside the tab bar', async () => {
+    renderTabs(snapshotWith())
+
+    const item = await screen.findByTestId('sidebar-bookmarks-btn')
+    expect(document.getElementById('sidebar-bookmarks-slot')).toContainElement(item)
+    expect(document.getElementById('tab-bar')).not.toContainElement(item)
+    expect(document.querySelectorAll('#tab-bar .tab-btn')).toHaveLength(3)
+  })
+
+  test('counts the bookmarks once they load', async () => {
+    renderTabs(snapshotWith())
+    expect(await screen.findByTestId('sidebar-bookmarks-count')).toHaveTextContent('3')
+  })
+
+  test('on /bookmarks it is the only current item: the last board tab lets go', () => {
+    renderTabs(snapshotWith(), { path: '/bookmarks' })
+
+    expect(screen.getByTestId('sidebar-bookmarks-btn')).toHaveAttribute('aria-current', 'page')
+    expect(document.querySelectorAll('#tab-bar .tab-btn.is-active')).toHaveLength(0)
+  })
+
+  test('with a trailing slash it is the same page', () => {
+    renderTabs(snapshotWith(), { path: '/bookmarks/' })
+    expect(screen.getByTestId('sidebar-bookmarks-btn')).toHaveAttribute('aria-current', 'page')
+  })
+
+  test('elsewhere it is not current, and the board tab is', () => {
+    renderTabs(snapshotWith(), { path: '/done' })
+
+    expect(screen.getByTestId('sidebar-bookmarks-btn')).not.toHaveAttribute('aria-current')
+    expect(screen.getByTestId('tab-btn-done')).toHaveClass('is-active')
+  })
+
+  test('clicking it opens /bookmarks and closes the mobile sidebar drawer', async () => {
+    const { router } = renderTabs(snapshotWith())
+
+    await act(async () => { fireEvent.click(screen.getByTestId('sidebar-bookmarks-btn')) })
+
+    expect(router.state.location.pathname).toBe('/bookmarks')
+    expect(sidebarStore.get().isMobileOpen).toBe(false)
   })
 })
 
@@ -202,11 +251,13 @@ describe('BoardTabs navigation', () => {
     expect(sidebarStore.get().isMobileOpen).toBe(false)
   })
 
-  test('the account row opens the You tab, and the default tab goes back to bare "/"', async () => {
+  test('the account group\'s Usage item opens the Usage tab, and the default tab goes back to bare "/"', async () => {
     const { router } = renderTabs(snapshotWith(), { path: '/done' })
 
     await act(async () => { fireEvent.click(screen.getByTestId('sidebar-account')) })
-    expect(router.state.location.pathname).toBe('/you')
+    expect(router.state.location.pathname).toBe('/done')
+    await act(async () => { fireEvent.click(screen.getByTestId('sidebar-usage-btn')) })
+    expect(router.state.location.pathname).toBe('/usage')
 
     await act(async () => { fireEvent.click(screen.getByTestId('tab-btn-inprogress')) })
     expect(router.state.location.pathname).toBe('/')

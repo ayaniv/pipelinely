@@ -1,19 +1,25 @@
 import type { Task } from '../../../../src/types'
-import { CARD_STATUS_META, cardStageLabel, pillStatusFor } from '../../taskScope'
+import { stagePillView } from '../../stageView'
 
-// The pill names the STAGE, and attention is
-// carried by its color alone.
-export function CardStatusPill({ task }: { task: Task }) {
-  const key = pillStatusFor(task)
-  const meta = CARD_STATUS_META[key] ?? CARD_STATUS_META.idle
-  const isWorking = key === 'working'
+export interface StatusPillTestIds {
+  pill: string
+  dot: string
+}
+
+const CARD_PILL_TEST_IDS: StatusPillTestIds = { pill: 'card-status-pill', dot: 'card-status-dot' }
+
+// The pill names the STAGE the card is at, and attention is carried by its
+// color: the stage tone on a Needs-you card, the status palette otherwise.
+// The inner view's header renders the same pill under its own testids.
+export function CardStatusPill({ task, testIds = CARD_PILL_TEST_IDS }: { task: Task; testIds?: StatusPillTestIds }) {
+  const pill = stagePillView(task)
   return (
-    <div className="card-status-pill" data-testid="card-status-pill" style={{ background: meta.bg }}>
+    <div className="card-status-pill" data-testid={testIds.pill} data-tone={pill.tone} data-variant={pill.variant} style={{ background: pill.bg }}>
       <span className="card-status-dot-wrap">
-        <span className={`card-status-dot${isWorking ? ' is-live' : ''}`} style={{ background: meta.dot }} />
-        {isWorking && <span className="card-status-dot-halo is-live" style={{ background: meta.dot }} />}
+        <span className={`card-status-dot${pill.isLive ? ' is-live' : ''}`} data-testid={testIds.dot} style={{ background: pill.dot }} />
+        {pill.isLive && <span className="card-status-dot-halo is-live" style={{ background: pill.halo }} />}
       </span>
-      <span className="card-status-label" style={{ color: meta.fg }}>{cardStageLabel(task) ?? meta.label}</span>
+      <span className="card-status-label" style={{ color: pill.ink }}>{pill.label}</span>
     </div>
   )
 }

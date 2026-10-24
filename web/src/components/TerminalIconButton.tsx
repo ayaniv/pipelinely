@@ -6,13 +6,12 @@ import { TerminalIcon } from './icons'
 
 export interface TerminalIconButtonProps extends Partial<PostActionOptions> {
   slug: string
-  status: string
+  testId?: string
   // See HandoverPill's dataAction — same outside-#root-only constraint.
   dataAction?: string
 }
 
-export function TerminalIconButton({ slug, status, dataAction, fetchImpl = fetch, log = console.error }: TerminalIconButtonProps) {
-  const testId = status === 'paused' ? 'resume-btn' : 'focus-btn'
+export function TerminalIconButton({ slug, testId = 'focus-btn', dataAction, fetchImpl = fetch, log = console.error }: TerminalIconButtonProps) {
   const { flash, showOutcome, isPending, run } = useActionFlash()
 
   const handleClick = () => run(async () => {

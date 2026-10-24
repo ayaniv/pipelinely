@@ -7,19 +7,20 @@ import { TerminalIconButton } from './TerminalIconButton'
 // FocusButton would not fit.
 
 describe('TerminalIconButton', () => {
-  test('uses the focus-btn testid for a non-paused task', () => {
-    render(<TerminalIconButton slug="demo-task" status="working" fetchImpl={vi.fn()} log={vi.fn()} />)
+  test('always uses the focus-btn testid, whatever the caller knows about the task', () => {
+    render(<TerminalIconButton slug="demo-task" fetchImpl={vi.fn()} log={vi.fn()} />)
     expect(screen.getByTestId('focus-btn')).toHaveAttribute('title', 'Open terminal')
   })
 
-  test('uses the resume-btn testid for a paused task', () => {
-    render(<TerminalIconButton slug="demo-task" status="paused" fetchImpl={vi.fn()} log={vi.fn()} />)
-    expect(screen.getByTestId('resume-btn')).toBeInTheDocument()
+  test('takes the testid as a prop', () => {
+    render(<TerminalIconButton slug="demo-task" testId="row-terminal" fetchImpl={vi.fn()} log={vi.fn()} />)
+    expect(screen.getByTestId('row-terminal')).toBeInTheDocument()
+    expect(screen.queryByTestId('focus-btn')).not.toBeInTheDocument()
   })
 
   test('a click dispatches POST /focus/:slug and flashes the outcome in place of the icon', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 200 }))
-    render(<TerminalIconButton slug="demo-task" status="working" fetchImpl={fetchImpl} log={vi.fn()} />)
+    render(<TerminalIconButton slug="demo-task" fetchImpl={fetchImpl} log={vi.fn()} />)
 
     fireEvent.click(screen.getByTestId('focus-btn'))
 
@@ -31,7 +32,7 @@ describe('TerminalIconButton', () => {
   test('is disabled while the request is in flight, and a click while disabled sends only one request', async () => {
     let resolveFetch: (res: Response) => void = () => {}
     const fetchImpl = vi.fn().mockReturnValue(new Promise<Response>((resolve) => { resolveFetch = resolve }))
-    render(<TerminalIconButton slug="demo-task" status="working" fetchImpl={fetchImpl} log={vi.fn()} />)
+    render(<TerminalIconButton slug="demo-task" fetchImpl={fetchImpl} log={vi.fn()} />)
     const btn = screen.getByTestId('focus-btn')
 
     fireEvent.click(btn)
@@ -44,10 +45,10 @@ describe('TerminalIconButton', () => {
   })
 
   test('carries no data-action by default, and data-action plus data-slug when a caller outside #root asks for it', () => {
-    const { rerender } = render(<TerminalIconButton slug="demo-task" status="working" fetchImpl={vi.fn()} log={vi.fn()} />)
+    const { rerender } = render(<TerminalIconButton slug="demo-task" fetchImpl={vi.fn()} log={vi.fn()} />)
     expect(screen.getByTestId('focus-btn')).not.toHaveAttribute('data-action')
 
-    rerender(<TerminalIconButton slug="demo-task" status="working" dataAction="focus" fetchImpl={vi.fn()} log={vi.fn()} />)
+    rerender(<TerminalIconButton slug="demo-task" dataAction="focus" fetchImpl={vi.fn()} log={vi.fn()} />)
     expect(screen.getByTestId('focus-btn')).toHaveAttribute('data-action', 'focus')
     expect(screen.getByTestId('focus-btn')).toHaveAttribute('data-slug', 'demo-task')
   })

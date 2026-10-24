@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { STAGES } from '../../src/taskParser'
+import { OFF_CHAIN_STAGES } from '../../src/nextStageCta'
 import type { Task } from '../../src/types'
-import { FLAT_CHAIN_STAGES, MILESTONE_CHAIN_STAGES, STAGE_CHAIN_GROUPS, STAGE_TO_CHAIN_ID, chainStagesFor, defaultStageTab, initialL1Tab, isChainStageId, isL1TabId, isStagePanelTabId, resolveSelectedStageTab, resolveStageTab } from './pipelineStages'
+import { ALL_CHAIN_STAGES, DS_CHAIN_STAGES, FLAT_CHAIN_STAGES, MILESTONE_CHAIN_STAGES, STAGE_CHAIN_GROUPS, STAGE_TO_CHAIN_ID, chainStageById, chainStagesFor, defaultStageTab, initialParentStage, isChainStageId, isStagePanelTabId, resolveSelectedStageTab, resolveStageTab, stageChainKindFor } from './pipelineStages'
 
 const stubTask = (overrides: Partial<Task>): Task => overrides as Task
 const waiting = (waitingReason: string, stage: Task['stage'] = null): Task => stubTask({ status: 'waiting', waitingReason, stage })
@@ -15,8 +16,10 @@ describe('chain stage tables', () => {
   // The chain and the server's own stage graph are two declarations of the
   // same pipeline; an edit to only one would desync what the server computes
   // from what the dashboard draws.
-  it("the flat chain's stage order matches the server's STAGES exactly", () => {
-    expect(FLAT_CHAIN_STAGES.map((s) => s.stage)).toEqual(STAGES)
+  it("the flat chain's stage order matches the server's STAGES exactly, bar the off-chain stages", () => {
+    const dsOnlyStages = DS_CHAIN_STAGES.map((s) => s.stage).filter((stage) => !FLAT_CHAIN_STAGES.some((s) => s.stage === stage))
+    expect(FLAT_CHAIN_STAGES.map((s) => s.stage)).toEqual(STAGES.filter((stage) => !OFF_CHAIN_STAGES.includes(stage) && !dsOnlyStages.includes(stage)))
+    expect([...STAGES].filter((stage) => !OFF_CHAIN_STAGES.includes(stage)).sort()).toEqual(DS_CHAIN_STAGES.map((s) => s.stage).sort())
   })
 
   it('maps the two stages whose chain id differs from the Stage value', () => {
@@ -43,6 +46,11 @@ describe('defaultStageTab', () => {
     expect(defaultStageTab(waiting('triage and dispatch qa-fixes'))).toBe('qa-fixes')
   })
 
+  it('opens a task whose PR conflicts on the Merge tab, where Fix conflicts lives', () => {
+    expect(defaultStageTab(stubTask({ status: 'waiting', waitingReason: 'fixes pushed, ready to re-run QA', stage: 'qa', prMergeState: 'conflicting' }))).toBe('merge')
+    expect(STAGE_TO_CHAIN_ID['merge-conflicts']).toBe('merge')
+  })
+
   it('does not trust a stale stage over the waiting reason', () => {
     expect(defaultStageTab(waiting('plan reviewed, ready for dev', 'plan-review'))).toBe('dev')
   })
@@ -57,12 +65,7 @@ describe('defaultStageTab', () => {
   })
 })
 
-describe('isL1TabId / isStagePanelTabId', () => {
-  it('knows the three L1 tabs', () => {
-    expect(['plan', 'plan-review', 'dev'].every(isL1TabId)).toBe(true)
-    expect(isL1TabId('qa')).toBe(false)
-  })
-
+describe('isStagePanelTabId', () => {
   it('every chain stage but the two plan stages renders a stage panel', () => {
     expect(FLAT_CHAIN_STAGES.filter((s) => isStagePanelTabId(s.id)).map((s) => s.id)).toEqual(['dev', 'cr', 'cr-fixes', 'qa', 'qa-fixes', 'merge'])
   })
@@ -89,7 +92,7 @@ describe('resolveStageTab', () => {
 
 describe('STAGE_CHAIN_GROUPS', () => {
   it('folds plan-review into planning and each *-fixes stage into its review stage', () => {
-    expect(STAGE_CHAIN_GROUPS).toEqual({ planning: ['plan-review'], cr: ['cr-fixes'], qa: ['qa-fixes'] })
+    expect(STAGE_CHAIN_GROUPS).toEqual({ planning: ['plan-review'], cr: ['cr-fixes'], qa: ['qa-fixes'], 'design-approval': ['design-fixes'] })
   })
 })
 
@@ -100,21 +103,21 @@ describe('chainStagesFor', () => {
   })
 })
 
-describe('initialL1Tab', () => {
-  it('opens a parent already in dev on the Dev tab', () => {
-    expect(initialL1Tab(stubTask({ stage: 'dev', status: 'working' }))).toBe('dev')
+describe('initialParentStage', () => {
+  it('opens a parent already in dev on Dev', () => {
+    expect(initialParentStage(stubTask({ stage: 'dev', status: 'working' }))).toBe('dev')
   })
 
   it('opens a parent whose plan review just finished on Dev, even while task.stage still lags on plan-review', () => {
-    expect(initialL1Tab(waiting('plan reviewed, ready for dev', 'plan-review'))).toBe('dev')
+    expect(initialParentStage(waiting('plan reviewed, ready for dev', 'plan-review'))).toBe('dev')
   })
 
-  it('opens a parent still planning on the Plan tab', () => {
-    expect(initialL1Tab(stubTask({ stage: 'planning', status: 'working' }))).toBe('plan')
+  it('opens a parent still planning on Planning', () => {
+    expect(initialParentStage(stubTask({ stage: 'planning', status: 'working' }))).toBe('planning')
   })
 
-  it('opens a parent with no stage at all on the Plan tab', () => {
-    expect(initialL1Tab(stubTask({ stage: null, status: 'paused' }))).toBe('plan')
+  it('opens a parent with no stage at all on Planning', () => {
+    expect(initialParentStage(stubTask({ stage: null, status: 'paused' }))).toBe('planning')
   })
 })
 
@@ -136,5 +139,62 @@ describe('resolveSelectedStageTab', () => {
 
   it('falls back to the default tab when nothing is selected', () => {
     expect(resolveSelectedStageTab(waiting('PR open, ready for CR', 'dev'), FLAT_CHAIN_STAGES, null)).toBe('cr')
+  })
+})
+
+describe('the ds chain', () => {
+  it('runs the design-system pipeline in the doc\'s order, sharing dev/cr/qa/merge with the dev chain', () => {
+    expect(DS_CHAIN_STAGES.map((s) => s.id)).toEqual([
+      'design-intake', 'planning', 'plan-review', 'dev', 'cr', 'cr-fixes', 'qa', 'qa-fixes', 'design-qa', 'design-approval', 'design-fixes', 'merge', 'adopt',
+    ])
+    expect(chainStagesFor('ds')).toBe(DS_CHAIN_STAGES)
+  })
+
+  it('folds design-fixes under design-approval, like cr-fixes under cr', () => {
+    expect(STAGE_CHAIN_GROUPS['design-approval']).toEqual(['design-fixes'])
+  })
+
+  it('every STAGES entry maps to a chain id the lookups know, so no ds stage can leave a panel without a chain stage', () => {
+    for (const stage of STAGES) {
+      const chainId = STAGE_TO_CHAIN_ID[stage]
+      expect(chainId, `STAGE_TO_CHAIN_ID has no entry for ${stage}`).toBeDefined()
+      expect(isChainStageId(chainId), `${chainId} is not a chain stage id`).toBe(true)
+      expect(chainStageById(chainId).id).toBe(chainId)
+    }
+  })
+
+  it('accepts the ds-only ids as chain stage ids and as stage panel tabs, except the plan nodes', () => {
+    for (const id of ['design-intake', 'design-qa', 'design-approval', 'design-fixes', 'adopt']) {
+      expect(isChainStageId(id)).toBe(true)
+    }
+    expect(isStagePanelTabId('design-qa')).toBe(true)
+    expect(isStagePanelTabId('design-intake')).toBe(true)
+    expect(isStagePanelTabId('planning')).toBe(false)
+  })
+
+  it('ALL_CHAIN_STAGES holds each chain node once', () => {
+    const ids = ALL_CHAIN_STAGES.map((s) => s.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(ids).toEqual(expect.arrayContaining(DS_CHAIN_STAGES.map((s) => s.id)))
+  })
+})
+
+describe('stageChainKindFor', () => {
+  it('is flat for a task with no kind-specific shape', () => {
+    expect(stageChainKindFor(stubTask({ kind: 'dev' }))).toBe('flat')
+  })
+
+  it('is ds for a ds task', () => {
+    expect(stageChainKindFor(stubTask({ kind: 'ds' }))).toBe('ds')
+  })
+
+  it('is milestone for a dispatched milestone child, whatever its kind', () => {
+    expect(stageChainKindFor(stubTask({ kind: 'dev', projectTitle: 'P' }))).toBe('milestone')
+    expect(stageChainKindFor(stubTask({ kind: 'ds', projectTitle: 'P' }))).toBe('milestone')
+  })
+
+  it('is flat for a task whose kind is missing or invalid, never ds', () => {
+    expect(stageChainKindFor(stubTask({}))).toBe('flat')
+    expect(stageChainKindFor(stubTask({ kind: 'bogus' as never }))).toBe('flat')
   })
 })

@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 import { TOKEN, DESKTOP, cssOf } from './fixtures/designTokens'
+import { freezeLiveFeed, pushSnapshot } from './fixtures/liveBoard'
 
 // A follow-up alignment round against `Pipelinely Dashboard v2.dc.html`, run
 // after the developer compared the live board with the design side by side.
@@ -25,8 +26,10 @@ import { TOKEN, DESKTOP, cssOf } from './fixtures/designTokens'
 //    decision-waiting card with a terminal-only footer and no CTA at all, and
 //    offered a milestone-declaring PARENT the leaf CTA ("Start dev") for a
 //    stage that is only ever dispatched per milestone. Both now read
-//    "See details" and open the task detail — the label the developer asked
-//    for in place of guessing at an action the card does not have.
+//    "Show task" (a parent has no card at all since dashboard v4: it is a
+//    Parent tasks row) and open the task detail — the
+//    label the developer asked for in place of guessing at an action the
+//    card does not have.
 //
 // Fixture data lives in e2e/fixtures/tasks (see playwright.config.ts).
 
@@ -44,13 +47,10 @@ const DECISION_SLUG = 'dev-not-ready'
 // dev", which on a leaf would mean "Start dev" — but dev is dispatched per
 // milestone here, so the parent has no single next action.
 const PARENT_SLUG = 'fanout-parent'
+const LONE_PRIMARY_CTA_SLUG = 'cr-ready'
 // A working leaf: the design gives it no footer (`footerDisplay`), so it is
 // the counter-case to "every card shows a CTA".
 const WORKING_SLUG = 'board-metrics'
-// The one fixture parent with a live (not done, not queued) milestone child,
-// so the milestone card's own footer has a real next stage to name.
-const MS_PARENT_SLUG = 'qa-spec-preview-parent'
-const MS_ID = 'M0'
 // A milestone-declaring parent whose OWN status is `working`. Two things
 // meet on this one card and nowhere else in the fixture set:
 //   - it keeps its footer (`isWorkingLeaf` is false for a parent), the branch
@@ -66,9 +66,6 @@ const MERGE_READY_SLUG = 'card-merge-ready'
 
 const card = (page: Page, slug: string) =>
   page.locator(`[data-testid="task-card"][data-slug="${slug}"]`)
-
-const milestoneCard = (page: Page) =>
-  page.locator(`[data-testid="milestone-card"][data-milestone-id="${MS_ID}"]`)
 
 // The design's terminal glyph (lines 253 and 334 draw the same two paths) —
 // asserted rather than trusted, because "put a terminal icon there" is
@@ -157,26 +154,13 @@ test.describe('the badge row is gone', () => {
     await expect(c.locator('.card-secondary-pills')).toHaveCount(0)
   })
 
-  // The second card variant that drew the row. The milestone card is
-  // deliberately the same rendering as a board card (see
-  // renderMilestoneCard's own comment), so it loses the row too rather than
-  // keeping a stray copy in the detail panel.
-  test('a milestone card draws none either', async ({ page }) => {
-    await page.goto(`/task/${MS_PARENT_SLUG}`)
-
-    const c = milestoneCard(page)
-    await expect(c).toBeVisible()
-    await expect(c.locator('.card-secondary-pills')).toHaveCount(0)
-    await expect(c.getByTestId('stage-pill')).toHaveCount(0)
-  })
-
   // The pills carried real information, so the claim is "off the card", not
   // "gone from the app" — the task detail header still names the stage.
   test('the stage is still readable in the task detail view', async ({ page }) => {
     await page.goto(`/task/${LEAF_CTA_SLUG}`)
 
     await expect(page.getByTestId('task-detail')).toBeVisible()
-    await expect(page.locator('.stage-chain').first()).toBeVisible()
+    await expect(page.getByTestId('pipeline-chart')).toBeVisible()
   })
 })
 
@@ -184,9 +168,6 @@ test.describe('the card button row', () => {
   test('the open-detail arrow is gone from every card variant', async ({ page }) => {
     await page.goto('/')
     await expect(card(page, LEAF_CTA_SLUG).getByTestId('card-open-detail')).toHaveCount(0)
-
-    await page.goto(`/task/${MS_PARENT_SLUG}`)
-    await expect(milestoneCard(page).getByTestId('card-open-detail')).toHaveCount(0)
   })
 
   // The design's own order: `{{ c.when }}`, the terminal button, the 3-dots
@@ -216,15 +197,16 @@ test.describe('the card button row', () => {
     expect(await pathsOf(btn)).toContain(TERMINAL_PATH_D)
   })
 
-  // A paused card reaches the same button through the resume testid — the
-  // one affordance that used to live in the footer, so losing it would be a
-  // real regression rather than a restyle.
-  test('a paused card keeps its resume button in the row', async ({ page }) => {
+  // v3: a parked session has no live terminal, so the row carries no resume
+  // button; the card menu's "Open terminal" posts the same /focus/:slug.
+  test('a paused card has no terminal button in the row but keeps Open terminal in its menu', async ({ page }) => {
     await page.goto('/')
 
-    const btn = card(page, HANDOVER_SLUG).locator('.card-header-right').getByTestId('resume-btn')
-    await expect(btn).toBeVisible()
-    expect(await pathsOf(btn)).toContain(TERMINAL_PATH_D)
+    const paused = card(page, HANDOVER_SLUG)
+    await expect(paused.locator('.card-header-right').getByTestId('resume-btn')).toHaveCount(0)
+    await expect(paused.locator('.card-header-right').getByTestId('focus-btn')).toHaveCount(0)
+    await paused.getByTestId('card-menu-btn').click()
+    await expect(page.getByTestId('card-menu-focus')).toBeVisible()
   })
 
   // One terminal button per card footer is the design's footer (line 345):
@@ -251,14 +233,6 @@ test.describe('the card button row', () => {
     await expect(c.locator('.card-header-right').getByTestId('focus-btn')).toHaveCount(1)
   })
 
-  // A milestone card with a live child gets the same treatment.
-  test('a milestone card with a live child carries the terminal button', async ({ page }) => {
-    await page.goto(`/task/${MS_PARENT_SLUG}`)
-
-    const btn = milestoneCard(page).locator('.card-header-right').getByTestId('focus-btn')
-    await expect(btn).toBeVisible()
-    expect(await pathsOf(btn)).toContain(TERMINAL_PATH_D)
-  })
 })
 
 test.describe('every card shows a CTA', () => {
@@ -270,33 +244,31 @@ test.describe('every card shows a CTA', () => {
     await expect(cta).toHaveAttribute('data-action', 'stage-skill')
   })
 
-  // The developer's own example: the parent's STATUS would name "dev" on a
-  // leaf, but dev is dispatched per milestone, so the parent has no single
-  // next action to offer.
-  test('a milestone-declaring parent reads "See details", not a stage', async ({ page }) => {
+  // A parent has no single next action (dev is dispatched per milestone), so
+  // it has no card and no CTA: it lives in the Parent tasks section.
+  test('a milestone-declaring parent is a Parent tasks row, not a card with a CTA', async ({ page }) => {
     await page.goto('/')
 
-    const cta = card(page, PARENT_SLUG).getByTestId('card-cta-btn')
-    await expect(cta).toContainText('See details')
-    await expect(cta).not.toContainText('Start dev')
-    await expect(cta).toHaveAttribute('data-action', 'open-detail')
+    await expect(page.locator(`[data-testid="parent-row"][data-slug="${PARENT_SLUG}"]`)).toBeVisible()
+    await expect(card(page, PARENT_SLUG)).toHaveCount(0)
   })
 
-  test('the parent CTA opens that task\'s detail view', async ({ page }) => {
+  test('opening the parent row\'s plan link opens that task\'s detail view', async ({ page }) => {
     await page.goto('/')
-    await card(page, PARENT_SLUG).getByTestId('card-cta-btn').click()
+    await page.locator(`[data-testid="parent-row"][data-slug="${PARENT_SLUG}"]`).getByTestId('parent-row-head').click()
+    await page.locator(`[data-testid="parent-row"][data-slug="${PARENT_SLUG}"]`).getByTestId('parent-open-plan').click()
 
     await expect(page.getByTestId('task-detail')).toBeVisible()
-    await expect(page).toHaveURL(`/task/${PARENT_SLUG}`)
+    await expect(page).toHaveURL(`/task/${PARENT_SLUG}?stage=dev`)
   })
 
   // The card that used to render a terminal-only footer and no CTA at all.
-  test('a card waiting on a human decision reads "See details" too', async ({ page }) => {
+  test('a card waiting on a human decision reads "Show task"', async ({ page }) => {
     await page.goto('/')
 
     const cta = card(page, DECISION_SLUG).getByTestId('card-cta-btn')
     await expect(cta).toBeVisible()
-    await expect(cta).toContainText('See details')
+    await expect(cta).toContainText('Show task')
   })
 
   // The sweep the task actually asked for: not "the three cards we thought
@@ -335,28 +307,19 @@ test.describe('every card shows a CTA', () => {
     await expect(c.getByTestId('card-terminal-inline')).toHaveCount(0)
   })
 
-  // A milestone card is a card. Its child is parked at "CR approved, ready
-  // for QA", so the footer names that stage rather than showing a bare
-  // terminal button.
-  test('a milestone card with a live child names its next stage', async ({ page }) => {
-    await page.goto(`/task/${MS_PARENT_SLUG}`)
-
-    const cta = milestoneCard(page).getByTestId('card-cta-btn')
-    await expect(cta).toContainText('Start QA')
-    await expect(cta).toHaveAttribute('data-action', 'stage-skill')
-  })
-
-  // The other half of `isWorkingLeaf`. The leaf case above asserts the
-  // footer is suppressed; this asserts a PARENT is not caught by the same
-  // rule — its own session running says nothing about whether its
-  // milestones need attention.
-  test('a working parent keeps its footer', async ({ page }) => {
+  // The other half of `isWorkingLeaf`: a PARENT is not a working leaf, but it
+  // is not a card either — its own session running is no reason for it to
+  // appear in Working.
+  test('a working parent is a Parent tasks row, never a Working card', async ({ page }) => {
     await page.goto('/')
+    await expect(page.getByTestId('task-card').first()).toBeVisible()
+    await freezeLiveFeed(page)
+    // The fixture's milestones are all queued (first wave not started, so it
+    // waits in Backlog); a dispatched one puts it in the section.
+    await pushSnapshot(page, { taskPatches: { [WORKING_PARENT_SLUG]: { milestones: [{ id: 'M0', name: 'Foundation', needs: [], estimate: '1h', specFile: null, wave: 1, task: null, state: 'dispatched' }] } } })
 
-    const c = card(page, WORKING_PARENT_SLUG)
-    await expect(c).toHaveAttribute('data-lifecycle-status', 'working')
-    await expect(c.locator('.card-footer')).toHaveCount(1)
-    await expect(c.getByTestId('card-cta-btn')).toContainText('See details')
+    await expect(page.locator(`[data-testid="parent-row"][data-slug="${WORKING_PARENT_SLUG}"]`)).toBeVisible()
+    await expect(card(page, WORKING_PARENT_SLUG)).toHaveCount(0)
   })
 })
 
@@ -382,21 +345,23 @@ test.describe('the footer CTA spans the footer', () => {
     })
   }
 
+  // The Dev card pairs Start dev with Read plan (50/50), so a lone primary
+  // CTA is a stage with no secondary, like Run CR.
   test('a primary CTA fills its footer', async ({ page }) => {
     await page.goto('/')
 
-    await expect(card(page, LEAF_CTA_SLUG).getByTestId('card-cta-btn'))
+    await expect(card(page, LONE_PRIMARY_CTA_SLUG).getByTestId('card-cta-btn'))
       .toHaveAttribute('data-primary', 'true')
-    expect(await ctaFillRatio(page, LEAF_CTA_SLUG)).toBeCloseTo(1, 2)
+    expect(await ctaFillRatio(page, LONE_PRIMARY_CTA_SLUG)).toBeCloseTo(1, 2)
   })
 
   // The regression case: same footer, same design rule, no `btn-primary`.
   test('a NON-primary CTA fills its footer too', async ({ page }) => {
     await page.goto('/')
 
-    await expect(card(page, WORKING_PARENT_SLUG).getByTestId('card-cta-btn'))
+    await expect(card(page, DECISION_SLUG).getByTestId('card-cta-btn'))
       .toHaveAttribute('data-primary', 'false')
-    expect(await ctaFillRatio(page, WORKING_PARENT_SLUG)).toBeCloseTo(1, 2)
+    expect(await ctaFillRatio(page, DECISION_SLUG)).toBeCloseTo(1, 2)
   })
 
   // The design gives both states the same geometry and varies only the
@@ -405,7 +370,7 @@ test.describe('the footer CTA spans the footer', () => {
   test('both states share the design\'s own button geometry', async ({ page }) => {
     await page.goto('/')
 
-    for (const slug of [LEAF_CTA_SLUG, WORKING_PARENT_SLUG]) {
+    for (const slug of [LEAF_CTA_SLUG, DECISION_SLUG]) {
       const cta = card(page, slug).getByTestId('card-cta-btn')
       expect(await cssOf(cta, 'padding-top')).toBe('10px')
       expect(await cssOf(cta, 'padding-left')).toBe('14px')

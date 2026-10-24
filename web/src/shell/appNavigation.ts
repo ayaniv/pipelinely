@@ -46,6 +46,9 @@ export function navigateToTask(slug: string, options?: { stage?: string | null }
   navigateToUrl(taskUrl(slug, options?.stage), undefined)
 }
 
+// How a card opens a task: its slug, optionally on one of its stage tabs.
+export type OpenTask = typeof navigateToTask
+
 // Where a closed task detail returns: the board tab last shown, so closing
 // lands back on the tab it was opened from instead of overwriting it with '/'.
 export function closeTaskDetail(): void {

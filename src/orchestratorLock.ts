@@ -52,9 +52,10 @@ import path from 'node:path'
 const LOCK_FILE_NAME = '.orchestrator-pointer.lock'
 
 // Generous relative to the actual critical section: the slowest real path
-// through it (reattachAndRecord -> reattachTmuxSession -> openNewTabRunning
-// + waitForTmuxAttach's own 2s timeout, or pasteIntoSession's ~2s frontmost
-// poll + ~2s confirm poll) completes in single-digit seconds even under
+// through it (a staged write's reattachAndRecord -> reattachTmuxSession ->
+// openNewTabRunning + waitForTmuxAttach's own 2s timeout, or a tmux write's
+// few 2s-bounded tmux calls plus the read-only iTerm2 tab enumeration that
+// re-records the pointer) completes in single-digit seconds even under
 // load. 15s leaves real headroom without making a genuinely stuck lock (a
 // crashed holder, see STALE_LOCK_MS below) block every dispatch for long.
 //
@@ -64,8 +65,8 @@ const LOCK_FILE_NAME = '.orchestrator-pointer.lock'
 // 15 real seconds of wall clock for no more proof than the same logic run
 // against a smaller number. That override is process-wide, though — every
 // e2e test hits this same server, including "two dispatches fired at once
-// both land intact", which waits on a real pasteIntoSession critical section
-// (the ~2s frontmost poll + ~2s confirm poll cited just above). The override
+// both land intact", which waits on a real tmux write critical section (the
+// 2s-bounded tmux calls cited just above). The override
 // has to stay comfortably above that real worst case, not just short enough
 // to save time — see playwright.config.ts's own comment on the chosen value.
 const ACQUIRE_TIMEOUT_MS = process.env.COCKPIT_ORCH_LOCK_TIMEOUT_MS

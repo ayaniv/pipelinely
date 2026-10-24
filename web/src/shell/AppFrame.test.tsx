@@ -6,8 +6,8 @@ import { installAppNavigator } from './appNavigation'
 import { sidebarStore } from './sidebarState'
 import type { BoardTab } from '../views/board/boardTabRoutes'
 
-function renderFrame(activeTab: BoardTab = 'inprogress', slots: React.ReactNode = null, children: React.ReactNode = null) {
-  return render(<AppFrame activeTab={activeTab} slots={slots}>{children}</AppFrame>)
+function renderFrame(activeTab: BoardTab = 'inprogress', slots: React.ReactNode = null, children: React.ReactNode = null, isWeeklyFocusEnabled = true) {
+  return render(<AppFrame activeTab={activeTab} slots={slots} isWeeklyFocusEnabled={isWeeklyFocusEnabled}>{children}</AppFrame>)
 }
 
 let navigate: Mock<(to: string, options?: { replace?: boolean }) => void>
@@ -108,10 +108,10 @@ describe('AppFrame tab panels', () => {
     ['inprogress', 'active-sessions'],
     ['backlog', 'backlog-section'],
     ['done', 'done-section'],
-    ['you', 'you-section'],
+    ['usage', 'usage-section'],
   ] as const)('the %s tab activates exactly its own panel and is recorded on the board', (tab, panelTestId) => {
     renderFrame(tab)
-    const panels = ['active-sessions', 'backlog-section', 'done-section', 'you-section']
+    const panels = ['active-sessions', 'backlog-section', 'done-section', 'usage-section']
 
     for (const id of panels) {
       if (id === panelTestId) expect(screen.getByTestId(id)).toHaveClass('is-active')
@@ -122,7 +122,7 @@ describe('AppFrame tab panels', () => {
 
   test('switching the active tab moves the class', () => {
     const { rerender } = renderFrame('backlog')
-    rerender(<AppFrame activeTab="done" slots={null}>{null}</AppFrame>)
+    rerender(<AppFrame activeTab="done" slots={null} isWeeklyFocusEnabled>{null}</AppFrame>)
     expect(screen.getByTestId('done-section')).toHaveClass('is-active')
     expect(screen.getByTestId('backlog-section')).not.toHaveClass('is-active')
   })
@@ -155,14 +155,27 @@ function SlotPortal() {
   return createPortal(<span data-testid="portalled" />, document.getElementById('tab-bar')!)
 }
 
-describe('AppFrame footer navigation', () => {
-  test.each([
-    ['sidebar-settings-btn', '/settings'],
-    ['sidebar-docs-btn', '/docs'],
-    ['sidebar-help-btn', '/help'],
-  ])('%s navigates to %s', (testId, url) => {
+describe('AppFrame sidebar', () => {
+  // Settings, Usage, Docs and Help belong to the account group, which owns its
+  // own open state, so the frame only provides the slot it portals into.
+  test('provides the account slot and no longer renders the Settings / Docs / Help footer itself', () => {
     renderFrame()
-    fireEvent.click(screen.getByTestId(testId))
-    expect(navigate).toHaveBeenCalledWith(url, undefined)
+    expect(document.getElementById('sidebar-account-slot')).not.toBeNull()
+    for (const id of ['sidebar-settings-btn', 'sidebar-docs-btn', 'sidebar-help-btn']) expect(screen.queryByTestId(id)).not.toBeInTheDocument()
+  })
+})
+
+describe('AppFrame weekly-focus hero', () => {
+  test('is part of the frame while the Settings switch is on', () => {
+    renderFrame('inprogress', null, null, true)
+    expect(screen.getByTestId('weekly-focus-hero')).toBeInTheDocument()
+    expect(document.getElementById('weekly-focus-row')).not.toBeNull()
+  })
+
+  test('is not rendered at all while the switch is off', () => {
+    renderFrame('inprogress', null, null, false)
+    expect(screen.queryByTestId('weekly-focus-hero')).not.toBeInTheDocument()
+    expect(document.getElementById('weekly-focus-row')).toBeNull()
+    expect(document.getElementById('weekly-focus-dates')).toBeNull()
   })
 })

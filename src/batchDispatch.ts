@@ -64,12 +64,12 @@ function composeMessage(kind: 'wave' | 'backlog', renderedItems: string[]): stri
     : `Dispatch these ${renderedItems.length} ${BATCH_NOUN[kind]} in parallel: ` +
       renderedItems.map((item, i) => `(${i + 1}) ${item}`).join('; ')
 
-  // The safety invariant, not a formatting preference: a newline through
-  // writeToOrchestrator's stageInSession write path is a real LF keystroke
-  // (escapeForAppleScriptString in focusTab.ts), which IS a submit. Collapsing
-  // whitespace here — the cheapest and most reliable place to hold it — is
-  // what keeps an item whose context sits on its own line in BACKLOG.md from
-  // composing a message that submits itself halfway through.
+  // The batch must stay one line: it is staged as a single command for the
+  // developer to review, and a multi-line paste would show up in Claude Code
+  // as an opaque pasted-text block instead. Collapsing whitespace here — the
+  // cheapest and most reliable place to hold it — is also what keeps an item
+  // whose context sits on its own line in BACKLOG.md from splitting the
+  // message.
   return text.replace(/\s+/g, ' ').trim()
 }
 

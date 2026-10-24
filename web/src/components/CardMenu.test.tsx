@@ -1,6 +1,6 @@
 import { describe, expect, test, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
-import { CardMenu } from './CardMenu'
+import { CardMenu, placeMenu } from './CardMenu'
 import type { Task } from '../../../src/types'
 
 // Menu open/closed is local React state: only one card's menu is ever being
@@ -18,6 +18,36 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 }
 
 afterEach(() => vi.restoreAllMocks())
+
+describe('CardMenu: Open terminal', () => {
+  const openMenuAndClickFocus = (status: Task['status'], fetchImpl: typeof fetch) => {
+    render(<CardMenu task={makeTask({ status })} isOffFocus={false} onToggleOffFocus={vi.fn()} fetchImpl={fetchImpl} log={vi.fn()} />)
+    fireEvent.click(screen.getByTestId('card-menu-btn'))
+    fireEvent.click(screen.getByTestId('card-menu-focus'))
+  }
+
+  // postFocus holds the /focus outcome labels; a bare postAction would flash "✓" or "failed" for a resume.
+  test('resuming a dead paused session says it is resuming via the orchestrator', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 202 }))
+    openMenuAndClickFocus('paused', fetchImpl)
+    await waitFor(() => expect(screen.getByTestId('card-menu-focus')).toHaveTextContent('resuming via orchestrator'))
+    expect(fetchImpl).toHaveBeenCalledWith('/focus/demo-task', { method: 'POST' })
+  })
+
+  test('a 409 tells the developer to click again', async () => {
+    openMenuAndClickFocus('paused', vi.fn().mockResolvedValue(new Response(null, { status: 409 })))
+    await waitFor(() => expect(screen.getByTestId('card-menu-focus')).toHaveTextContent('not ready — click again'))
+  })
+
+  test('a failed request is flashed and logged', async () => {
+    const log = vi.fn()
+    render(<CardMenu task={makeTask({ status: 'paused' })} isOffFocus={false} onToggleOffFocus={vi.fn()} fetchImpl={vi.fn().mockResolvedValue(new Response(null, { status: 503 }))} log={log} />)
+    fireEvent.click(screen.getByTestId('card-menu-btn'))
+    fireEvent.click(screen.getByTestId('card-menu-focus'))
+    await waitFor(() => expect(screen.getByTestId('card-menu-focus')).toHaveTextContent('no orchestrator'))
+    expect(log).toHaveBeenCalled()
+  })
+})
 
 describe('CardMenu', () => {
   test('renders the closed dots button; the menu is absent until opened', () => {
@@ -150,5 +180,91 @@ describe('CardMenu', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
 
     expect(screen.queryByTestId('card-menu')).not.toBeInTheDocument()
+  })
+})
+
+describe('CardMenu: portal and scroll rule', () => {
+  const renderOpen = () => {
+    render(
+      <div data-testid="scroller">
+        <CardMenu task={makeTask()} isOffFocus={false} onToggleOffFocus={vi.fn()} fetchImpl={vi.fn()} log={vi.fn()} />
+      </div>,
+    )
+    fireEvent.click(screen.getByTestId('card-menu-btn'))
+  }
+
+  test('the open menu is portalled into document.body, outside the wrapper', () => {
+    renderOpen()
+    expect(screen.getByTestId('card-menu').parentElement).toBe(document.body)
+    expect(screen.getByTestId('scroller')).not.toContainElement(screen.getByTestId('card-menu'))
+  })
+
+  test('a mousedown on a menu item does not close the menu', () => {
+    renderOpen()
+    fireEvent.mouseDown(screen.getByTestId('card-menu-toggle-off-focus'))
+    expect(screen.getByTestId('card-menu')).toBeInTheDocument()
+  })
+
+  test('a mousedown elsewhere closes it', () => {
+    renderOpen()
+    fireEvent.mouseDown(document.body)
+    expect(screen.queryByTestId('card-menu')).not.toBeInTheDocument()
+  })
+
+  const moveTrigger = (topPx: number) =>
+    vi.spyOn(screen.getByTestId('card-menu-btn'), 'getBoundingClientRect').mockReturnValue({ top: topPx, left: 0, bottom: topPx + 20, right: 20, width: 20, height: 20, x: 0, y: topPx, toJSON: () => ({}) })
+
+  test('a scroll of an ancestor that moves the trigger closes the menu', () => {
+    renderOpen()
+    moveTrigger(80)
+    fireEvent.scroll(screen.getByTestId('scroller'))
+    expect(screen.queryByTestId('card-menu')).not.toBeInTheDocument()
+  })
+
+  test('a scroll that leaves the trigger where it was keeps it open', () => {
+    renderOpen()
+    fireEvent.scroll(screen.getByTestId('scroller'))
+    expect(screen.getByTestId('card-menu')).toBeInTheDocument()
+  })
+
+  test('a scroll of an unrelated element leaves it open even if the trigger moved', () => {
+    const other = document.createElement('div')
+    document.body.appendChild(other)
+    renderOpen()
+    moveTrigger(80)
+    fireEvent.scroll(other)
+    expect(screen.getByTestId('card-menu')).toBeInTheDocument()
+    other.remove()
+  })
+
+  test('opening moves focus to the first menu item, and Escape returns it to the trigger', () => {
+    renderOpen()
+    expect(screen.getByTestId('card-menu').querySelector('button')).toHaveFocus()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByTestId('card-menu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('card-menu-btn')).toHaveFocus()
+  })
+
+  test('closes on resize', () => {
+    renderOpen()
+    fireEvent(window, new Event('resize'))
+    expect(screen.queryByTestId('card-menu')).not.toBeInTheDocument()
+  })
+})
+
+describe('placeMenu', () => {
+  const viewport = { width: 1000, height: 800 }
+  const size = { width: 200, height: 300 }
+
+  test('opens below the trigger, right-aligned to it', () => {
+    expect(placeMenu({ top: 100, bottom: 130, left: 700, right: 740 }, size, viewport)).toEqual({ top: 136, left: 540 })
+  })
+
+  test('flips above when there is no room below', () => {
+    expect(placeMenu({ top: 700, bottom: 730, left: 700, right: 740 }, size, viewport).top).toBe(700 - 6 - 300)
+  })
+
+  test('clamps inside the viewport horizontally', () => {
+    expect(placeMenu({ top: 100, bottom: 130, left: 0, right: 40 }, size, viewport).left).toBe(8)
   })
 })

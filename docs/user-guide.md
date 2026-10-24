@@ -50,10 +50,32 @@ them, and hands back to a fresh `/pipelinely-qa` re-run. Unlike QA itself, this
 one runs in the dev's own tab, deliberately, since fixing benefits from
 context a fresh QA session doesn't have.
 
+For a design-system (`ds`) task, a passed QA hands off to `/pipelinely-design-qa`
+instead of merge: a fresh session compares the component's Storybook stories
+(Light and Dark) with Figma and writes a report. The designer then approves it
+or requests changes on the task's Design approval tab, and merge is refused
+until they approve. `/pipelinely-design-fixes` applies their notes in the dev's own
+tab and hands back to a fresh `/pipelinely-design-qa` re-run.
+
+A design-system task starts differently too: when the planning worker is given
+a Figma component link, it runs `/pipelinely-design-intake` first to read the
+change and find the code, then plans. After the merge the task waits for
+`/pipelinely-adopt`, a fresh session that queues one backlog item per app listed
+under the plan's `## Affected apps` section and then marks the task done.
+
 `/pipelinely-cr` runs in a fresh session too: a diff-based code review against
 the pull request, persisted for the developer to triage. `/pipelinely-cr-fixes`
 fixes the comments checked off, pushes, and records which comments were
 deliberately skipped rather than silently dropping them.
+
+`/pipelinely-merge-conflicts` is the one stage off that line: when a task's
+pull request conflicts with master (usually because another pull request
+merged first), the dashboard offers **Fix conflicts** in place of Start QA,
+code review and Merge, and auto mode holds that task back. Clicking it starts
+a fresh session that merges the base branch (master or main) into it, resolves each conflict
+keeping both sides, re-runs the checks, pushes, and puts the task back where
+it stood. It is never started automatically, since it rewrites code. Once the
+pull request can merge again, the normal next step returns on its own.
 
 Merge has no dedicated dispatch tab: the developer clicks Merge on the
 dashboard, which runs a real merge and surfaces failures (not mergeable,
@@ -67,8 +89,8 @@ one parent card with a shared progress bar.
 
 ## The dashboard
 
-The board has three tabs — Backlog, In Progress, Done (Done splits into
-per-date cards) — plus a You tab for your own contributions. Every task gets
+The board has three tabs — In Progress, Done, Backlog (Done splits into
+per-date cards) — plus a Usage view (open the account row at the bottom of the sidebar) for your own contributions. Every task gets
 a shareable page across those tabs, with a Terminal button that always finds
 the worker's tab by its stable session id (not by name), a VS Code button, a
 Browse App button once a dev server URL is recorded, an Open PR button, and
@@ -107,14 +129,50 @@ end-to-end suite against the live pull request.
 `/pipelinely-qa-fixes` — fixes the QA failures checked off, in the dev's own
 tab, then hands off to a fresh `/pipelinely-qa` re-run.
 
+`/pipelinely-design-qa <task or milestone slug>` — for a design-system task, a
+fresh session compares Storybook with Figma and writes the report the designer
+approves.
+
+`/pipelinely-design-fixes` — applies the designer's change notes in the dev's own
+tab, then hands off to a fresh `/pipelinely-design-qa` re-run.
+
+`/pipelinely-design-intake` — the first step of a design-system task, run by the
+planning worker in its own tab: reads the Figma change, finds the code and
+writes `INTAKE.md`.
+
+`/pipelinely-adopt <task slug>` — after a design-system task's pull request has
+merged, a fresh session queues one backlog item per affected app and marks the
+task done.
+
 `/pipelinely-cr <task or milestone slug>` — a fresh session runs a diff-based
 code review against the pull request.
 
 `/pipelinely-cr-fixes` — fixes the code review comments checked off, in the
 dev's own tab, then pushes.
 
+`/pipelinely-merge-conflicts <task or milestone slug>` — a fresh session merges
+the base branch into a conflicting pull request, resolves the conflicts, re-verifies,
+pushes, and restores the task's previous status. The dashboard's Fix
+conflicts button starts it.
+
 `/pipelinely-merge <slug>` — the same gated merge the dashboard's own Merge
 button runs, from a terminal instead.
+
+`/pipelinely-babysit [<slug>]` — one sweep over the open tasks, run from the
+orchestrator: it sends the next stage for every task where that is safe (plan
+review, dev, code review, a recorded QA skip), one at a time and only while the
+machine load is at or below 10, then prints one list of what needs you — merges,
+QA consent, review comments, conflicts, milestone starts, open questions. It
+never merges and never starts QA unless the QA start policy in Settings covers
+it. `--except <slug>...` leaves tasks out. Repeat it on a schedule with Claude
+Code's built-in loop command.
+
+`npm run worktree-sweep` — not a slash command: a terminal CLI that lists the
+worktrees of tasks whose STATUS is done and says which are safe to remove
+(clean, merged, nothing gitignored but rebuildable dirs). It is read-only by
+default; `-- --remove <slug>...` or `-- --all-clean` removes the safe ones
+after a `[y/N]` confirm (`--yes` skips it), never forced. Add `--json` for
+machine output.
 
 `/pipelinely-handover` — end-of-session transfer: writes a continuation summary and
 opens a fresh tab that resumes the task.
@@ -123,6 +181,17 @@ opens a fresh tab that resumes the task.
 issue. It shows you the exact title and body first and posts only after you
 confirm; it leaves out file paths, repo names and task titles unless you ask
 for them.
+
+`/pipelinely-bookmark` — saves something from a session to read later, in any
+Claude tab. With no arguments it saves the previous answer verbatim, read from
+that session's own transcript; `/pipelinely-bookmark <pasted text>` saves a
+quote you paste (the model re-types it, so it is usually exact but not
+guaranteed); `/pipelinely-bookmark session [title]` saves a pointer to the
+current session. Each bookmark is one JSON file in
+`~/.config/pipelinely/bookmarks/` (override with `PIPELINELY_BOOKMARKS_DIR`).
+It cannot see text you highlighted in the terminal, so copy it and paste it
+after the command. List or remove bookmarks with `npm run bookmarks -- list`
+and `npm run bookmarks -- rm <id>`.
 
 ## Configuration
 
@@ -151,6 +220,9 @@ The dashboard binds to `127.0.0.1` by default, and its fonts are served by
 the dashboard itself, so loading it makes no third-party request. Reaching it
 from another device on your LAN or tailnet is opt-in via `PIPELINELY_HOST`
 (see "Network access" below).
+
+Bookmarks are files under `~/.config/pipelinely/bookmarks` on your Mac;
+Pipelinely never commits, publishes or uploads them.
 
 ## Network access
 

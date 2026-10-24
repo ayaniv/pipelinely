@@ -35,8 +35,9 @@ Fresh Opus 5, independent review of this task's tech-design.md.
 3. Check the verifier named in `VERIFY` is real — actually runnable in this repo — not a placeholder.
 4. Check per-milestone shippability: if milestone `M<n>` is merged in isolation (with only its declared `needs:` also merged), does it actually build/ship on its own? This is the crux of the review — `computeMilestones` in `taskParser.ts` trusts this dependency graph completely, so a hidden, undeclared dependency here means `pipelinely-dev` can be dispatched on a milestone whose real prerequisite code doesn't exist yet.
 5. Check the `## Summary` section: it must exist, be prose only (no `**QA Spec:**` line or tables inside it — the dashboard pins and strips everything under that heading verbatim, so anything but prose there renders in the wrong place), and still match the revised plan — a review round that changes scope must update it too.
-6. Fix anything wrong by revising `tech-design.md` **in place** — there is no separate plan-review-fixes stage.
-7. Append a `TIMELINE` line for stage `plan-review` with a round number (count existing `plan-review` `TIMELINE` entries + 1), e.g. `round 2: tightened M4's needs:, corrected verifier command`.
+6. Check the plan's Timetable section follows the pipeline's order: dev → CR → CR fixes → QA → QA fixes → merge. QA comes after CR and CR fixes, never before them.
+7. Fix anything wrong by revising `tech-design.md` **in place** — there is no separate plan-review-fixes stage.
+8. Append a `TIMELINE` line for stage `plan-review` with a round number (count existing `plan-review` `TIMELINE` entries + 1), e.g. `round 2: tightened M4's needs:, corrected verifier command`.
 
 ## Engineering Constraints (required)
 - **Test coverage:** cover all new functionality with tests for both happy and failure paths, using the repo's existing test framework.

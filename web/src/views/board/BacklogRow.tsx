@@ -3,6 +3,7 @@ import type { BacklogItem } from '../../../../src/types'
 import { postBacklogDispatch, postBacklogResume } from '../../api/backlogActions'
 import type { PostActionOptions } from '../../api/actions'
 import { EditIcon, PlayIcon, TrashIcon } from '../../components/icons'
+import { formatBacklogDate } from '../../format'
 import { READ_ONLY_INSTANCE_TITLE } from '../../components/readOnly'
 import { ERROR_FLASH_MS, useActionFlash } from '../../components/useActionFlash'
 
@@ -145,7 +146,7 @@ export function BacklogRow({
         {editForm ?? (
           <>
             {renderLeading()}
-            <span className="backlog-row-date" data-testid="backlog-row-date">{item.date ?? ''}</span>
+            <span className="backlog-row-date" data-testid="backlog-row-date" title={item.date ?? undefined}>{formatBacklogDate(item.date ?? '')}</span>
             <div className="backlog-row-main">
               <div className="backlog-row-title-line">
                 {item.project ? <span className="card-slug-project backlog-row-project" data-testid="backlog-row-project">{item.project}</span> : null}
@@ -158,7 +159,7 @@ export function BacklogRow({
                 <button type="button" className="card-icon-btn backlog-icon-btn" data-testid="backlog-edit-btn" data-index={index} title="Edit" onClick={onStartEdit}><EditIcon /></button>
               ) : null}
               <button
-                type="button" className={`card-icon-btn backlog-icon-btn${deleteFailureLabel ? ' btn-err' : ''}`} data-testid="backlog-dismiss-btn" data-index={index}
+                type="button" className={`card-icon-btn backlog-icon-btn is-delete${deleteFailureLabel ? ' btn-err' : ''}`} data-testid="backlog-dismiss-btn" data-index={index}
                 aria-label="Waive task" title={deleteFailureLabel ?? 'Waive task'} disabled={isDeleting} onClick={onRequestDelete}
               >
                 <TrashIcon />

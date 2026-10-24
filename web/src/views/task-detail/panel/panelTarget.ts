@@ -1,7 +1,7 @@
-import type { Task } from '../../../../../src/types'
+import type { MilestoneStatus, Task } from '../../../../../src/types'
 import { isMilestoneReadyForDev } from '../../../../../src/nextStageCta'
 import { MILESTONE_STATE_LABEL, milestoneChildSlug } from '../../../milestoneModel'
-import { FLAT_CHAIN_STAGES, MILESTONE_CHAIN_STAGES, isStagePanelTabId, resolveStageTab, type StagePanelTabId } from '../../../pipelineStages'
+import { MILESTONE_CHAIN_STAGES, chainStagesFor, isStagePanelTabId, resolveStageTab, stageChainKindFor, type StagePanelTabId } from '../../../pipelineStages'
 import { isFanoutParent } from '../../../taskScope'
 import type { TaskDetailNav } from '../detailNav'
 import type { PlanStage } from './PlanTab'
@@ -10,12 +10,18 @@ import type { StagePanelExtra } from './stageBodies'
 // What the panel slot shows for one open task, as a typed value the view
 // switches over.
 
+export type ParentMilestoneStage = 'cr' | 'qa' | 'merge'
+
 export type PanelTarget =
   | { kind: 'none' }
   // A milestone child opened on its own, before its parent (which holds its
   // declaration) has arrived in the snapshot.
   | { kind: 'loading-milestone' }
   | { kind: 'plan'; task: Task; stage: PlanStage }
+  // A fan-out parent's Dev body: the project summary and the wave graph.
+  | { kind: 'milestone-graph'; task: Task }
+  // A fan-out parent's Code review, QA or Merge: the milestones sitting there.
+  | { kind: 'parent-stage'; stage: ParentMilestoneStage; milestones: MilestoneStatus[] }
   | { kind: 'stage'; tab: StagePanelTabId; child: Task | null; extra: StagePanelExtra }
 
 // A flat task has no declared dependencies, so its dispatch block carries
@@ -28,16 +34,20 @@ function flatStateLabel(task: Task): string {
 
 function fanoutTarget(task: Task, nav: TaskDetailNav): PanelTarget {
   switch (nav.l1Tab) {
-    case 'plan':
+    case 'planning':
       return { kind: 'plan', task, stage: 'planning' }
     case 'plan-review':
       return { kind: 'plan', task, stage: 'plan-review' }
+    case 'cr':
+    case 'qa':
+    case 'merge':
+      return { kind: 'parent-stage', stage: nav.l1Tab, milestones: task.milestones ?? [] }
     case 'dev': {
       const milestones = task.milestones ?? []
       const milestone = milestones.find((m) => m.id === nav.milestoneId)
       // The plan can lose a milestone between renders (an edit to
-      // tech-design.md), so nothing drilled into is a valid state.
-      if (!milestone) return { kind: 'none' }
+      // tech-design.md), so a drill-down into one that is gone is no drill-down.
+      if (!milestone) return { kind: 'milestone-graph', task }
 
       const tab = resolveStageTab(nav.l2Tab, MILESTONE_CHAIN_STAGES, milestone.task)
       return {
@@ -65,7 +75,7 @@ function milestoneChildTarget(task: Task, nav: TaskDetailNav, allTasks: Task[]):
 }
 
 function flatTarget(task: Task, nav: TaskDetailNav): PanelTarget {
-  const tab = resolveStageTab(nav.l2Tab, FLAT_CHAIN_STAGES, task)
+  const tab = resolveStageTab(nav.l2Tab, chainStagesFor(stageChainKindFor(task)), task)
   if (isStagePanelTabId(tab)) return { kind: 'stage', tab, child: task, extra: { needs: null, stateLabel: flatStateLabel(task) } }
   return { kind: 'plan', task, stage: tab }
 }

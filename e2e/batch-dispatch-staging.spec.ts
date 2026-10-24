@@ -18,8 +18,8 @@ import { startCanonicalServer, stopCanonicalServer } from './fixtures/canonicalS
 // them this way is what lets the regression that matters (no auto-submit) run
 // in the local-safe suite at all.
 //
-// The `data-testid` selectors below are the existing ones (`wave-batch-btn`,
-// `ms-dispatch-status`, `backlog-run-selected-btn`, `backlog-batch-bar`); no
+// The `data-testid` selectors below are the existing ones (`run-next-wave-btn`,
+// `run-next-wave-status`, `backlog-run-selected-btn`, `backlog-batch-bar`); no
 // assertion selects by visible copy.
 
 const PARENT = 'wave-batch-parent'
@@ -27,11 +27,10 @@ const PARENT = 'wave-batch-parent'
 // wave-batch-parent's wave 2 holds M1 and M2, both `needs: M0` with M0 merged
 // — the "two queued, unblocked milestones in one wave" shape this feature is
 // for. See e2e/fixtures/tasks/wave-batch-parent/tech-design.md.
-const WAVE = 2
 const WAVE_SLUGS = [`${PARENT}-m1`, `${PARENT}-m2`]
 
 // The wave-batch and backlog "Run selected" buttons this file clicks are
-// both canonical-dispatch-gate's proactively-disabled CTAs (see MilestoneGraph.tsx and
+// both canonical-dispatch-gate's proactively-disabled CTAs (see WavePanel.tsx and
 // BacklogView.tsx) — this suite's own shared webServer
 // (playwright.config.ts) deliberately never sets COCKPIT_DISPATCH_ENABLED,
 // so every test here runs its own dedicated, canonical instance of
@@ -49,20 +48,19 @@ test.afterAll(async () => {
 
 async function openWaves(page: Page): Promise<void> {
   await page.goto(`${canonicalUrl}/`)
-  await page.locator(`.card[data-slug="${PARENT}"] .card-title`).click()
+  await page.goto(`${canonicalUrl}/task/${PARENT}`)
   await expect(page.getByTestId('task-detail')).toBeVisible()
-  await page.getByTestId('l1-tab-dev').click()
-  await expect(page.getByTestId('wave').first()).toBeVisible()
+  await page.getByTestId('stage-chain-dev').click()
+  await expect(page.getByTestId('wave-graph')).toBeVisible()
 }
 
-function waveBatchBtn(page: Page) {
-  return page.locator(`[data-testid="wave"][data-wave="${WAVE}"] [data-testid="wave-batch-btn"]`)
+function runNextWaveBtn(page: Page) {
+  return page.getByTestId('run-next-wave-btn')
 }
 
-function msDispatchStatus(page: Page, milestoneId: string) {
-  return page.locator(
-    `[data-testid="milestone-card"][data-milestone-id="${milestoneId}"] [data-testid="ms-dispatch-status"]`,
-  )
+// One outcome for the whole batch: it stages, or it doesn't.
+function runNextWaveStatus(page: Page) {
+  return page.getByTestId('run-next-wave-status')
 }
 
 interface RecordedPosts {
@@ -108,12 +106,12 @@ async function stubBatchDispatch(page: Page, status: number, body?: unknown): Pr
 }
 
 test.describe('wave batch stages one combined command', () => {
-  test('Run wave sends exactly one /batch-dispatch carrying every eligible milestone, and never /pipelinely-dev', async ({ page }) => {
+  test('Run next wave sends exactly one /batch-dispatch carrying every eligible milestone, and never /pipelinely-dev', async ({ page }) => {
     const posts = recordDispatchPosts(page)
     await stubBatchDispatch(page, 200)
     await openWaves(page)
 
-    await waveBatchBtn(page).click()
+    await runNextWaveBtn(page).click()
     await expect.poll(() => posts.batch.length).toBe(1)
 
     // The whole point of the change: ONE request for the wave, not one per
@@ -122,27 +120,25 @@ test.describe('wave batch stages one combined command', () => {
     expect(posts.cockpitDevSlugs).toEqual([])
   })
 
-  test('every milestone in the batch reports "staged", never "sent" — nothing has run yet', async ({ page }) => {
+  test('the batch reports "staged", never "sent" — nothing has run yet', async ({ page }) => {
     await stubBatchDispatch(page, 200)
     await openWaves(page)
 
-    await waveBatchBtn(page).click()
+    await runNextWaveBtn(page).click()
 
-    for (const milestoneId of ['M1', 'M2']) {
-      await expect(msDispatchStatus(page, milestoneId)).toHaveText('staged')
-    }
+    await expect(runNextWaveStatus(page)).toHaveText('staged')
   })
 
-  test('a 503 from the server leaves the wave button usable again and says so on each card', async ({ page }) => {
+  test('a 503 from the server leaves the Run next wave button usable again and says so', async ({ page }) => {
     await stubBatchDispatch(page, 503, { error: 'Orchestrator not running — no ORCHESTRATOR_SESSION found' })
     await openWaves(page)
 
-    await waveBatchBtn(page).click()
+    await runNextWaveBtn(page).click()
 
-    await expect(msDispatchStatus(page, 'M1')).toHaveText('no orchestrator')
+    await expect(runNextWaveStatus(page)).toHaveText('no orchestrator')
     // Re-enabled, not stranded disabled: a failed batch must be one click to
     // retry, matching the pre-existing per-item failure posture.
-    await expect(waveBatchBtn(page)).toBeEnabled()
+    await expect(runNextWaveBtn(page)).toBeEnabled()
   })
 })
 

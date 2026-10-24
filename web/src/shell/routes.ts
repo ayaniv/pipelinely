@@ -3,7 +3,7 @@
 // server can't import each other. routes.test.ts guards the two from
 // drifting apart, the same way boardTabRoutes.test.tsx guards the board
 // tabs (derived from this table) against it.
-export type ShellRouteId = 'inprogress' | 'backlog' | 'done' | 'you' | 'settings' | 'help' | 'docs' | 'task'
+export type ShellRouteId = 'inprogress' | 'backlog' | 'done' | 'usage' | 'settings' | 'help' | 'docs' | 'bookmarks' | 'task'
 
 export interface ShellRoute {
   id: ShellRouteId
@@ -17,10 +17,11 @@ export const SHELL_ROUTES: ShellRoute[] = [
   { id: 'inprogress', path: '/' },
   { id: 'backlog', path: '/backlog' },
   { id: 'done', path: '/done' },
-  { id: 'you', path: '/you' },
+  { id: 'usage', path: '/usage' },
   { id: 'settings', path: '/settings' },
   { id: 'help', path: '/help' },
   { id: 'docs', path: '/docs' },
+  { id: 'bookmarks', path: '/bookmarks' },
   { id: 'task', path: '/task/:slug' },
 ]
 
@@ -29,6 +30,12 @@ const STATIC_ROUTE_BY_PATH = new Map<string, ShellRouteId>(
 )
 
 const TASK_PATH = /^\/task\/[^/]+\/?$/
+
+// matchShellRoute is an exact match, so callers that accept a trailing slash
+// (/usage/ is the same page as /usage) strip it first, through this one rule.
+export function stripTrailingSlash(pathname: string): string {
+  return pathname.length > 1 ? pathname.replace(/\/$/, '') : pathname
+}
 
 export function matchShellRoute(pathname: string): ShellRouteId | null {
   const staticId = STATIC_ROUTE_BY_PATH.get(pathname)

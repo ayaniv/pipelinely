@@ -7,16 +7,17 @@ import { HelpPage } from './HelpPage'
 import { SNAPSHOT_QUERY_KEY } from '../../data/snapshot'
 import { autoSubmitStore } from '../../data/autoSubmit'
 import { rememberBoardTab } from '../board/boardTabRoutes'
+import type { QaStartPolicy } from '../../../../src/types'
 
 function LocationProbe() {
   return <span data-testid="location">{useLocation().pathname}</span>
 }
 
-function renderPage(path: string, element: React.ReactElement, autoMode = false) {
+function renderPage(path: string, element: React.ReactElement, autoMode = false, creaturePlacement: 'header' | 'off' = 'header', weeklyFocusEnabled = true, qaStartPolicy?: QaStartPolicy) {
   const queryClient = new QueryClient()
   queryClient.setQueryData(SNAPSHOT_QUERY_KEY, {
     tasks: [], activeProject: null, weeklyFocus: '', backlog: [], doneGroups: [],
-    settings: { autoMode }, orchestratorContextPct: null, isCanonical: true,
+    settings: { autoMode, creaturePlacement, weeklyFocusEnabled, qaStartPolicy }, orchestratorContextPct: null, isCanonical: true,
   })
   const utils = render(
     <QueryClientProvider client={queryClient}>
@@ -127,6 +128,38 @@ describe('SettingsPage', () => {
   })
 })
 
+describe('SettingsPage — task creatures', () => {
+  test('the switch reflects the placement: on for the header, off for off', () => {
+    const { unmount } = renderPage('/settings', <SettingsPage />, false, 'header')
+    expect(screen.getByTestId('settings-creatures-switch')).toBeChecked()
+    unmount()
+    renderPage('/settings', <SettingsPage />, false, 'off')
+    expect(screen.getByTestId('settings-creatures-switch')).not.toBeChecked()
+  })
+
+  test('toggling posts only the placement and flips the switch at once', async () => {
+    const fetchMock = stubFetch(200)
+    renderPage('/settings', <SettingsPage />, true, 'header')
+    fireEvent.click(screen.getByTestId('settings-creatures-switch'))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/settings', expect.objectContaining({ body: JSON.stringify({ creaturePlacement: 'off' }) })))
+    expect(screen.getByTestId('settings-creatures-switch')).not.toBeChecked()
+  })
+
+  test('a failed write reverts the switch and logs', async () => {
+    stubFetch(500)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    renderPage('/settings', <SettingsPage />, false, 'header')
+    fireEvent.click(screen.getByTestId('settings-creatures-switch'))
+    await waitFor(() => expect(screen.getByTestId('settings-creatures-switch')).toBeChecked())
+    expect(errorSpy).toHaveBeenCalledWith('[settings] POST /settings failed', expect.any(Error))
+  })
+
+  test('leaves the auto mode switch alone', () => {
+    renderPage('/settings', <SettingsPage />, true, 'off')
+    expect(screen.getByTestId('settings-auto-mode-switch')).toBeChecked()
+  })
+})
+
 describe('HelpPage', () => {
   test('the disclosure says it files a public GitHub issue, previewed and confirmed first, with no Pipelinely server', () => {
     renderPage('/help', <HelpPage />)
@@ -205,5 +238,90 @@ describe('SettingsPage — sign out of a remote session', () => {
     const form = button.closest('form')
     expect(form?.getAttribute('method')?.toLowerCase()).toBe('post')
     expect(form?.getAttribute('action')).toBe('/remote-logout')
+  })
+})
+
+describe('SettingsPage — weekly focus', () => {
+  test('the switch reflects the setting: on by default, off when disabled', () => {
+    const { unmount } = renderPage('/settings', <SettingsPage />, false, 'header', true)
+    expect(screen.getByTestId('settings-weekly-focus-switch')).toBeChecked()
+    unmount()
+    renderPage('/settings', <SettingsPage />, false, 'header', false)
+    expect(screen.getByTestId('settings-weekly-focus-switch')).not.toBeChecked()
+  })
+
+  test('is a labelled checkbox, so the keyboard can toggle it', () => {
+    renderPage('/settings', <SettingsPage />)
+    const toggle = screen.getByTestId('settings-weekly-focus-switch')
+    expect(toggle).toHaveAttribute('type', 'checkbox')
+    expect(toggle).toHaveAttribute('aria-label', 'Toggle weekly focus')
+    expect(screen.getByTestId('settings-weekly-focus-description')).toHaveTextContent(/focus/i)
+  })
+
+  test('toggling posts only the flag and flips the switch at once', async () => {
+    const fetchMock = stubFetch(200)
+    renderPage('/settings', <SettingsPage />)
+    fireEvent.click(screen.getByTestId('settings-weekly-focus-switch'))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/settings', expect.objectContaining({ body: JSON.stringify({ weeklyFocusEnabled: false }) })))
+    expect(screen.getByTestId('settings-weekly-focus-switch')).not.toBeChecked()
+  })
+
+  test('a failed write reverts the switch and logs', async () => {
+    stubFetch(500)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    renderPage('/settings', <SettingsPage />)
+    fireEvent.click(screen.getByTestId('settings-weekly-focus-switch'))
+    await waitFor(() => expect(screen.getByTestId('settings-weekly-focus-switch')).toBeChecked())
+    expect(errorSpy).toHaveBeenCalledWith('[settings] POST /settings failed', expect.any(Error))
+  })
+})
+
+describe('SettingsPage — QA start consent', () => {
+  const qaSwitch = () => screen.getByTestId('settings-qa-preapproval-switch')
+
+  test('is off when the setting is ask-every-time, and when a server predates it', () => {
+    const { unmount } = renderPage('/settings', <SettingsPage />, false, 'header', true, 'ask-every-time')
+    expect(qaSwitch()).not.toBeChecked()
+    unmount()
+    renderPage('/settings', <SettingsPage />, false, 'header', true, undefined)
+    expect(qaSwitch()).not.toBeChecked()
+  })
+
+  test('is on when the recorded setting pre-approves the ui project', () => {
+    renderPage('/settings', <SettingsPage />, false, 'header', true, 'cockpit-ai-ui-preapproved')
+    expect(qaSwitch()).toBeChecked()
+  })
+
+  test('turning it on posts only the recorded value', async () => {
+    const fetchMock = stubFetch(200)
+    renderPage('/settings', <SettingsPage />, false, 'header', true, 'ask-every-time')
+    fireEvent.click(qaSwitch())
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/settings', expect.objectContaining({ body: JSON.stringify({ qaStartPolicy: 'cockpit-ai-ui-preapproved' }) })))
+    expect(qaSwitch()).toBeChecked()
+  })
+
+  test('turning it off posts ask-every-time', async () => {
+    const fetchMock = stubFetch(200)
+    renderPage('/settings', <SettingsPage />, false, 'header', true, 'cockpit-ai-ui-preapproved')
+    fireEvent.click(qaSwitch())
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/settings', expect.objectContaining({ body: JSON.stringify({ qaStartPolicy: 'ask-every-time' }) })))
+    expect(qaSwitch()).not.toBeChecked()
+  })
+
+  test('a failed write reverts to the previous value and logs', async () => {
+    stubFetch(500)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    renderPage('/settings', <SettingsPage />, false, 'header', true, 'ask-every-time')
+    fireEvent.click(qaSwitch())
+    await waitFor(() => expect(qaSwitch()).not.toBeChecked())
+    expect(errorSpy).toHaveBeenCalledWith('[settings] POST /settings failed', expect.any(Error))
+  })
+
+  test('the auto mode switch is not consent: turning it on leaves QA asking', async () => {
+    stubFetch(200)
+    renderPage('/settings', <SettingsPage />, false, 'header', true, 'ask-every-time')
+    fireEvent.click(screen.getByTestId('settings-auto-mode-switch'))
+    await waitFor(() => expect(screen.getByTestId('settings-auto-mode-switch')).toBeChecked())
+    expect(qaSwitch()).not.toBeChecked()
   })
 })

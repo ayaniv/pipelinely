@@ -162,9 +162,7 @@ end tell`
 // Selects the tab/window before reading: `contents of aSession` for a
 // session that is not iTerm2's own "current" tab/window can return a stale
 // snapshot from the last time that pane was actually rendered, rather than
-// its live buffer — the read-side counterpart of the write-side race
-// `pasteIntoSession` (src/focusTab.ts) closes by confirming its own write
-// landed before returning. `select` only changes iTerm2's internal notion of
+// its live buffer. `select` only changes iTerm2's internal notion of
 // its current tab/window, not the OS-level frontmost app — no `activate`
 // here, since this runs inside `expect.poll` and would otherwise repeatedly
 // steal real OS focus on every poll tick, which is exactly what this whole
@@ -217,10 +215,9 @@ return ""`
 
 // The name of whatever application is frontmost right now. Used to prove a
 // negative that matters for the auto-submitted remote path: that writing into
-// a session did NOT raise iTerm2 to the OS foreground. pasteIntoSessionQuiet
-// (src/focusTab.ts) exists precisely so an unattended, phone-triggered
-// dispatch never jumps the developer's windows, and only a real frontmost
-// reading can show that it didn't.
+// a session did NOT raise iTerm2 to the OS foreground. An unattended,
+// phone-triggered dispatch (a tmux 'send') must never jump the developer's
+// windows, and only a real frontmost reading can show that it didn't.
 export async function frontmostAppName(): Promise<string> {
   const script = `tell application "System Events"
   return name of first application process whose frontmost is true
@@ -265,11 +262,25 @@ export async function createOrchestratorTmuxSession(name: string): Promise<void>
 // measured on this machine (tmux 3.7b), `capture-pane -t '=name'` with no
 // window/pane part errors "can't find pane" even though the session plainly
 // has one — `=name:` (session's current window, active pane) is what
-// actually resolves. See getTmuxPaneCommand's comment in focusTab.ts for the
-// same finding.
+// actually resolves. See readPaneState's comment in focusTab.ts for the same
+// finding.
+// `-J` joins soft-wrapped lines, so a long dispatch message can be matched as
+// one string.
 export async function readTmuxPaneContents(tmuxSession: string): Promise<string> {
-  const { stdout } = await execa('tmux', ['capture-pane', '-t', `=${tmuxSession}:`, '-p'])
+  const { stdout } = await execa('tmux', ['capture-pane', '-t', `=${tmuxSession}:`, '-p', '-J'])
   return stdout
+}
+
+// Whether Enter was pressed after the last paste into `tmuxSession`. The fake
+// claude never reads its tty, so the line discipline echoes a paste with the
+// cursor left right after it (at least the bracketed-paste end marker's
+// width, never column 0), and echoes a pressed Enter as a newline that
+// returns the cursor to column 0. Column 0 also holds on an empty pane or when
+// a paste exactly fills the pane width, so assert it only next to a
+// readTmuxPaneContents(...).toContain(...) check, never alone.
+export async function tmuxEnterWasPressed(tmuxSession: string): Promise<boolean> {
+  const { stdout } = await execa('tmux', ['display-message', '-p', '-t', `=${tmuxSession}:`, '#{cursor_x}'])
+  return Number(stdout.trim()) === 0
 }
 
 // Best-effort, for the same reason as closeScratchSession: a session the

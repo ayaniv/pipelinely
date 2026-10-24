@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
 import type { PlanTestGroup, ResultDoc, ResultDocMeta, Stage } from '../../../src/types'
 import type { StageScope } from '../../../src/stageScope'
+import type { BookmarkRecord } from '../views/pages/bookmarksModel'
 import type { Logger } from '../log'
 import { useSnapshot } from './snapshot'
 
@@ -221,4 +222,50 @@ export function useDocsGuide({ fetchImpl, log }: Partial<HookDeps> = {}): Resour
     retry: false,
   })
   return toResourceState(query)
+}
+
+export interface BookmarksResponse {
+  bookmarks: BookmarkRecord[]
+  // File names (never content) of bookmarks that could not be read.
+  unreadable: string[]
+}
+
+export const BOOKMARKS_QUERY_KEY = ['bookmarks'] as const
+
+// The server refuses bookmarks to anything but this Mac. That is expected on a
+// signed-in phone, so it is its own error and is not logged as a failure.
+export class BookmarksForbiddenError extends Error {
+  constructor() {
+    super('Bookmarks are only available on this Mac')
+    this.name = 'BookmarksForbiddenError'
+  }
+}
+
+export async function fetchBookmarks({ fetchImpl, log, signal }: ResourceFetchOptions): Promise<BookmarksResponse> {
+  try {
+    const res = await fetchImpl('/api/bookmarks', { signal })
+    if (res.status === 403) throw new BookmarksForbiddenError()
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return (await res.json()) as BookmarksResponse
+  } catch (err) {
+    if (!isAbort(err) && !(err instanceof BookmarksForbiddenError)) log('[bookmarks] load failed', err)
+    throw err
+  }
+}
+
+export type BookmarksState = ResourceState<BookmarksResponse> & { isForbidden: boolean }
+
+// The Bookmarks page and the sidebar's count share this one query. Unlike the
+// task resources it refetches when the page is opened or the window refocuses:
+// bookmarks are saved by the CLI from another tab, and nothing pushes them here.
+export function useBookmarks({ fetchImpl, log }: Partial<HookDeps> = {}): BookmarksState {
+  const impl = fetchImpl ?? fetch
+  const logger = log ?? console.error
+  const query = useQuery({
+    queryKey: BOOKMARKS_QUERY_KEY,
+    queryFn: ({ signal }) => fetchBookmarks({ fetchImpl: impl, log: logger, signal }),
+    retry: false,
+  })
+  const isForbidden = query.error instanceof BookmarksForbiddenError
+  return { ...toResourceState(query), isForbidden }
 }

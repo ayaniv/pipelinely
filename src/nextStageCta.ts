@@ -1,4 +1,4 @@
-import type { MilestoneStatus, Stage, StageEvent, Task } from './types.js'
+import type { MilestoneStatus, PipelineKind, PrMergeState, Stage, StageEvent, Task } from './types.js'
 
 // Pure next-stage derivations, split out of taskParser.ts so the React client
 // (web/) can import them without dragging in that module's node:fs/execa
@@ -51,6 +51,12 @@ export type NextStageInput = Pick<Task, 'status' | 'waitingReason'> & {
   // Set (to the reason) only when QA is not applicable to this task; see
   // assessQaNeed. Absent/null reads as "QA is needed", the safe default.
   qaSkipReason?: string | null
+  // The open PR's merge state (Task.prMergeState); absent reads as "no PR".
+  prMergeState?: PrMergeState
+  // TIMELINE's stage — only read to recognise a task already at merge.
+  stage?: Stage | null
+  // Absent reads as a dev task, exactly like a task with no KIND file.
+  kind?: PipelineKind
 }
 
 // Whether a review lists any comment. A non-empty parse mismatch (a header
@@ -89,7 +95,9 @@ export function isApprovedReviewAwaitingCommentDecision(task: NextStageInput): b
 // without being rewritten.
 export function matchTableEntry(task: NextStageInput): { marker: string; stage: Stage } | null {
   if (task.status !== 'waiting' || !task.waitingReason) return null
-  const match = NEXT_STAGE_BY_WAITING_REASON.find((m) => task.waitingReason!.includes(m.marker))
+  const waitingReason = task.waitingReason
+  const findIn = (table: readonly { marker: string; stage: Stage }[]) => table.find((m) => waitingReason.includes(m.marker))
+  const match = (task.kind === 'ds' ? findIn(DS_HANDOFFS) : undefined) ?? findIn(NEXT_STAGE_BY_WAITING_REASON)
   if (match && isApprovedReviewAwaitingCommentDecision(task)) return { marker: match.marker, stage: 'comment-fix' }
   return match ?? null
 }
@@ -101,11 +109,47 @@ export function isQaNotApplicable(task: NextStageInput): boolean {
   return matchTableEntry(task)?.stage === 'qa' && !!task.qaSkipReason
 }
 
-// The stage a task's waiting reason hands off to. A task whose QA is not
-// applicable has no next stage: there is nothing to dispatch, and the card
-// offers Merge instead (isCardMergeReady).
+// Whether the task's open PR conflicts with its base. 'unknown' (GitHub still
+// computing, or the read failed) is deliberately not a conflict: it must never
+// change what is offered. Gates that refuse regardless of STATUS (the board's
+// Merge, the Merge tab) read this directly.
+export function hasConflictingPr(task: Pick<NextStageInput, 'prMergeState'>): boolean {
+  return task.prMergeState === 'conflicting'
+}
+
+// TIMELINE stages that sit off the main pipeline line: entered from wherever
+// the task stood and handing back to it, so their lines record that something
+// ran, never where the task now is (computeStage skips them, and the stage
+// chain has no node for them).
+export const OFF_CHAIN_STAGES: readonly Stage[] = ['merge-conflicts']
+
+// The key auto mode would record for a conflicting task — never dispatched
+// (decideNextAction makes it a needs-you), named for symmetry with the
+// table's markers.
+export const MERGE_CONFLICTS_MARKER = 'PR conflicts with its base'
+
+// A conflicting PR comes before whatever would move it forward: a waiting
+// hand-off to the next pipeline stage, or the merge hand-off. Only a task that
+// is waiting at one of those — a working, done or shelved task, or one waiting
+// on an unrelated question, has nothing to replace. A merged ds task waiting
+// for adopt is not one of those: its PR is already in, so there is no
+// conflict left to fix whatever a stale read says.
+export function isBlockedByMergeConflicts(task: NextStageInput): boolean {
+  if (!hasConflictingPr(task) || task.status !== 'waiting') return false
+  const entry = matchTableEntry(task)
+  return (entry !== null && entry.stage !== 'adopt') || isAtMergeHandoff(task)
+}
+
+// The stage a task's waiting reason hands off to. A conflicting PR hands off
+// to the conflict fix first. A task whose QA is not applicable has no next
+// stage: there is nothing to dispatch, and the card offers Merge instead
+// (isCardMergeReady).
 export function matchWaitingReason(task: NextStageInput): { marker: string; stage: Stage } | null {
-  return isQaNotApplicable(task) ? null : matchTableEntry(task)
+  if (isBlockedByMergeConflicts(task)) return { marker: MERGE_CONFLICTS_MARKER, stage: 'merge-conflicts' }
+  const entry = matchTableEntry(task)
+  if (!isQaNotApplicable(task)) return entry
+  // A ds task has no QA to skip past: design QA is still owed.
+  return task.kind === 'ds' ? { marker: entry!.marker, stage: 'design-qa' } : null
 }
 
 // A card's "Run CR fixes" stages /pipelinely-cr-fixes with no selection of its
@@ -138,8 +182,8 @@ export function computeNextStageCta(task: NextStageInput): NextStageCta | null {
 // duplicating a second copy of it.
 export function isMilestoneReadyForDev(
   m: Pick<MilestoneStatus, 'needs' | 'state'>,
-  byId: Map<string, MilestoneStatus>,
-  parentStageHistory: StageEvent[],
+  byId: ReadonlyMap<string, Pick<MilestoneStatus, 'state'>>,
+  parentStageHistory: readonly StageEvent[],
 ): boolean {
   if (m.state !== 'queued') return false
   if (!parentStageHistory.some((e) => e.stage === 'plan-review')) return false
@@ -157,12 +201,65 @@ export function isReadyForResultReview(task: Pick<Task, 'status' | 'waitingReaso
   return task.status === 'waiting' && !!task.waitingReason?.includes(READY_FOR_DEVELOPER_REVIEW_MARKER)
 }
 
+// The phrase every merge hand-off STATUS ends with ("QA passed, ready to merge", the QA-skipped reason below).
+export const READY_TO_MERGE_MARKER = 'ready to merge'
+
+// Whether a STATUS reason is the merge hand-off itself: the marker is the whole
+// reason or its last clause ("QA passed, ready to merge"). A substring match
+// would also read "not ready to merge: CR blocking" as a hand-off.
+export function isReadyToMergeReason(reason: string | undefined): boolean {
+  const trimmed = (reason ?? '').trim()
+  return trimmed === READY_TO_MERGE_MARKER || trimmed.endsWith(`, ${READY_TO_MERGE_MARKER}`)
+}
+
+// Whether a task stands at the merge hand-off — the one question the board
+// card's Merge, the conflict check and the Merge tab's gate all ask. A dev task
+// is there at stage merge, with QA not applicable, or waiting on a
+// ready-to-merge reason. A ds task is there only on the designer's approval:
+// its stage reads merge after a merge too (while it waits for adopt, which must
+// not offer Merge again), and a skipped or passed QA still owes design QA.
+export function isAtMergeHandoff(task: NextStageInput): boolean {
+  if (task.kind === 'ds') return task.status === 'waiting' && (task.waitingReason ?? '').trim().endsWith(DESIGN_APPROVED_MARKER)
+  return task.stage === 'merge' || isQaNotApplicable(task) || (task.status === 'waiting' && isReadyToMergeReason(task.waitingReason))
+}
+
 // STATUS phrase and TIMELINE note a skipped QA leaves behind. The status is
 // the same "ready to merge" hand-off a passing QA writes, reworded so the
 // developer can tell the two apart; the note's prefix is what computeStage
 // reads to put the task at merge instead of at a QA that never ran.
-export const QA_SKIPPED_STATUS_REASON = 'no QA needed, ready to merge'
+export const QA_SKIPPED_STATUS_REASON = `no QA needed, ${READY_TO_MERGE_MARKER}`
 export const QA_SKIPPED_NOTE_PREFIX = 'skipped'
+
+const QA_PASSED_MARKER = 'QA passed, ready to merge'
+const DESIGN_QA_DONE_MARKER = 'ready for design approval'
+export const DESIGN_CHANGES_REQUESTED_MARKER = 'triage and dispatch design-fixes'
+const DESIGN_FIXES_PUSHED_MARKER = 'design fixes pushed, ready to re-run design QA'
+// The designer's approval, written by POST /design-approval. For a ds task
+// this (and only this) is the merge hand-off; see isAtMergeHandoff.
+export const DESIGN_APPROVED_MARKER = 'design approved, ready to merge'
+
+// What a merged ds task waits on: mergeTask writes it as the STATUS reason
+// instead of done, and the adopt row below routes it.
+export const MERGED_FOR_ADOPT_MARKER = 'merged, ready for adopt'
+
+// The ds pipeline's own hand-offs, consulted before the shared table for a
+// ds task (see matchTableEntry). The two QA rows re-map markers the unchanged
+// pipelinely-qa skill writes, so design QA follows QA without teaching that skill
+// about kinds — the server is the one place that knows the ds order.
+export const DS_HANDOFFS: { marker: string; stage: Stage }[] = [
+  { marker: QA_PASSED_MARKER, stage: 'design-qa' },
+  { marker: QA_SKIPPED_STATUS_REASON, stage: 'design-qa' },
+  { marker: DESIGN_QA_DONE_MARKER, stage: 'design-approval' },
+  { marker: DESIGN_CHANGES_REQUESTED_MARKER, stage: 'design-fixes' },
+  { marker: DESIGN_FIXES_PUSHED_MARKER, stage: 'design-qa' },
+  { marker: MERGED_FOR_ADOPT_MARKER, stage: 'adopt' },
+]
+
+// Stages whose next step is a person's decision, not a skill: they match a
+// hand-off (so the stepper, default tab and auto mode all land on them) but
+// have no STAGE_SKILL entry, so a card must open the task instead of staging a
+// command that /stage-skill would refuse.
+export const HUMAN_GATE_STAGES: readonly Stage[] = ['design-approval']
 
 // What QA would actually run: an e2e/Playwright command in VERIFY, or a spec
 // file in the PR's diff. Unit tests and typechecks are not QA's job — dev

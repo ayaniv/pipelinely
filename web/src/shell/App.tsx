@@ -7,6 +7,7 @@ import { TaskDetail } from '../views/task-detail/TaskDetail'
 import { SettingsPage } from '../views/pages/SettingsPage'
 import { HelpPage } from '../views/pages/HelpPage'
 import { DocsPage } from '../views/pages/DocsPage'
+import { BookmarksPage } from '../views/pages/BookmarksPage'
 
 // One child route per SHELL_ROUTES entry (`/task/:slug`'s `:slug` param
 // matches react-router's own syntax, same as server.ts's Express route), plus
@@ -20,7 +21,7 @@ const ELEMENT_BY_ROUTE_ID: Partial<Record<ShellRouteId, ReactNode>> = {
       <TaskDetail />
     </ViewBoundary>
   ),
-  // The three full pages the sidebar opens.
+  // The full pages the sidebar opens.
   settings: (
     <ViewBoundary view="settings">
       <SettingsPage />
@@ -34,6 +35,11 @@ const ELEMENT_BY_ROUTE_ID: Partial<Record<ShellRouteId, ReactNode>> = {
   docs: (
     <ViewBoundary view="docs">
       <DocsPage />
+    </ViewBoundary>
+  ),
+  bookmarks: (
+    <ViewBoundary view="bookmarks">
+      <BookmarksPage />
     </ViewBoundary>
   ),
 }

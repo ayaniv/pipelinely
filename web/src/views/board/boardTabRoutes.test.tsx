@@ -16,20 +16,20 @@ describe('board tab routes', () => {
     expect(boardTabUrl('inprogress')).toBe('/')
     expect(boardTabUrl('backlog')).toBe('/backlog')
     expect(boardTabUrl('done')).toBe('/done')
-    expect(boardTabUrl('you')).toBe('/you')
+    expect(boardTabUrl('usage')).toBe('/usage')
   })
 
   test.each([
     ['/', 'inprogress'],
     ['/backlog', 'backlog'],
     ['/done', 'done'],
-    ['/you', 'you'],
-    ['/you/', 'you'],
+    ['/usage', 'usage'],
+    ['/usage/', 'usage'],
   ])('%s is the %s tab', (pathname, tab) => {
     expect(matchBoardTab(pathname)).toBe(tab)
   })
 
-  test.each(['/settings', '/help', '/docs', '/task/some-slug', '/nowhere', '/inprogress'])('%s is not a board tab route', (pathname) => {
+  test.each(['/settings', '/help', '/docs', '/bookmarks', '/task/some-slug', '/nowhere', '/inprogress'])('%s is not a board tab route', (pathname) => {
     expect(matchBoardTab(pathname)).toBeNull()
   })
 })

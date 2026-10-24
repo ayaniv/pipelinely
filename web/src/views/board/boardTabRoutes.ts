@@ -1,13 +1,13 @@
 import { useLayoutEffect, useState } from 'react'
 import { useLocation } from 'react-router'
-import { SHELL_ROUTES, matchShellRoute, type ShellRouteId } from '../../shell/routes'
+import { SHELL_ROUTES, matchShellRoute, stripTrailingSlash, type ShellRouteId } from '../../shell/routes'
 
 // The board's four tabs. Each is a real page (own URL, back/forward,
 // shareable), so this is derived from the shell's route table — the one
 // record the server's routes are checked against — instead of keeping a
 // second list that could drift from it. The default tab is the one that
 // lives at bare '/', matching '/' already being the app's home route.
-export const BOARD_TABS = ['inprogress', 'backlog', 'done', 'you'] as const satisfies readonly ShellRouteId[]
+export const BOARD_TABS = ['inprogress', 'backlog', 'done', 'usage'] as const satisfies readonly ShellRouteId[]
 export type BoardTab = (typeof BOARD_TABS)[number]
 export const DEFAULT_BOARD_TAB: BoardTab = 'inprogress'
 
@@ -22,8 +22,7 @@ const isBoardTab = (id: ShellRouteId | null): id is BoardTab => id !== null && (
 // null for any path that isn't a board tab (/task/<slug>, /settings, …), so
 // callers can tell "not a tab route" from "the default tab's route".
 export function matchBoardTab(pathname: string): BoardTab | null {
-  const normalized = pathname.length > 1 ? pathname.replace(/\/$/, '') : pathname
-  const id = matchShellRoute(normalized)
+  const id = matchShellRoute(stripTrailingSlash(pathname))
   return isBoardTab(id) ? id : null
 }
 

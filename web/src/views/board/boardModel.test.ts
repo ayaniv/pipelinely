@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import type { BacklogItem, DoneDateGroup } from '../../../../src/types'
 import {
-  activeTasksOf, countDoneTasks, groupActiveTasks, narrowByProject, projectOptions, pulseCounts, standupText, visibleBacklogRows,
+  ACTIVE_GROUPS, activeTasksOf, cardGridColumns, countDoneTasks, groupActiveTasks, narrowByProject, offFocusCount, partitionParents, projectOptions, pulseCounts, standupText, visibleBacklogRows,
   visibleDoneGroups, weekRangeLabel,
 } from './boardModel'
 import { makeTask } from './testTask'
@@ -159,5 +159,66 @@ describe('standupText', () => {
     expect(standupText([])).toBeNull()
     expect(standupText([{ ...todayGroup(['x']), label: 'Yesterday' }])).toBeNull()
     expect(standupText([todayGroup([])])).toBeNull()
+  })
+})
+
+describe('card grid columns', () => {
+  test('Needs-you groups ask for 420px and Working groups for 300px', () => {
+    expect(ACTIVE_GROUPS.map((group) => [group.testId, group.minCardPx])).toEqual([['active-group-needs', 420], ['active-group-working', 300]])
+  })
+
+  test('caps the minimum at the container width so a phone does not overflow', () => {
+    expect(cardGridColumns(420)).toBe('repeat(auto-fill, minmax(min(100%, 420px), 1fr))')
+  })
+})
+
+describe('offFocusCount', () => {
+  const tasks = [makeTask({ slug: 'a' }), makeTask({ slug: 'b' }), makeTask({ slug: 'c' })]
+
+  test('counts only the visible tasks whose slug is marked off focus', () => {
+    expect(offFocusCount(tasks, new Set(['a', 'c']))).toBe(2)
+  })
+
+  test('ignores off-focus slugs that are not among the visible tasks', () => {
+    expect(offFocusCount(tasks, new Set(['elsewhere', 'a']))).toBe(1)
+  })
+
+  test('is zero when nothing is marked off focus', () => {
+    expect(offFocusCount(tasks, new Set())).toBe(0)
+    expect(offFocusCount([], new Set(['a']))).toBe(0)
+  })
+})
+
+describe('partitionParents', () => {
+  const milestone = (state: 'queued' | 'dispatched' | 'done') => ({ id: 'M1', name: 'n', needs: [], estimate: null, specFile: null, wave: 1, task: null, state })
+  const PLAN_REVIEWED = [{ stage: 'plan-review' as const, at: '2026-01-01T00:00:00Z', note: '' }]
+  const approvedParent = (slug: string, state: 'queued' | 'dispatched' | 'done') => makeTask({ slug, milestones: [milestone(state)], stageHistory: PLAN_REVIEWED })
+
+  test('splits plan-approved parents from the tasks that get cards, keeping order in both', () => {
+    const tasks = [makeTask({ slug: 'leaf-1' }), approvedParent('p1', 'done'), makeTask({ slug: 'leaf-2' }), approvedParent('p2', 'dispatched')]
+    const { parents, leaves } = partitionParents(tasks)
+    expect(parents.map((t) => t.slug)).toEqual(['p1', 'p2'])
+    expect(leaves.map((t) => t.slug)).toEqual(['leaf-1', 'leaf-2'])
+  })
+
+  test('a plan-approved parent whose first wave has not started goes to the Backlog list, in neither the section nor the cards', () => {
+    const notStarted = makeTask({ slug: 'queued-parent', milestones: [milestone('queued'), milestone('queued')], stageHistory: PLAN_REVIEWED })
+    const { parents, unstartedParents, leaves } = partitionParents([notStarted, approvedParent('running', 'dispatched'), makeTask({ slug: 'leaf' })])
+    expect(unstartedParents.map((t) => t.slug)).toEqual(['queued-parent'])
+    expect(parents.map((t) => t.slug)).toEqual(['running'])
+    expect(leaves.map((t) => t.slug)).toEqual(['leaf'])
+  })
+
+  test('a task with an empty milestones array is a plain task', () => {
+    const { parents, leaves } = partitionParents([makeTask({ slug: 'a', milestones: [], stageHistory: PLAN_REVIEWED })])
+    expect(parents).toEqual([])
+    expect(leaves.map((t) => t.slug)).toEqual(['a'])
+  })
+
+  test('a task with milestones whose plan review has not happened stays a card, so its plan-review CTA stays on the board', () => {
+    const awaitingReview = makeTask({ slug: 'plan-ready', milestones: [milestone('queued')], status: 'waiting', waitingReason: 'plan ready for review' })
+    const { parents, leaves } = partitionParents([awaitingReview])
+    expect(parents).toEqual([])
+    expect(leaves.map((t) => t.slug)).toEqual(['plan-ready'])
   })
 })

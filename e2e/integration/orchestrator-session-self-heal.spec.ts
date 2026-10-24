@@ -7,7 +7,6 @@ import {
   openScratchSession,
   closeScratchSession,
   closeScratchTab,
-  readSessionContents,
   createTmuxSession,
   createOrchestratorTmuxSession,
   readTmuxPaneContents,
@@ -18,40 +17,29 @@ import {
 } from '../fixtures/itermSessions.js'
 import { startCanonicalServer, stopCanonicalServer } from '../fixtures/canonicalServer.js'
 
-// Covers two related gaps, both about the orchestrator's OWN tab dying while
-// its tmux session keeps running (a remote client reattaching from
-// Termius/a phone drops the Mac-side tab; a Mac restart; iTerm quitting; the
-// tab closed by accident):
+// Covers the orchestrator's OWN tab dying while its tmux session keeps
+// running (a remote client reattaching from Termius/a phone drops the Mac-side
+// tab; a Mac restart; iTerm quitting; the tab closed by accident), now that
+// every dispatch write goes into the tmux pane named by ORCHESTRATOR_TMUX and
+// never through an iTerm2 tab:
 //
-//  1. POST /stage-skill/:slug — the card's "Start <stage>" CTA — read
-//     ORCHESTRATOR_SESSION raw and called stageInSession with no liveness
-//     check and no reattach, so a dead pointer produced a bare 503 with no
-//     recovery path. This is the failure actually hit in production. The
-//     sibling routes (/backlog/dispatch, /focus/:slug's fallback) already
-//     self-healed through pasteToOrchestrator; this route was the one that
-//     didn't, as pasteToOrchestrator's own comment noted. It now shares that
-//     helper, generalized over the writer (stage-unsent vs paste-and-send).
+//  1. POST /stage-skill/:slug — the card's "Start <stage>" CTA — writes into
+//     the recorded tmux pane whatever state ORCHESTRATOR_SESSION is in, so a
+//     dead tab pointer is no longer a dead end. After the write the server
+//     re-records the tab really attached to that tmux session (correcting a
+//     stale pointer) and, because a stage is only staged and unsent, brings
+//     that tab forward — reattaching one when none is attached, since a
+//     staged command nobody can find is useless.
 //
-//  2. The heal must not be disruptive. Found live: the recorded id was
-//     stale while the orchestrator's tab was on screen and correctly
-//     attached the whole time. Reattaching blindly there would detach that
-//     very tab (reattachTmuxSession uses `-d`) and open a redundant one, so
-//     an already-attached tab is adopted before any reattach is considered.
+//  2. Nothing is typed unless it is safe: no ORCHESTRATOR_TMUX on record, a
+//     recorded session that is gone, or a pane sitting at a bare shell all
+//     answer 503 and leave the pointer files and the pane untouched. There is
+//     no keystroke fallback to a tab.
 //
-//  3. There was no way to ask for the orchestrator's tab back WITHOUT
-//     dispatching something. POST /orchestrator/tab is that affordance,
-//     reusing reattachOrFocus — the same function the per-task "→ Terminal"
-//     button already uses, one level up.
-//
-//  4. Every liveness check above — including gap 2's adopt step — only
-//     confirms a tty is attached to ORCHESTRATOR_TMUX, never that the pane
-//     is actually running claude. Found live via the wave-batch "Run wave"
-//     button: it typed a raw /pipelinely-dev command into a bare zsh shell
-//     ("zsh: no such file or directory: /pipelinely-dev") because the tmux
-//     session had outlived the claude process that used to be in it.
-//     writeToOrchestrator now checks tmuxSessionRunningOrchestrator before
-//     attempting either adopt or reattach, and refuses — same as "no
-//     session" — rather than typing into whatever is actually there.
+//  3. POST /orchestrator/tab asks for the orchestrator's tab back WITHOUT
+//     dispatching anything. It reuses reattachOrFocus — the same function the
+//     per-task "→ Terminal" button uses, one level up — and is unchanged by
+//     the tmux writer.
 //
 // Real osascript/tmux throughout (no route mocking) — see
 // fixtures/itermSessions.ts for why. The scratch tmux session name is
@@ -103,8 +91,8 @@ async function withLiveTmuxSession(fn: () => Promise<void>): Promise<void> {
 
 // Same as withLiveTmuxSession, but the pane is genuinely running claude (via
 // createOrchestratorTmuxSession) rather than a bare shell — required for any
-// test asserting a heal SUCCEEDS, now that tmuxSessionRunningOrchestrator
-// gates reattach/adopt on the pane actually being the orchestrator.
+// test asserting a write SUCCEEDS, since the writer refuses a pane that is
+// not running claude with bracketed paste on.
 async function withOrchestratorTmuxSession(fn: () => Promise<void>): Promise<void> {
   await createOrchestratorTmuxSession(TMUX_SESSION_NAME)
   try {
@@ -156,20 +144,14 @@ async function withOrchestratorTmuxSession(fn: () => Promise<void>): Promise<voi
 // server that IS the developer's real canonical instance passes a canonical
 // check while still pointing at the real TASKS_DIR.
 //
-// Known-open, and deliberately not a reason to stay quarantined — neither can
+// Known-open, and deliberately not a reason to stay quarantined — it cannot
 // reach the real pointer files:
 //
-//  - src/focusTab.ts misdelivers synthetic keystrokes when the writing
-//    process differs from whatever opened the target windows (tasks/BACKLOG.md
-//    2026-09-06; orchestrator-pointer-race.spec.ts carries @pending tags for
-//    it). Bounded here: /stage-skill writes through stageInSession, which is
-//    `submit: false`, so a misdelivery leaves unsent text at some other tab's
-//    prompt and cannot fire a command.
 //  - countSessions() counts every iTerm2 session on the machine, so the
 //    "nothing new was opened" assertions below are racy while unrelated
 //    sessions open and close tabs.
 //
-// If a run shows either of those failing, tag that individual test @pending
+// If a run shows that failing, tag that individual test @pending
 // with the defect named — the way orchestrator-pointer-race.spec.ts does —
 // rather than re-quarantining the whole file.
 //
@@ -190,13 +172,13 @@ test.afterAll(async () => {
   await stopCanonicalServer(canonicalUrl)
 })
 
-test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
+test.describe('Start CTA — writes into the orchestrator tmux pane and re-records its tab', () => {
   // This dashboard is inherently macOS+iTerm2-only, and every test in this
   // block is specifically about real osascript/tmux integration behavior
-  // (reattach, adopt-instead-of-reattach, the stray-shell/"not running
-  // claude" gate) that a mock can't stand in for — that's the whole reason
-  // this file exists (see its own header).
-  test('recorded tab is dead but ORCHESTRATOR_TMUX is alive: reattaches, rewrites the pointer, and stages the command anyway', async ({ page }) => {
+  // (which tab gets recorded, brought forward or reattached after a tmux
+  // write) that a mock can't stand in for — that's the whole reason this file
+  // exists (see its own header).
+  test('recorded tab is dead and none is attached to ORCHESTRATOR_TMUX: stages in the pane, reattaches a tab, and rewrites the pointer', async ({ page }) => {
     await withOrchestratorSessionLock(async () => {
       await withOrchestratorTmuxSession(async () => {
         await fs.writeFile(ORCHESTRATOR_TMUX_PATH, TMUX_SESSION_NAME + '\n')
@@ -219,17 +201,17 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
           await expect(cta).toHaveClass(/btn-ok/)
           await expect(cta).not.toHaveClass(/btn-err/)
 
-          // The pointer file was rewritten to the newly-opened tab, so the
-          // NEXT dispatch hits the fast path instead of healing again.
+          // The command landed in the tmux pane itself, staged unsent.
+          await expect
+            .poll(() => readTmuxPaneContents(TMUX_SESSION_NAME))
+            .toContain('/pipelinely-dev dev-ready')
+
+          // A staged command nobody can find is useless, so a tab was
+          // reattached and the pointer file rewritten to it — the NEXT
+          // dispatch finds it already recorded.
           await expect.poll(readPointer).not.toBe(DEAD_SESSION_ID)
           healedSessionId = await readPointer()
           expect(healedSessionId).not.toBe('')
-
-          // And the command genuinely landed in that reattached tab —
-          // staged unsent, which is what stageInSession promises.
-          await expect
-            .poll(() => readSessionContents(healedSessionId))
-            .toContain('/pipelinely-dev dev-ready')
         } finally {
           if (healedSessionId) await closeScratchTab(healedSessionId)
           await clearPointers()
@@ -238,17 +220,15 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
     })
   })
 
-  test('recorded tab is live: stages directly, with no reattach and no pointer rewrite', async ({ page }) => {
+  test('recorded tab is live and attached to ORCHESTRATOR_TMUX: stages in the pane, with no new tab and no pointer rewrite', async ({ page }) => {
     await withOrchestratorSessionLock(async () => {
-      const sessionId = await openScratchSession()
-      try {
-        await withLiveTmuxSession(async () => {
-          // ORCHESTRATOR_TMUX deliberately points at a genuinely live tmux
-          // session here: if the fast path regressed into always healing,
-          // the pointer assertion below would catch it rather than the test
-          // passing because there was nothing to reattach to.
+      await withOrchestratorTmuxSession(async () => {
+        const sessionId = await openScratchSession()
+        try {
+          await attachSessionToTmux(sessionId, TMUX_SESSION_NAME)
           await fs.writeFile(ORCHESTRATOR_TMUX_PATH, TMUX_SESSION_NAME + '\n')
           await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
+          const tabsBefore = await countSessions()
           try {
             await openTask(page, 'dev-ready', canonicalUrl)
             const cta = page.getByTestId('l2-cta')
@@ -263,28 +243,29 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
             await expect(cta).toHaveClass(/btn-ok/)
 
             await expect
-              .poll(() => readSessionContents(sessionId))
+              .poll(() => readTmuxPaneContents(TMUX_SESSION_NAME))
               .toContain('/pipelinely-dev dev-ready')
 
-            // Untouched — the live path must not open a tab or rewrite this.
+            // Untouched — an already-correct pointer must not be rewritten,
+            // and the attached tab is brought forward rather than replaced.
             expect(await readPointer()).toBe(sessionId)
+            expect(await countSessions()).toBe(tabsBefore)
           } finally {
             await clearPointers()
           }
-        })
-      } finally {
-        await closeScratchSession(sessionId)
-      }
+        } finally {
+          await closeScratchSession(sessionId)
+        }
+      })
     })
   })
 
-  test('a live tab is already attached to ORCHESTRATOR_TMUX: adopts that tab instead of opening a second one', async ({ page }) => {
+  test('the recorded id is stale but a live tab is attached to ORCHESTRATOR_TMUX: the pointer is corrected to that tab and no second one opens', async ({ page }) => {
     // The state a real "Start Dev did nothing" report turned out to be in:
     // the orchestrator's tab was on screen and correctly attached the whole
-    // time, and only the recorded id was stale. Reattaching here would
-    // detach that very tab (reattachTmuxSession attaches with -d) and open a
-    // redundant one — a heal that disrupts a working setup. So the pointer
-    // must land on the EXISTING tab, and no new tab may appear.
+    // time, and only the recorded id was stale. Reattaching here would detach
+    // that very tab (reattachTmuxSession attaches with -d) and open a
+    // redundant one, so the pointer must land on the EXISTING tab.
     await withOrchestratorSessionLock(async () => {
       await withOrchestratorTmuxSession(async () => {
         const attachedSessionId = await openScratchSession()
@@ -305,13 +286,12 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
             ])
             expect(res.status()).toBe(200)
 
-            // Adopted, not reattached: the pointer names the tab that was
-            // already there...
-            await expect.poll(readPointer).toBe(attachedSessionId)
-            // ...the command landed in it...
+            // The command landed in the pane...
             await expect
-              .poll(() => readSessionContents(attachedSessionId))
+              .poll(() => readTmuxPaneContents(TMUX_SESSION_NAME))
               .toContain('/pipelinely-dev dev-ready')
+            // ...the pointer now names the tab that was already there...
+            await expect.poll(readPointer).toBe(attachedSessionId)
             // ...and nothing new was opened.
             expect(await countSessions()).toBe(tabsBefore)
           } finally {
@@ -324,13 +304,11 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
     })
   })
 
-  test('the recorded tab is genuinely attached to ORCHESTRATOR_TMUX, but that tmux session is a bare shell: refuses before ever writing', async ({ page }) => {
-    // Distinguishes "the gate is on the heal" from "the gate is on every
-    // write". The recorded session here is LIVE and really is a client of
-    // ORCHESTRATOR_TMUX, so without the step-0 gate ahead of the fast path
-    // this reproduces the reported symptom verbatim: the fast-path write
-    // lands straight into the shell and returns 200
-    // ("zsh: no such file or directory: /pipelinely-dev").
+  test('the recorded tab is attached to ORCHESTRATOR_TMUX, but that tmux session is a bare shell: refuses before ever writing', async ({ page }) => {
+    // The recorded session here is LIVE and really is a client of
+    // ORCHESTRATOR_TMUX, so a writer that only checked tab attachment would
+    // reproduce the reported symptom verbatim: the text lands straight in the
+    // shell ("zsh: no such file or directory: /pipelinely-dev") and returns 200.
     await withOrchestratorSessionLock(async () => {
       await withLiveTmuxSession(async () => {
         const liveTab = await openScratchSession()
@@ -344,9 +322,8 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
             expect((await res.json()).error).toMatch(/not running claude/i)
 
             // Pointer untouched, and — the whole point — nothing was typed
-            // into either the tracked tab or the raw tmux pane.
+            // into the pane the tracked tab is showing.
             expect(await readPointer()).toBe(liveTab)
-            await expect(readSessionContents(liveTab)).resolves.not.toContain('/pipelinely-dev')
             expect(await readTmuxPaneContents(TMUX_SESSION_NAME)).not.toContain('/pipelinely-dev')
           } finally {
             await clearPointers()
@@ -360,8 +337,7 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
 
   test('ORCHESTRATOR_TMUX is alive but its pane is a bare shell, not claude: fails clearly, never types into it', async ({ page }) => {
     // The wave-batch "Run wave" bug: the tmux session had outlived the
-    // claude process (crash / /exit / quit), so every prior liveness check
-    // (tty-attachment only) reattached anyway and typed the staged command
+    // claude process (crash / /exit / quit), and the staged command was typed
     // into a bare zsh prompt — "zsh: no such file or directory: /pipelinely-dev".
     // withLiveTmuxSession (not withOrchestratorTmuxSession) is deliberate
     // here: this is the "tmux alive, pane is a plain shell" state itself.
@@ -374,51 +350,17 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
           const res = await page.request.post(`${canonicalUrl}/stage-skill/dev-ready`, { data: { stage: 'dev' } })
           expect(res.status()).toBe(503)
           const { error } = await res.json()
-          // A distinct message from the generic "tab not found" — this is a
-          // live tmux session, just not one running the orchestrator.
+          // A distinct message from "not inside tmux" — this is a live tmux
+          // session, just not one running the orchestrator.
           expect(error).toMatch(/not running claude/i)
 
-          // Nothing was invented in place of the dead session, and — the
-          // whole point — no reattach was even attempted: no new tab opened,
-          // and the stray shell never saw the staged command.
+          // Nothing was invented in place of the dead session: no tab was
+          // reattached, and the stray shell never saw the staged command.
           expect(await readPointer()).toBe(DEAD_SESSION_ID)
           expect(await countSessions()).toBe(tabsBefore)
           expect(await readTmuxPaneContents(TMUX_SESSION_NAME)).not.toContain('/pipelinely-dev')
         } finally {
           await clearPointers()
-        }
-      })
-    })
-  })
-
-  test('a live tab is already attached to ORCHESTRATOR_TMUX, but its pane is a bare shell: does not adopt it either', async ({ page }) => {
-    // Same bug, via the adopt path instead of the reattach path — the
-    // process check has to gate both, since adopt is the cheaper heal step
-    // that runs first (see Change 3's ordering) and would otherwise type
-    // into the stray shell before reattach is even considered.
-    await withOrchestratorSessionLock(async () => {
-      await withLiveTmuxSession(async () => {
-        const attachedSessionId = await openScratchSession()
-        try {
-          await attachSessionToTmux(attachedSessionId, TMUX_SESSION_NAME)
-          await fs.writeFile(ORCHESTRATOR_TMUX_PATH, TMUX_SESSION_NAME + '\n')
-          await fs.writeFile(ORCHESTRATOR_SESSION_PATH, DEAD_SESSION_ID + '\n')
-          const tabsBefore = await countSessions()
-          try {
-            const res = await page.request.post(`${canonicalUrl}/stage-skill/dev-ready`, { data: { stage: 'dev' } })
-            expect(res.status()).toBe(503)
-            expect((await res.json()).error).toMatch(/not running claude/i)
-
-            // Not adopted: the pointer is untouched, the already-attached
-            // tab never received the command, and nothing new opened.
-            expect(await readPointer()).toBe(DEAD_SESSION_ID)
-            await expect(readSessionContents(attachedSessionId)).resolves.not.toContain('/pipelinely-dev')
-            expect(await countSessions()).toBe(tabsBefore)
-          } finally {
-            await clearPointers()
-          }
-        } finally {
-          await closeScratchSession(attachedSessionId)
         }
       })
     })
@@ -435,7 +377,7 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
         const res = await page.request.post(`${canonicalUrl}/stage-skill/dev-ready`, { data: { stage: 'dev' } })
         expect(res.status()).toBe(503)
         const { error } = await res.json()
-        expect(error).toMatch(/orchestrator tab not found/i)
+        expect(error).toMatch(/not running inside tmux/i)
 
         await cta.click()
         await expect(cta).toHaveClass(/btn-err/)
@@ -463,7 +405,7 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
       try {
         const res = await page.request.post(`${canonicalUrl}/stage-skill/dev-ready`, { data: { stage: 'dev' } })
         expect(res.status()).toBe(503)
-        expect((await res.json()).error).toMatch(/orchestrator tab not found/i)
+        expect((await res.json()).error).toMatch(/not running inside tmux/i)
         // Nothing was invented in place of the dead session.
         expect(await readPointer()).toBe(DEAD_SESSION_ID)
       } finally {
@@ -472,12 +414,16 @@ test.describe('Start CTA — self-heals a dead ORCHESTRATOR_SESSION', () => {
     })
   })
 
-  test('no ORCHESTRATOR_SESSION at all: still the distinct "not running" message, not the dead-tab one', async ({ page }) => {
+  test('nothing on record at all: the same "not inside tmux" 503, with no pointer invented', async ({ page }) => {
+    // ORCHESTRATOR_SESSION no longer decides anything for a write, so its
+    // absence has no message of its own — only the missing ORCHESTRATOR_TMUX
+    // does.
     await withOrchestratorSessionLock(async () => {
       await clearPointers()
       const res = await page.request.post(`${canonicalUrl}/stage-skill/dev-ready`, { data: { stage: 'dev' } })
       expect(res.status()).toBe(503)
-      expect((await res.json()).error).toMatch(/orchestrator not running/i)
+      expect((await res.json()).error).toMatch(/not running inside tmux/i)
+      expect(await readPointer()).toBe('')
     })
   })
 })

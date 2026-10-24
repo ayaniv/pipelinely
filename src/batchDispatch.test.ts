@@ -2,12 +2,11 @@ import { describe, it, expect } from 'vitest'
 import { composeBatchMessage, renderBacklogProjectClause } from './batchDispatch.js'
 
 // composeBatchMessage is the one place the no-auto-submit safety property
-// actually depends on: its output is typed straight into the developer's
-// live orchestrator session via stageInSession, so "unusable input becomes
-// null" has to hold for malformed input, not only empty input — and "the
-// result never contains a newline" has to hold unconditionally, since an
-// embedded \n reaches iTerm2 as a real LF keystroke (see focusTab.ts's
-// escapeForAppleScriptString), which is a submit.
+// actually depends on: its output is staged straight into the developer's
+// live orchestrator session, so "unusable input becomes null" has to hold
+// for malformed input, not only empty input — and "the result never contains
+// a newline" has to hold unconditionally, so the batch stays one reviewable
+// line.
 
 describe('composeBatchMessage', () => {
   it('composes a wave batch of 2 slugs as one numbered, parallel line', () => {

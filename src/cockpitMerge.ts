@@ -1,6 +1,7 @@
 import { findPrByBranch } from './gitOps.js'
 import { formatBranchMismatch, formatMergeBlockers } from './mergeGate.js'
 import { attachResolvedPrNumbers, createPrNumberCache, repoPrNumberLookup, type PrNumberLookup } from './prLookup.js'
+import { formatRetirementSummary } from './retireTaskSessions.js'
 import { mergeTask, type MergeTaskOutcome } from './taskCompletion.js'
 import type { Task } from './types.js'
 
@@ -36,6 +37,8 @@ export function describeMergeOutcome(result: MergeTaskOutcome): MergeCliReport {
     case 'merged': {
       const lines: MergeCliReport['lines'] = [{ stream: 'log', text: `PR #${result.prNumber} merged, task marked done` }]
       if (result.cleanupError) lines.push({ stream: 'error', text: `cleanup: ${result.cleanupError}` })
+      // After the merge message: retirement is a report, never part of the verdict.
+      lines.push({ stream: 'log', text: formatRetirementSummary(result.sessions) })
       return { exitCode: 0, lines }
     }
   }

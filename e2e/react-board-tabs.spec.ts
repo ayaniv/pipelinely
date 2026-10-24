@@ -1,16 +1,16 @@
 import { test, expect, type Page } from '@playwright/test'
-import { selectBoardTab } from './fixtures/boardTabs.js'
+import { openSidebarItem, selectBoardTab } from './fixtures/boardTabs.js'
 import { collectConsoleErrors, collectPageErrors, freezeLiveFeed, isReactOwned, pushSnapshot } from './fixtures/liveBoard.js'
 
-// The Backlog, Done and You tab views plus the sidebar tab bar and its
+// The Backlog, Done and Usage tab views plus the sidebar tab bar and its
 // tab-count-* badges are React (web/src/views/board), rendered by portals into
-// the app frame's #tab-bar / #backlog-section / #done-section / #you-section.
+// the app frame's #tab-bar / #backlog-section / #done-section / #usage-section.
 // The ONE project filter (React state) narrows all three panels and the counts
 // directly.
 //
-// This spec covers what the backlog/done/you/sidebar specs
+// This spec covers what the backlog/done/usage/sidebar specs
 // (design-v2-backlog-done, backlog-batch-delete, backlog-filter-project-field,
-// batch-dispatch-staging, you-tab, board-redesign, task-detail-url, …) have no
+// batch-dispatch-staging, usage-tab, board-redesign, task-detail-url, …) have no
 // reason to check: that these views really are React-owned, that counts and
 // panels follow the snapshot and the filter, that tab navigation still writes
 // exactly one history entry per click, that React reconciliation (not
@@ -91,7 +91,7 @@ test.describe('react board tabs: ownership', () => {
     await selectBoardTab(page, 'done')
     expect(await isReactOwned(page.getByTestId('done-row').first())).toBe(true)
 
-    await selectBoardTab(page, 'you')
+    await selectBoardTab(page, 'usage')
     expect(await isReactOwned(page.getByTestId('density-cell').first())).toBe(true)
 
     // The sidebar keeps exactly three counted tabs; You stays the account row.
@@ -106,14 +106,17 @@ test.describe('react board tabs: sidebar tab bar and counts', () => {
     const snapshot = await fetchSnapshot(page)
     const doneTotal = snapshot.doneGroups.reduce((sum, group) => sum + group.tasks.length, 0)
 
-    await expect(activeCount(page, 'backlog')).toHaveText(String(snapshot.backlog.length))
+    // The Backlog tab counts BACKLOG.md items plus plan-approved parents
+    // whose first wave has not started; the panel below shows both.
+    await selectBoardTab(page, 'backlog')
+    const panelRows = await page.getByTestId('backlog-row').count() + await page.getByTestId('backlog-planned-parent').count()
+    await expect(page.getByTestId('backlog-row')).toHaveCount(snapshot.backlog.length)
+    await expect(activeCount(page, 'backlog')).toHaveText(String(panelRows))
     await expect(activeCount(page, 'done')).toHaveText(String(doneTotal))
 
-    await pushSnapshot(page, { backlog: snapshot.backlog.slice(0, 2), doneGroups: [] })
+    await pushSnapshot(page, { backlog: snapshot.backlog.slice(0, 2), doneGroups: [], onlySlugs: [] })
     await expect(activeCount(page, 'backlog')).toHaveText('2')
     await expect(activeCount(page, 'done')).toHaveText('0')
-
-    await selectBoardTab(page, 'backlog')
     await expect(page.getByTestId('backlog-row')).toHaveCount(2)
   })
 
@@ -128,10 +131,13 @@ test.describe('react board tabs: sidebar tab bar and counts', () => {
     expect(apiBacklog).toBeGreaterThan(0)
 
     await chip(page, API_REPO).click()
-    await expect(activeCount(page, 'backlog')).toHaveText(String(apiBacklog))
+    // Plan-approved parents waiting on their first wave are Backlog rows too,
+    // narrowed by the same project filter.
+    await selectBoardTab(page, 'backlog')
+    const apiPlannedParents = await page.getByTestId('backlog-planned-parent').count()
+    await expect(activeCount(page, 'backlog')).toHaveText(String(apiBacklog + apiPlannedParents))
     await expect(activeCount(page, 'done')).toHaveText(String(apiDone))
 
-    await selectBoardTab(page, 'backlog')
     await expect(page.getByTestId('backlog-row')).toHaveCount(apiBacklog)
     await selectBoardTab(page, 'done')
     await expect(page.getByTestId('done-row')).toHaveCount(apiDone)
@@ -143,7 +149,10 @@ test.describe('react board tabs: sidebar tab bar and counts', () => {
 
     await selectBoardTab(page, 'inprogress')
     await chip(page, API_REPO).click()
-    await expect(activeCount(page, 'backlog')).toHaveText(String(unfilteredBacklog))
+    await selectBoardTab(page, 'backlog')
+    await expect(page.getByTestId('backlog-row')).toHaveCount(unfilteredBacklog)
+    const unfilteredPlannedParents = await page.getByTestId('backlog-planned-parent').count()
+    await expect(activeCount(page, 'backlog')).toHaveText(String(unfilteredBacklog + unfilteredPlannedParents))
   })
 
   test('clicking a tab activates its panel and trigger, and writes one URL, one data-route and one history entry', async ({ page }) => {
@@ -161,9 +170,9 @@ test.describe('react board tabs: sidebar tab bar and counts', () => {
     }
     expect(await page.evaluate(() => history.length)).toBe(historyBefore + 3)
 
-    await selectBoardTab(page, 'you')
-    await expect(page).toHaveURL('/you')
-    await expect(page.getByTestId('sidebar-account')).toHaveClass(/is-active/)
+    await selectBoardTab(page, 'usage')
+    await expect(page).toHaveURL('/usage')
+    await expect(page.getByTestId('sidebar-usage-btn')).toHaveAttribute('aria-current', 'page')
     await expect(page.locator('#tab-bar .tab-btn.is-active')).toHaveCount(0)
   })
 
@@ -270,8 +279,11 @@ test.describe('react board tabs: sidebar tab bar and counts', () => {
     await page.goto('/')
     await selectBoardTab(page, 'done')
 
-    await page.getByTestId('sidebar-settings-btn').click()
+    await openSidebarItem(page, 'sidebar-settings-btn')
     await expect(page).toHaveURL('/settings')
+    // The URL moves before the router's transition commits the page, and the
+    // page's Escape listener only exists once it has mounted.
+    await expect(page.getByTestId('settings-page')).toBeVisible()
     await page.keyboard.press('Escape')
 
     await expect(page).toHaveURL('/done')
@@ -284,7 +296,7 @@ test.describe('react board tabs: sidebar tab bar and counts', () => {
     await expect(page.getByTestId('standup-btn')).toBeHidden()
     await selectBoardTab(page, 'done')
     await expect(page.getByTestId('standup-btn')).toBeVisible()
-    await selectBoardTab(page, 'you')
+    await selectBoardTab(page, 'usage')
     await expect(page.getByTestId('standup-btn')).toBeHidden()
   })
 })
@@ -628,7 +640,9 @@ test.describe('react board tabs: backlog', () => {
     await openFrozenBoard(page)
     await selectBoardTab(page, 'backlog')
 
-    await pushSnapshot(page, { backlog: [] })
+    // No tasks either: a plan-approved parent waiting on its first wave is a
+    // Backlog row of its own.
+    await pushSnapshot(page, { backlog: [], onlySlugs: [] })
 
     await expect(page.getByTestId('backlog-section').getByTestId('board-empty-state')).toBeVisible()
     await expect(page.getByTestId('backlog-row')).toHaveCount(0)
@@ -706,9 +720,9 @@ test.describe('react board tabs: done', () => {
   })
 })
 
-test.describe('react board tabs: you', () => {
+test.describe('react board tabs: usage', () => {
   test('the calendar always draws 53 weeks of cells, and its total matches the sessions counted', async ({ page }) => {
-    await page.goto('/you')
+    await page.goto('/usage')
     await expect(page.getByTestId('density-cell')).toHaveCount(53 * 7)
     const cellTotal = await page.getByTestId('density-cell').evaluateAll((cells) => cells.reduce((sum, cell) => sum + Number((cell as HTMLElement).dataset.count), 0))
     await expect(page.getByTestId('density-total')).toHaveAttribute('data-count', String(cellTotal))
@@ -720,7 +734,7 @@ test.describe('react board tabs: you', () => {
     await revealFilters(page)
     await chip(page, API_REPO).click()
     await freezeLiveFeed(page)
-    await selectBoardTab(page, 'you')
+    await selectBoardTab(page, 'usage')
     const unfilteredTotal = await page.getByTestId('density-total').getAttribute('data-count')
 
     await expect(page.getByTestId('density-total')).toHaveAttribute('data-count', unfilteredTotal!)

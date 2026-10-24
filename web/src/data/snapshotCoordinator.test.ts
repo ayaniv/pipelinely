@@ -20,7 +20,7 @@ const snapshotWith = (weeklyFocus: string): Snapshot => ({
   weeklyFocus,
   backlog: [],
   doneGroups: [],
-  settings: { autoMode: false },
+  settings: { autoMode: false, creaturePlacement: 'header', weeklyFocusEnabled: true, qaStartPolicy: 'ask-every-time' },
   orchestratorContextPct: null,
   isCanonical: false,
 })

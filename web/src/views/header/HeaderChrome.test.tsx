@@ -53,6 +53,14 @@ describe('HeaderChrome', () => {
     expect(document.getElementById('theme-toggle')).toBeInTheDocument()
   })
 
+  test('the spend pill comes before the orchestrator ctx pill, as in the design', () => {
+    renderWith(makeSnapshot({ orchestratorContextPct: 40 }), <HeaderChrome />)
+    const spend = screen.getByTestId('header-spend')
+    const ctxSlot = document.getElementById('header-ctx-slot')!
+    expect(ctxSlot.firstChild).not.toBeNull()
+    expect(spend.compareDocumentPosition(ctxSlot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   test('the spend pill sums active on-board tasks only', () => {
     const priced = { n: 1, contextPct: 10, inputTokens: 1_000_000, outputTokens: 0, current: false, stage: 'dev', sessionId: 's', startedAt: null, updatedAt: null }
     const base = { model: 'claude-sonnet-5', sessions: [priced], showsOnBoard: true, status: 'working' }

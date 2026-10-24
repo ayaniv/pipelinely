@@ -101,8 +101,8 @@ test.describe('stage scope summary', () => {
 
   test('a milestone child dev tab gets the scope block too, not just root tasks', async ({ page }) => {
     await page.goto('/task/fanout-parent')
-    await page.getByTestId('l1-tab-dev').click()
-    await page.locator('[data-testid="milestone-card"][data-milestone-id="M0"]').click()
+    await page.getByTestId('stage-chain-dev').click()
+    await page.getByTestId('wave-task-M0').click()
     await page.getByTestId('stage-chain-dev').click()
 
     await expect(page.getByTestId('stage-scope-dev')).toBeVisible()

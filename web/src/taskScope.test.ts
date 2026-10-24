@@ -2,11 +2,16 @@ import { describe, expect, test } from 'vitest'
 import type { Task } from '../../src/types'
 import {
   isFanoutParent,
+  isPlanApprovedParent,
+  isUnstartedParent,
+  isWorkingLeaf,
+  hasLiveTerminal,
   findPrNumber,
   taskScope,
   scopeTotals,
   detailMetaPairs,
   pillStatusFor,
+  isTaskWorking,
   CARD_STATUS_META,
   detailStatusInfo,
   miniStageNodes,
@@ -55,6 +60,37 @@ function makeTask(overrides: Partial<Task> = {}): Task {
   } as Task
 }
 
+describe('isPlanApprovedParent', () => {
+  const milestones = [{ id: 'M0', name: 'M0', needs: [], estimate: null, specFile: null, wave: 1, task: null, state: 'queued' as const }]
+  const planReviewed = [{ stage: 'plan-review' as const, at: '2026-01-01T00:00:00Z', note: '' }]
+
+  test('true for a task with milestones and a plan-review event', () => {
+    expect(isPlanApprovedParent(makeTask({ milestones, stageHistory: planReviewed }))).toBe(true)
+  })
+  test('false for a task with milestones whose plan review has not happened', () => {
+    expect(isPlanApprovedParent(makeTask({ milestones }))).toBe(false)
+  })
+  test('false for a plain task even after a plan-review event', () => {
+    expect(isPlanApprovedParent(makeTask({ stageHistory: planReviewed }))).toBe(false)
+  })
+})
+
+describe('isUnstartedParent', () => {
+  const milestone = (id: string, state: 'queued' | 'dispatched' | 'done') => ({ id, name: id, needs: [], estimate: null, specFile: null, wave: 1, task: null, state })
+  const planReviewed = [{ stage: 'plan-review' as const, at: '2026-01-01T00:00:00Z', note: '' }]
+
+  test('true for a plan-approved parent whose milestones are all still queued', () => {
+    expect(isUnstartedParent(makeTask({ stageHistory: planReviewed, milestones: [milestone('M0', 'queued'), milestone('M1', 'queued')] }))).toBe(true)
+  })
+  test('false once any milestone is dispatched or merged', () => {
+    expect(isUnstartedParent(makeTask({ stageHistory: planReviewed, milestones: [milestone('M0', 'dispatched'), milestone('M1', 'queued')] }))).toBe(false)
+    expect(isUnstartedParent(makeTask({ stageHistory: planReviewed, milestones: [milestone('M0', 'done'), milestone('M1', 'queued')] }))).toBe(false)
+  })
+  test('false before plan review, where the task is a card with its plan-review CTA', () => {
+    expect(isUnstartedParent(makeTask({ milestones: [milestone('M0', 'queued')] }))).toBe(false)
+  })
+})
+
 describe('isFanoutParent', () => {
   test('true for a task with at least one declared milestone', () => {
     expect(isFanoutParent(makeTask({ milestones: [{ id: 'M0', name: 'M0', needs: [], estimate: null, specFile: null, wave: 1, task: null, state: 'queued' }] }))).toBe(true)
@@ -64,6 +100,31 @@ describe('isFanoutParent', () => {
   })
   test('false for a task with an empty milestones array', () => {
     expect(isFanoutParent(makeTask({ milestones: [] }))).toBe(false)
+  })
+})
+
+describe('isWorkingLeaf', () => {
+  test('true for a working task with no milestones', () => {
+    expect(isWorkingLeaf(makeTask({ status: 'working' }))).toBe(true)
+  })
+  test('false for a working milestone parent, whose own session says nothing about its milestones', () => {
+    expect(isWorkingLeaf(makeTask({ status: 'working', milestones: [makeMilestone({ id: 'M0' })] }))).toBe(false)
+  })
+  test('false for a task that is not working', () => {
+    expect(isWorkingLeaf(makeTask({ status: 'waiting' }))).toBe(false)
+  })
+})
+
+describe('hasLiveTerminal', () => {
+  test.each(['working', 'waiting', 'review', 'handover'] as const)('a %s session has one', (status) => {
+    expect(hasLiveTerminal(makeTask({ status }))).toBe(true)
+  })
+  test.each(['paused', 'shelved', 'done'] as const)('a %s session has none', (status) => {
+    expect(hasLiveTerminal(makeTask({ status }))).toBe(false)
+  })
+  test.each(['paused', 'shelved', 'done'] as const)('a %s session stopped on a dialog still has one: the dialog proves it is alive', (status) => {
+    const approvalPrompt = { session: 's', question: 'q', summary: 'x', options: [{ number: 1, label: 'Yes' }], fingerprint: 'f' }
+    expect(hasLiveTerminal(makeTask({ status, approvalPrompt }))).toBe(true)
   })
 })
 
@@ -155,14 +216,26 @@ describe('pillStatusFor / CARD_STATUS_META', () => {
   })
 })
 
+describe('isTaskWorking', () => {
+  test('is true for a task whose status pill says working', () => {
+    expect(isTaskWorking(makeTask({ status: 'working', attentionStatus: 'working' }))).toBe(true)
+  })
+  test('is false for needs-you, paused, orphaned and done tasks', () => {
+    expect(isTaskWorking(makeTask({ attentionStatus: 'needs-you' }))).toBe(false)
+    expect(isTaskWorking(makeTask({ attentionStatus: 'paused' }))).toBe(false)
+    expect(isTaskWorking(makeTask({ status: 'working', orphaned: true, attentionStatus: 'working' }))).toBe(false)
+    expect(isTaskWorking(makeTask({ status: 'done', attentionStatus: 'working' }))).toBe(false)
+  })
+})
+
 describe('detailStatusInfo', () => {
   test('tags "off focus" when the task is off-focus and not done', () => {
     const info = detailStatusInfo(makeTask({ status: 'working' }), true)
     expect(info.tag).toEqual({ label: 'off focus', bg: 'var(--driftSoft)', fg: 'var(--driftInk)' })
   })
-  test('tags "merged" for a done task with a recorded merge stage, when not off-focus', () => {
+  test('a merged task carries no tag of its own: the stage pill already says "Merged"', () => {
     const info = detailStatusInfo(makeTask({ status: 'done', stageHistory: [{ stage: 'merge', at: '2026-01-01T00:00:00Z', note: null }] }), false)
-    expect(info.tag).toEqual({ label: 'merged', bg: 'var(--sageSoft)', fg: 'var(--sageInk)' })
+    expect(info.tag).toBeNull()
   })
   test('no tag for a plain working task', () => {
     expect(detailStatusInfo(makeTask({ status: 'working' }), false).tag).toBeNull()
@@ -206,6 +279,23 @@ describe('miniStageNodes', () => {
     const nodes = miniStageNodes(task, STAGES)
     expect(nodes.map((n) => n.isDone)).toEqual([true, true, false, false, false])
     expect(nodes.every((n) => !n.isCurrent)).toBe(true)
+  })
+})
+
+describe('miniStageNodes stage colour', () => {
+  const STAGES = ['planning', 'dev', 'cr']
+
+  test('paints reached nodes and connectors in the given colour, leaving todo nodes neutral', () => {
+    const nodes = miniStageNodes(makeTask({ stage: 'code-review', status: 'working' }), STAGES, 'var(--crC)')
+    expect(nodes.map((n) => n.color)).toEqual(['var(--crC)', 'var(--crC)', 'var(--crC)'])
+    expect(nodes[2].connector).toBe('var(--crC)')
+    const early = miniStageNodes(makeTask({ stage: 'dev', status: 'working' }), STAGES, 'var(--crC)')
+    expect(early[2].ring).toContain('var(--border2)')
+    expect(early[2].connector).toBe('var(--border2)')
+  })
+
+  test('defaults to the accent colour', () => {
+    expect(miniStageNodes(makeTask({ stage: 'dev', status: 'working' }), STAGES)[1].color).toBe('var(--accent)')
   })
 })
 
