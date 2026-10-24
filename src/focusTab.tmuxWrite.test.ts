@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 const execaMock = vi.hoisted(() => vi.fn())
 vi.mock('execa', () => ({ execa: execaMock }))
 
-import { resolveActivePaneId, sendKeysToPane, TMUX_WRITE_TIMEOUT_MS } from './focusTab.js'
+import { readPaneState, resolveActivePaneId, sendKeysToPane, TMUX_WRITE_TIMEOUT_MS } from './focusTab.js'
 
 // Every case runs against a mocked execa: nothing here can reach a real tmux.
 describe('sendKeysToPane', () => {
@@ -56,5 +56,37 @@ describe('resolveActivePaneId', () => {
   it('returns null without calling tmux for an unsafe session name', async () => {
     expect(await resolveActivePaneId('worker-foo; rm')).toBeNull()
     expect(execaMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('readPaneState', () => {
+  beforeEach(() => {
+    execaMock.mockReset()
+  })
+
+  it('parses the one-call snapshot of the exactly-named session\'s active pane', async () => {
+    execaMock.mockResolvedValue({ stdout: '%12\t2.1.251\t1\t0\n' })
+    expect(await readPaneState('worker-foo')).toEqual({ paneId: '%12', command: '2.1.251', hasBracketedPaste: true, isInMode: false })
+    expect(execaMock.mock.calls[0][1].slice(0, 4)).toEqual(['display-message', '-p', '-t', '=worker-foo:'])
+  })
+
+  it('reads the mode and bracketed-paste flags as two independent booleans', async () => {
+    execaMock.mockResolvedValue({ stdout: '%3\tzsh\t0\t1' })
+    expect(await readPaneState('worker-foo')).toEqual({ paneId: '%3', command: 'zsh', hasBracketedPaste: false, isInMode: true })
+  })
+
+  it('returns null for the exit-0 empty output tmux gives a missing session', async () => {
+    execaMock.mockResolvedValue({ stdout: '' })
+    expect(await readPaneState('worker-foo')).toBeNull()
+  })
+
+  it('returns null without calling tmux for an unsafe session name', async () => {
+    expect(await readPaneState('worker-foo; rm')).toBeNull()
+    expect(execaMock).not.toHaveBeenCalled()
+  })
+
+  it('lets a tmux failure propagate so callers can tell it from a missing pane', async () => {
+    execaMock.mockRejectedValue(new Error('timed out'))
+    await expect(readPaneState('worker-foo')).rejects.toThrow('timed out')
   })
 })

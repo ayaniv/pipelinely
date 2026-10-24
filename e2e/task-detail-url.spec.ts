@@ -208,8 +208,8 @@ test.describe('stage query param', () => {
 
   test('drilling into a different milestone clears a stale stage param', async ({ page }) => {
     await page.goto('/task/fanout-parent?stage=qa')
-    await page.getByTestId('l1-tab-dev').click()
-    await page.locator('[data-testid="milestone-card"][data-milestone-id="M1"]').click()
+    await page.getByTestId('stage-chain-dev').click()
+    await page.getByTestId('wave-task-M1').click()
 
     await expect(page).toHaveURL('/task/fanout-parent')
   })

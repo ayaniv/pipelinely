@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
-import { SidebarAccount, TabBar } from './TabBar'
+import { TabBar } from './TabBar'
 
 const counts = { inprogress: 3, backlog: 12, done: 0 }
 
@@ -23,9 +23,21 @@ describe('TabBar', () => {
     expect(screen.getByTestId('tab-btn-inprogress')).not.toHaveClass('is-active')
   })
 
-  test('no counted tab is active while the You tab is', () => {
-    render(<TabBar activeTab="you" counts={counts} onSelectTab={vi.fn()} />)
+  test('lists the tabs as Active, Done, Backlog', () => {
+    render(<TabBar activeTab="inprogress" counts={counts} onSelectTab={vi.fn()} />)
+    const order = screen.getAllByRole('button').map((button) => button.getAttribute('data-tab'))
+    expect(order).toEqual(['inprogress', 'done', 'backlog'])
+  })
+
+  test('no counted tab is active while the Usage tab is', () => {
+    render(<TabBar activeTab="usage" counts={counts} onSelectTab={vi.fn()} />)
     expect(document.querySelectorAll('.tab-btn.is-active')).toHaveLength(0)
+  })
+
+  test('no counted tab is active when the page showing is none of them (null)', () => {
+    render(<TabBar activeTab={null} counts={counts} onSelectTab={vi.fn()} />)
+    expect(document.querySelectorAll('.tab-btn.is-active')).toHaveLength(0)
+    expect(document.querySelectorAll('[aria-current]')).toHaveLength(0)
   })
 
   test('a count that has not loaded shows a dash and is named "loading", never a misleading 0', () => {
@@ -51,33 +63,5 @@ describe('TabBar', () => {
     fireEvent.click(screen.getByTestId('tab-btn-done'))
 
     expect(onSelectTab).toHaveBeenCalledWith('done')
-  })
-})
-
-describe('SidebarAccount', () => {
-  test('is the You tab\'s trigger and is active only on it', () => {
-    const { rerender } = render(<SidebarAccount activeTab="you" onSelectTab={vi.fn()} />)
-    expect(screen.getByTestId('sidebar-account')).toHaveClass('is-active')
-    expect(screen.getByTestId('sidebar-account')).toHaveAttribute('data-tab', 'you')
-
-    rerender(<SidebarAccount activeTab="done" onSelectTab={vi.fn()} />)
-    expect(screen.getByTestId('sidebar-account')).not.toHaveClass('is-active')
-  })
-
-  test('exposes the You tab as current only while it is showing', () => {
-    const { rerender } = render(<SidebarAccount activeTab="you" onSelectTab={vi.fn()} />)
-    expect(screen.getByRole('button', { name: 'You' })).toHaveAttribute('aria-current', 'page')
-
-    rerender(<SidebarAccount activeTab="done" onSelectTab={vi.fn()} />)
-    expect(screen.getByRole('button', { name: 'You' })).not.toHaveAttribute('aria-current')
-  })
-
-  test('clicking it selects the You tab', () => {
-    const onSelectTab = vi.fn()
-    render(<SidebarAccount activeTab="inprogress" onSelectTab={onSelectTab} />)
-
-    fireEvent.click(screen.getByTestId('sidebar-account'))
-
-    expect(onSelectTab).toHaveBeenCalledWith('you')
   })
 })

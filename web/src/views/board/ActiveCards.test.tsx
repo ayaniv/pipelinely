@@ -5,7 +5,7 @@ import { makeTask } from './testTask'
 
 const NOW = new Date('2026-09-23T12:00:00Z').getTime()
 const noop = () => {}
-const baseProps = { now: NOW, isTaskOffFocus: () => false, onToggleOffFocus: noop, onOpenDetail: noop }
+const baseProps = { now: NOW, isTaskOffFocus: () => false, onToggleOffFocus: noop, onOpenDetail: noop, creaturePlacement: 'header' as const }
 
 describe('ActiveCards', () => {
   test('renders one card per task inside its group, with a header carrying the count', () => {
@@ -23,12 +23,21 @@ describe('ActiveCards', () => {
     expect(working.querySelector('.active-group-label')).toHaveTextContent('Working')
   })
 
+  test('Needs-you cards get a 420px minimum column and Working cards keep 300px', () => {
+    render(<ActiveCards {...baseProps} tasks={[
+      makeTask({ slug: 'n', attentionStatus: 'needs-you', status: 'waiting' }),
+      makeTask({ slug: 'w', attentionStatus: 'working' }),
+    ]} />)
+    expect(screen.getByTestId('active-group-needs').querySelector('.active-group-grid')).toHaveAttribute('style', expect.stringContaining('420px'))
+    expect(screen.getByTestId('active-group-working').querySelector('.active-group-grid')).toHaveAttribute('style', expect.stringContaining('300px'))
+  })
+
   test('the Needs-you group renders before the Working group', () => {
     render(<ActiveCards {...baseProps} tasks={[
       makeTask({ slug: 'w', attentionStatus: 'working' }),
       makeTask({ slug: 'n', attentionStatus: 'needs-you', status: 'waiting' }),
     ]} />)
-    const groups = screen.getAllByTestId(/^active-group-/)
+    const groups = screen.getAllByTestId(/^active-group-(needs|working)$/)
     expect(groups.map((g) => g.dataset.testid)).toEqual(['active-group-needs', 'active-group-working'])
   })
 
@@ -62,5 +71,14 @@ describe('ActiveCards', () => {
 
     expect(screen.getAllByTestId('task-card')[0]).toBe(nodeA)
     expect(screen.getByTestId('card-note')).toHaveTextContent('two')
+  })
+
+  test('hides every card\'s creature when the placement is off, and shows them otherwise', () => {
+    const pip = { name: 'Pip', color: '#a8d8c9', shape: '32% 64% 44% 47% / 63% 60% 47% 55%' }
+    const tasks = [makeTask({ slug: 'a', creature: pip }), makeTask({ slug: 'b', creature: { ...pip, name: 'Juno' } })]
+    const { rerender } = render(<ActiveCards {...baseProps} tasks={tasks} creaturePlacement="header" />)
+    expect(screen.getAllByTestId('creature')).toHaveLength(2)
+    rerender(<ActiveCards {...baseProps} tasks={tasks} creaturePlacement="off" />)
+    expect(screen.queryByTestId('creature')).not.toBeInTheDocument()
   })
 })

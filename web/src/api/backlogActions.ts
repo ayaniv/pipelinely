@@ -1,5 +1,5 @@
 import type { BacklogItem } from '../../../src/types'
-import type { ActionOutcome, PostActionOptions } from './actions'
+import { paneNotReadyLabel, serverErrorOf, type ActionOutcome, type PostActionOptions } from './actions'
 
 // The backlog panel's typed fetches (dispatch, resume, dismiss, edit, batch
 // dispatch) — pure fetch + typed outcome + logging, no DOM, same contract as
@@ -28,21 +28,16 @@ function postJson(fetchImpl: typeof fetch, url: string, body: unknown): Promise<
   return fetchImpl(url, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body) })
 }
 
-async function serverErrorOf(res: Response): Promise<string | undefined> {
-  const data = (await res.json().catch(() => null)) as { error?: string } | null
-  return data?.error
-}
-
 // Pastes the item into the orchestrator session as "let's do this". Each
-// status means something distinct (a reattach race vs. no orchestrator vs. a
-// read-only instance) — a generic "failed" would flatten it.
+// status means something distinct (a pane that is not ready vs. no
+// orchestrator vs. a read-only instance) — a generic "failed" would flatten it.
 export async function postBacklogDispatch(item: BacklogItem, { fetchImpl, log }: PostActionOptions): Promise<ActionOutcome> {
   try {
     const res = await postJson(fetchImpl, '/backlog/dispatch', backlogDispatchPayload(item))
     if (res.ok) return { ok: true, label: '✓ sent' }
     log('[action] POST /backlog/dispatch failed', new Error(`HTTP ${res.status}`))
     const label =
-      res.status === 409 ? 'reattached — click again'
+      res.status === 409 ? await paneNotReadyLabel(res)
       : res.status === 503 ? 'no orchestrator'
       : res.status === 403 ? 'read-only instance'
       : 'failed'
@@ -140,7 +135,7 @@ export async function postBatchDispatch(body: BatchDispatchBody, { fetchImpl, lo
     const res = await postJson(fetchImpl, '/batch-dispatch', body)
     if (res.ok) return { ok: true, label: 'staged' }
     log('[action] POST /batch-dispatch failed', new Error(`HTTP ${res.status}`))
-    if (res.status === 409) return { ok: false, label: 'reattached — retry', detail: await serverErrorOf(res) }
+    if (res.status === 409) return { ok: false, label: 'not ready — retry', detail: await serverErrorOf(res) }
     if (res.status === 503) return { ok: false, label: 'no orchestrator', detail: await serverErrorOf(res) }
     return { ok: false, label: 'failed' }
   } catch (err) {

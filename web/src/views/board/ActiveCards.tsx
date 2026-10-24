@@ -1,6 +1,8 @@
 import { Fragment } from 'react'
-import type { Task } from '../../../../src/types'
-import { groupActiveTasks } from './boardModel'
+import type { CreaturePlacement, Task } from '../../../../src/types'
+import type { OpenTask } from '../../shell/appNavigation'
+import { cardGridColumns, groupActiveTasks } from './boardModel'
+import { ActiveGroupHeader } from './ActiveGroupHeader'
 import { EmptyState } from './EmptyState'
 import { PlanCard } from './PlanCard'
 import { SessionCard } from './SessionCard'
@@ -14,10 +16,11 @@ export interface ActiveCardsProps {
   now: number
   isTaskOffFocus: (slug: string) => boolean
   onToggleOffFocus: (slug: string) => void
-  onOpenDetail: (slug: string) => void
+  onOpenDetail: OpenTask
+  creaturePlacement: CreaturePlacement
 }
 
-export function ActiveCards({ tasks, now, isTaskOffFocus, onToggleOffFocus, onOpenDetail }: ActiveCardsProps) {
+export function ActiveCards({ tasks, now, isTaskOffFocus, onToggleOffFocus, onOpenDetail, creaturePlacement }: ActiveCardsProps) {
   if (tasks.length === 0) {
     return <EmptyState />
   }
@@ -25,16 +28,11 @@ export function ActiveCards({ tasks, now, isTaskOffFocus, onToggleOffFocus, onOp
     <>
       {groupActiveTasks(tasks).map(({ definition, tasks: groupTasks }) => (
         <div className="active-group" data-testid={definition.testId} key={definition.testId}>
-          <div className="active-group-header">
-            <span className="active-group-art" style={{ backgroundImage: `url('/art/${definition.art}')` }} />
-            <span className="active-group-label">{definition.label}</span>
-            <span className="active-group-count">&middot; {groupTasks.length}</span>
-            <span className="active-group-rule" />
-          </div>
-          <div className="active-group-grid">
+          <ActiveGroupHeader label={definition.label} count={groupTasks.length} />
+          <div className="active-group-grid" style={{ gridTemplateColumns: cardGridColumns(definition.minCardPx) }}>
             {groupTasks.map((task) => (
               <Fragment key={task.slug}>
-                <SessionCard task={task} now={now} isOffFocus={isTaskOffFocus(task.slug)} onToggleOffFocus={onToggleOffFocus} onOpenDetail={onOpenDetail} />
+                <SessionCard task={task} now={now} isOffFocus={isTaskOffFocus(task.slug)} onToggleOffFocus={onToggleOffFocus} onOpenDetail={onOpenDetail} creaturePlacement={creaturePlacement} />
                 <PlanCard task={task} />
               </Fragment>
             ))}

@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 import { openTask } from './fixtures/taskDetail.js'
+import { freezeLiveFeed, pushSnapshot } from './fixtures/liveBoard'
 
 // The task-detail PANEL slot — the L1 tab bar (fan-out parents), the
 // plan/plan-review tab, and every L2 stage panel body (dev, cr, cr-fixes, qa,
@@ -33,7 +34,7 @@ const panelSlot = (page: Page) => page.getByTestId('detail-panel-slot')
 
 // The Dev tab's milestone overview (showing / gone), targeted through the
 // graph's own stable testid.
-const milestoneGraph = (page: Page) => page.getByTestId('detail-graph-slot').getByTestId('milestone-flow')
+const milestoneGraph = (page: Page) => page.getByTestId('detail-panel-slot').getByTestId('wave-graph')
 
 function collectConsoleErrors(page: Page): string[] {
   const errors: string[] = []
@@ -104,56 +105,50 @@ test.describe('react stage panels: ownership', () => {
   })
 })
 
-test.describe('react stage panels: L1 tabs (fan-out parent)', () => {
-  test('a parent already in Dev opens on the Dev tab with round counters on Plan and Plan Review, and the wave grid in the graph slot', async ({ page }) => {
+test.describe('react stage panels: parent chart stages (fan-out parent)', () => {
+  test('a parent already in Dev opens on Dev, with no L1 tabs, and the wave grid in the panel slot', async ({ page }) => {
     await openTask(page, FANOUT_SLUG)
 
-    await expect(page.getByTestId('l1-tabs')).toBeVisible()
-    await expect(page.getByTestId('l1-tab-dev')).toHaveClass(/is-active/)
-    await expect(page.getByTestId('l1-tab-plan')).not.toHaveClass(/is-active/)
-    await expect(page.getByTestId('l1-round-plan')).toHaveText('×1')
-    await expect(page.getByTestId('l1-round-plan-review')).toHaveText('×1')
-    await expect(page.getByTestId('l1-round-dev')).toHaveCount(0)
+    await expect(page.getByTestId('l1-tabs')).toHaveCount(0)
+    await expect(page.getByTestId('stage-chain-dev')).toHaveAttribute('aria-current', 'step')
+    await expect(page.getByTestId('stage-chain-planning')).toHaveAttribute('aria-current', 'false')
     await expect(milestoneGraph(page)).toBeVisible()
   })
 
-  test('Plan and Plan Review show the same single document under their own panel header; Dev brings the wave grid back', async ({ page }) => {
+  test('Planning shows the plan under its own panel header; Dev brings the wave grid back', async ({ page }) => {
     await openTask(page, FANOUT_SLUG)
 
-    await page.getByTestId('l1-tab-plan').click()
-    await expect(page.getByTestId('l1-tab-plan')).toHaveClass(/is-active/)
-    await expect(page.getByTestId('l1-tab-dev')).not.toHaveClass(/is-active/)
-    await expect(panelSlot(page).getByTestId('l2-panel-title')).toHaveText('Planning')
-    await expect(panelSlot(page).getByTestId('tech-design-body')).toBeVisible()
-    await expect(milestoneGraph(page)).toHaveCount(0)
-
-    await page.getByTestId('l1-tab-plan-review').click()
+    // The fixture's plan review is recorded, so the one Planning node opens Plan Review.
+    await page.getByTestId('stage-chain-planning').click()
+    await expect(page.getByTestId('stage-chain-planning')).toHaveAttribute('aria-current', 'step')
+    await expect(page.getByTestId('stage-chain-dev')).toHaveAttribute('aria-current', 'false')
     await expect(panelSlot(page).getByTestId('l2-panel-title')).toHaveText('Plan Review')
     await expect(panelSlot(page).getByTestId('plan-review-cta')).toBeVisible()
     await expect(panelSlot(page).getByTestId('tech-design-body')).toBeVisible()
+    await expect(milestoneGraph(page)).toHaveCount(0)
 
-    await page.getByTestId('l1-tab-dev').click()
+    await page.getByTestId('stage-chain-dev').click()
     await expect(milestoneGraph(page)).toBeVisible()
     await expect(panelSlot(page).getByTestId('tech-design-body')).toHaveCount(0)
   })
 
-  test('switching L1 tab leaves a milestone drill-down, and coming back to Dev starts at the milestone list', async ({ page }) => {
+  test('stepping back from a milestone drill-down returns to the parent chart with the milestone list', async ({ page }) => {
     await openTask(page, FANOUT_SLUG)
-    await page.locator('[data-testid="milestone-card"][data-milestone-id="M0"] .card-title').click()
+    await page.getByTestId('wave-task-M1').click()
     await expect(panelSlot(page).getByTestId('l2-panel')).toBeVisible()
+    await page.getByTestId('milestone-parent-link').click()
 
-    await page.getByTestId('l1-tab-plan').click()
-    await page.getByTestId('l1-tab-dev').click()
-
+    await expect(page.getByTestId('stage-chain-planning')).toBeVisible()
+    await expect(page.getByTestId('stage-chain-dev')).toHaveAttribute('aria-current', 'step')
     await expect(milestoneGraph(page)).toBeVisible()
     await expect(panelSlot(page).getByTestId('l2-panel')).toHaveCount(0)
   })
 
-  test('an L1 tab is a real button: Enter on the focused tab activates it', async ({ page }) => {
+  test('a chart node is a real button: Enter on the focused node activates it', async ({ page }) => {
     await openTask(page, FANOUT_SLUG)
-    await page.getByTestId('l1-tab-plan-review').focus()
+    await page.getByTestId('stage-chain-planning').focus()
     await page.keyboard.press('Enter')
-    await expect(page.getByTestId('l1-tab-plan-review')).toHaveClass(/is-active/)
+    await expect(page.getByTestId('stage-chain-planning')).toHaveAttribute('aria-current', 'step')
     await expect(panelSlot(page).getByTestId('l2-panel-title')).toHaveText('Plan Review')
   })
 })
@@ -166,8 +161,11 @@ test.describe('react stage panels: flat-task stage bodies', () => {
     await expect(block.getByTestId('milestone-dispatch-row')).toHaveCount(1)
   })
 
-  test('the CR tab lists findings read-only, and "Select findings to fix" moves to the CR-fixes tab and into the URL', async ({ page }) => {
-    await openStage(page, CR_FIXES_SLUG, 'cr')
+  test('with no comment-fix action live, the CR tab lists findings read-only, and "Select findings to fix" moves to the CR-fixes tab and into the URL', async ({ page }) => {
+    await page.goto(`/task/${CR_FIXES_SLUG}?stage=cr`)
+    await expect(panelSlot(page).getByTestId('l2-panel')).toBeVisible()
+    await freezeLiveFeed(page)
+    await pushSnapshot(page, { taskPatches: { [CR_FIXES_SLUG]: { status: 'working', attentionStatus: 'working', waitingReason: undefined } } })
 
     await expect(panelSlot(page).getByTestId('finding-row')).toHaveCount(1)
     await expect(panelSlot(page).getByTestId('triage-checkbox')).toHaveCount(0)
@@ -478,7 +476,7 @@ test.describe('react stage panels: milestone drill-down panel', () => {
       await route.fulfill({ status: 200, json: { submitted: false } })
     })
     await openTask(page, FANOUT_SLUG)
-    await page.locator('[data-testid="milestone-card"][data-milestone-id="M1"]').click()
+    await page.getByTestId('wave-task-M1').click()
 
     const cta = panelSlot(page).getByTestId('l2-cta')
     await expect(cta).toBeEnabled()

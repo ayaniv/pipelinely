@@ -3,7 +3,8 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { writeStageBrief, extractBriefTemplate, renderBriefTemplate } from './stageBrief.js'
+import { writeStageBrief, extractBriefTemplate, renderBriefTemplate, isBriefStage } from './stageBrief.js'
+import { INTENT_BRIEF_STAGES } from './nextAction.js'
 import { parseTaskMdContent } from './taskParser.js'
 
 const REAL_SKILLS_DIR = path.resolve(import.meta.dirname, '..', '.claude', 'skills')
@@ -189,15 +190,9 @@ describe('stageBrief — code-review brief', () => {
       for (const pattern of DEV_ARTIFACT_PATTERNS) expect(inside).toMatch(pattern)
     })
 
-    it('takes no free-text input: its only parameters are the stage, the slug, the PR number and three directories', () => {
-      expectTypeOf(writeStageBrief).parameter(0).toEqualTypeOf<{
-        stage: 'code-review'
-        slug: string
-        prNumber: number
-        tasksDir: string
-        worktreesDir: string
-        skillsDir: string
-      }>()
+    it('takes no free-text input: its only parameters are the stage, the slug, the PR number (code review only) and three directories', () => {
+      type Locations = { slug: string; tasksDir: string; worktreesDir: string; skillsDir: string }
+      expectTypeOf(writeStageBrief).parameter(0).toEqualTypeOf<Locations & ({ stage: 'code-review'; prNumber: number } | { stage: 'merge-conflicts' })>()
     })
   })
 
@@ -449,5 +444,259 @@ describe('stageBrief — code-review brief', () => {
       expect(result.status).toBe(1)
       expect(result.stderr).toContain('TASK-cr.md')
     })
+  })
+})
+
+describe('stageBrief — merge-conflicts brief', () => {
+  const MERGE_SLUG = 'conflicted-task'
+  const MERGE_BRANCH = `claude/${MERGE_SLUG}`
+  const MERGE_PR = 149
+  const PREVIOUS_STATUS = 'waiting: fixes pushed, ready to re-run QA'
+  // A conflicting path that itself looks like a branch ("fix/…"): the brief
+  // must still end with the real Branch line, so the parser's last-match rule
+  // reads the task's own branch.
+  const CONFLICTED_FILES = ['fix/strategy.ts', 'web/src/stageView.ts']
+
+  const MERGE_TEMPLATE = [
+    '# {{title}} — merge conflicts',
+    '- Repo: {{repo}}',
+    '- PR: #{{prNumber}}',
+    '- Worktree: {{worktree}}',
+    '{{intentBlock}}',
+    '- Approved plan: {{planLine}}',
+    '- Verifier: {{verifyLine}}',
+    '## Conflicting files (base: {{baseRef}})',
+    '{{conflictingFiles}}',
+    '## Status',
+    'restore `{{previousStatus}}` to {{taskDir}}/STATUS',
+    '- Branch: {{branch}}',
+  ].join('\n')
+
+  let rootDir: string
+  let tasksDir: string
+  let worktreesDir: string
+  let skillsDir: string
+  let taskDir: string
+  let worktree: string
+
+  function writeTaskFile(name: string, content: string): void {
+    fs.writeFileSync(path.join(taskDir, name), content)
+  }
+
+  function writeMergeSkill(template: string): void {
+    fs.mkdirSync(path.join(skillsDir, 'pipelinely-merge-conflicts'), { recursive: true })
+    fs.writeFileSync(path.join(skillsDir, 'pipelinely-merge-conflicts', 'SKILL.md'), skillWithTemplate(template))
+  }
+
+  function render(dirs: { skillsDir: string } = { skillsDir }) {
+    return writeStageBrief({ stage: 'merge-conflicts', slug: MERGE_SLUG, tasksDir, worktreesDir, ...dirs })
+  }
+
+  function readBrief(): string {
+    return fs.readFileSync(path.join(taskDir, 'TASK-merge.md'), 'utf-8')
+  }
+
+  function commitFile(file: string, content: string, message: string): void {
+    fs.mkdirSync(path.dirname(path.join(worktree, file)), { recursive: true })
+    fs.writeFileSync(path.join(worktree, file), content)
+    git(worktree, ['add', file])
+    git(worktree, ['commit', '-q', '-m', message], '2026-10-01T10:00:00Z')
+  }
+
+  // A worktree whose HEAD and origin/master edit the same lines of each
+  // CONFLICTED_FILES entry, plus one file only master touched (merges clean).
+  function makeConflictedWorktree(): void {
+    git(worktree, ['init', '-q', '-b', 'base'])
+    git(worktree, ['config', 'user.email', 'test@example.com'])
+    git(worktree, ['config', 'user.name', 'Test'])
+    for (const file of CONFLICTED_FILES) commitFile(file, 'base\n', `base ${file}`)
+    git(worktree, ['checkout', '-q', '-b', 'master-side'])
+    for (const file of CONFLICTED_FILES) commitFile(file, 'master\n', `master ${file}`)
+    commitFile('only-master.ts', 'clean\n', 'master only')
+    git(worktree, ['update-ref', 'refs/remotes/origin/master', 'HEAD'])
+    git(worktree, ['checkout', '-q', 'base'])
+    git(worktree, ['checkout', '-q', '-b', MERGE_BRANCH])
+    for (const file of CONFLICTED_FILES) commitFile(file, 'ours\n', `ours ${file}`)
+  }
+
+  beforeEach(() => {
+    rootDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stage-brief-merge-')))
+    tasksDir = path.join(rootDir, 'tasks')
+    worktreesDir = path.join(rootDir, 'worktrees')
+    skillsDir = path.join(rootDir, 'skills')
+    taskDir = path.join(tasksDir, MERGE_SLUG)
+    worktree = path.join(worktreesDir, MERGE_SLUG)
+    fs.mkdirSync(taskDir, { recursive: true })
+    fs.mkdirSync(worktree, { recursive: true })
+    writeMergeSkill(MERGE_TEMPLATE)
+    makeConflictedWorktree()
+
+    writeTaskFile('TASK.md', ['# Conflicted task', '', '## Workspace', '- Repo: cockpit-ai', `- Branch: ${MERGE_BRANCH}`, ''].join('\n'))
+    writeTaskFile('INTENT.md', '# Intent: Conflicted task\n')
+    writeTaskFile('tech-design.md', '# Plan\n')
+    writeTaskFile('VERIFY', 'npx vitest run\n')
+    writeTaskFile('STATUS', `${PREVIOUS_STATUS}\n`)
+    writeTaskFile('TIMELINE', [
+      '2026-10-01T09:00:00Z dev PR #120 opened: an older round',
+      `2026-10-01T10:00:00Z dev PR #${MERGE_PR} opened: the change`,
+      '2026-10-01T11:00:00Z dev merged origin/master (M2, PR #119) into branch',
+      '2026-10-01T12:00:00Z qa 2 failures',
+      '',
+    ].join('\n'))
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    fs.rmSync(rootDir, { recursive: true, force: true })
+  })
+
+  it('writes TASK-merge.md naming the PR from TIMELINE, the conflicting files, and the STATUS to restore', async () => {
+    const briefPath = await render()
+
+    expect(briefPath).toBe(path.join(taskDir, 'TASK-merge.md'))
+    const brief = readBrief()
+    expect(brief).toContain(`- PR: #${MERGE_PR}`)
+    expect(brief).toContain(`- Worktree: ${worktree}`)
+    expect(brief).toContain(path.join(taskDir, 'INTENT.md'))
+    expect(brief).toContain(`- Approved plan: ${path.join(taskDir, 'tech-design.md')}`)
+    expect(brief).toContain('- Verifier: `npx vitest run`')
+    for (const file of CONFLICTED_FILES) expect(brief).toContain(`- \`${file}\``)
+    expect(brief).not.toContain('only-master.ts')
+    expect(brief).toContain(`restore \`${PREVIOUS_STATUS}\``)
+  })
+
+  it('is deterministic: the same files render the same brief', async () => {
+    await render()
+    const first = readBrief()
+    await render()
+    expect(readBrief()).toBe(first)
+  })
+
+  it('never writes TASK.md, in the task dir or the worktree, and leaves the worktree untouched', async () => {
+    const taskMdBefore = fs.readFileSync(path.join(taskDir, 'TASK.md'), 'utf-8')
+    const headBefore = git(worktree, ['rev-parse', 'HEAD'])
+
+    await render()
+
+    expect(fs.readFileSync(path.join(taskDir, 'TASK.md'), 'utf-8')).toBe(taskMdBefore)
+    expect(fs.existsSync(path.join(worktree, 'TASK.md'))).toBe(false)
+    expect(git(worktree, ['rev-parse', 'HEAD'])).toBe(headBefore)
+    expect(git(worktree, ['status', '--porcelain'])).toBe('')
+  })
+
+  it('ends with the real Branch line even when a conflicting path looks like a branch', async () => {
+    await render()
+    const brief = readBrief()
+
+    expect(brief.trimEnd().split('\n').at(-1)).toBe(`- Branch: ${MERGE_BRANCH}`)
+    expect(parseTaskMdContent(brief).branch).toBe(MERGE_BRANCH)
+  })
+
+  it('says so when the branch already merges cleanly', async () => {
+    git(worktree, ['update-ref', 'refs/remotes/origin/master', 'base'])
+
+    await render()
+
+    expect(readBrief()).toMatch(/none — .*merges cleanly/)
+  })
+
+  it('merges the base the repo actually has — origin/main on a main-based repo — not a hard-coded origin/master', async () => {
+    const masterSide = git(worktree, ['rev-parse', 'origin/master']).trim()
+    git(worktree, ['update-ref', '-d', 'refs/remotes/origin/master'])
+    git(worktree, ['update-ref', 'refs/remotes/origin/main', masterSide])
+
+    await render()
+    const brief = readBrief()
+
+    expect(brief).toContain('base: origin/main')
+    expect(brief).not.toContain('origin/master')
+    for (const file of CONFLICTED_FILES) expect(brief).toContain(`- \`${file}\``)
+  })
+
+  it('renders "unavailable", and logs, when the conflict list cannot be computed', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    git(worktree, ['update-ref', '-d', 'refs/remotes/origin/master'])
+
+    await render()
+
+    expect(readBrief()).toMatch(/unavailable \(/)
+    expect(errorSpy).toHaveBeenCalled()
+  })
+
+  it('refuses, writing nothing, when TIMELINE names no PR this task opened', async () => {
+    writeTaskFile('TIMELINE', '2026-10-01T11:00:00Z dev merged origin/master (M2, PR #119) into branch\n')
+
+    await expect(render()).rejects.toThrow(/PR/)
+    expect(fs.existsSync(path.join(taskDir, 'TASK-merge.md'))).toBe(false)
+  })
+
+  it('records "none recorded" for a missing STATUS rather than inventing one', async () => {
+    fs.rmSync(path.join(taskDir, 'STATUS'))
+
+    await render()
+
+    expect(readBrief()).toContain('restore `none recorded`')
+  })
+
+  describe('the real pipelinely-merge-conflicts template', () => {
+    it('renders with no leftover placeholder, carrying the merge, verify, push and STATUS rules, and ends with the Branch line', async () => {
+      await render({ skillsDir: REAL_SKILLS_DIR })
+      const brief = readBrief()
+
+      expect(brief).not.toMatch(/\{\{\w+\}\}/)
+      expect(brief).toContain('git merge origin/master')
+      expect(brief).not.toContain('{{baseRef}}')
+      expect(brief).toMatch(/never (a )?rebase/i)
+      expect(brief).toMatch(/force-push/i)
+      expect(brief).toContain('npx tsc --noEmit')
+      expect(brief).toContain('npx vitest run')
+      expect(brief).toContain('--project=ui')
+      expect(brief).toContain(`gh pr view ${MERGE_PR} --json mergeable`)
+      expect(brief).toContain('MERGE_NOTES.md')
+      expect(brief).toContain(`echo "working" > ${taskDir}/STATUS`)
+      expect(brief).toContain(PREVIOUS_STATUS)
+      expect(brief).toContain('merge-conflicts')
+      for (const file of CONFLICTED_FILES) expect(brief).toContain(file)
+      expect(parseTaskMdContent(brief).branch).toBe(MERGE_BRANCH)
+      expect(brief.trimEnd().split('\n').at(-1)).toBe(`- Branch: ${MERGE_BRANCH}`)
+    })
+  })
+
+  describe('stage-brief CLI', () => {
+    function runCli(args: string[]) {
+      const env: NodeJS.ProcessEnv = { ...process.env, TASKS_DIR: tasksDir, WORKTREES_DIR: worktreesDir }
+      const result = spawnSync(TSX_BIN, [CLI_PATH, ...args], { env, cwd: rootDir, encoding: 'utf-8' })
+      return { status: result.status, stdout: result.stdout, stderr: result.stderr }
+    }
+
+    it('writes TASK-merge.md from the real skill, the PR read from TIMELINE, and prints its path', () => {
+      const result = runCli(['merge-conflicts', MERGE_SLUG])
+
+      expect(result.stderr).toBe('')
+      expect(result.status).toBe(0)
+      expect(result.stdout).toContain(path.join(taskDir, 'TASK-merge.md'))
+    })
+
+    it('exits 1 with one stderr line, writing nothing, for a task that does not exist', () => {
+      const result = runCli(['merge-conflicts', 'no-such-task'])
+
+      expect(result.status).toBe(1)
+      expect(result.stderr.trim()).not.toBe('')
+    })
+  })
+})
+
+describe('isBriefStage', () => {
+  it.each(['code-review', 'merge-conflicts'])('accepts %s', (stage) => {
+    expect(isBriefStage(stage)).toBe(true)
+  })
+
+  it.each([['qa'], ['constructor'], ['']])('rejects %j, and undefined', (stage) => {
+    expect(isBriefStage(stage)).toBe(false)
+    expect(isBriefStage(undefined)).toBe(false)
+  })
+
+  it('accepts every stage whose dispatch is gated on an intent brief: adding qa there without a qa brief here must fail', () => {
+    for (const stage of INTENT_BRIEF_STAGES) expect(isBriefStage(stage), stage).toBe(true)
   })
 })

@@ -19,73 +19,43 @@ import { firstNonLoopbackIPv4 } from './testNetwork.js'
 // single time, so the one check that must never be skipped is deliberately in
 // the suite the verifier runs unattended.
 //
-// Mocks only the osascript/tmux-touching surface of focusTab.js — never route
-// logic — following src/server.orchestratorLock.test.ts's precedent. The three
-// write functions are distinguishable, which is the whole point: asserting
-// "staged, not submitted" means asserting which function the route reached for.
+// Mocks only the osascript/tmux-touching surface — never route logic —
+// following src/server.orchestratorLock.test.ts's precedent. The write itself
+// is writeTextToTmuxSession's {submit} option: "staged, not submitted" means
+// submit:false, and a stage (as opposed to a send) is also the only mode that
+// brings the attached tab forward.
 
-const stageInSessionCalls: { sessionId: string; text: string }[] = []
-const pasteIntoSessionQuietCalls: { sessionId: string; text: string }[] = []
-const pasteIntoSessionCalls: { sessionId: string; text: string }[] = []
-const trackedPasteCalls: { target: unknown; text: string; options: unknown }[] = []
+vi.mock('./tmuxPaneWrite.js', () => ({
+  writeTextToTmuxSession: vi.fn(async (_session: string, _text: string, _options: { submit: boolean }) => ({ status: 'ok', paneId: '%7' })),
+}))
 
 // Spreads the real module and overrides only the exports that actually shell
 // out to osascript/tmux. Listing the fakes by hand instead would silently
 // break the moment focusTab.ts gains an export something in the server's
 // import graph needs — refreshTasks()'s own getLiveSessionIds() call is
-// exactly that trap — while leaving the pure helpers (buildSessionWriteScript
-// and friends) genuinely real.
+// exactly that trap.
 vi.mock('./focusTab.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./focusTab.js')>()),
-
-  stageInSession: vi.fn(async (sessionId: string, text: string) => {
-    stageInSessionCalls.push({ sessionId, text })
-    return true
-  }),
-  // The auto-submitted remote path. Tracked separately from pasteIntoSession
-  // so "submitted quietly" and "submitted with a window jump" can never be
-  // confused for one another by a passing test.
-  pasteIntoSessionQuiet: vi.fn(async (sessionId: string, text: string) => {
-    pasteIntoSessionQuietCalls.push({ sessionId, text })
-    return true
-  }),
-  // Must stay at zero calls in every case in this file — /stage-skill is not
-  // allowed to reach for the focus-stealing variant at all any more.
-  pasteIntoSession: vi.fn(async (sessionId: string, text: string) => {
-    pasteIntoSessionCalls.push({ sessionId, text })
-    return true
-  }),
-
-  // Everything below merely has to not touch the real machine.
   focusITermTab: vi.fn(async () => false),
   getLiveSessionIds: vi.fn(async () => null),
   getLiveTmuxSessions: vi.fn(async () => new Set<string>()),
   getSessionTty: vi.fn(async () => null),
   tmuxSessionExists: vi.fn(async () => false),
-  tmuxPaneIsStrayShell: vi.fn(async () => false),
-  sessionIsClientOf: vi.fn(async () => false),
-  findSessionAttachedToTmux: vi.fn(async () => null),
+  findSessionAttachedToTmux: vi.fn(async () => ATTACHED_TAB_ID),
   reattachAndRecord: vi.fn(async () => null),
   reattachTmuxSession: vi.fn(async () => null),
   reattachOrFocus: vi.fn(async () => 'none' as const),
   openVSCode: vi.fn(async () => undefined),
   openBrowserUrl: vi.fn(async () => undefined),
   openAnnotationSession: vi.fn(async () => ({ status: 'error' as const, error: 'not exercised in this suite' })),
-  // Own-session-target stage-skill routes through this, not stageInSession/
-  // pasteIntoSessionQuiet directly any more (see server.ts's own comment) —
-  // defaults to a live-session success so the existing "staged"/"submitted"
-  // cases below need no change beyond asserting against trackedPasteCalls
-  // instead. Individual tests override with mockResolvedValueOnce/
-  // mockImplementationOnce for the reattach/failure branches.
-  pasteIntoTrackedSession: vi.fn((target: unknown, text: string, options: unknown) => {
-    trackedPasteCalls.push({ target, text, options })
-    return Promise.resolve({ status: 'ok' as const, reattached: false })
-  }),
 }))
 
-const ORCHESTRATOR_SESSION_ID = 'orchestrator-session-id'
+const ORCHESTRATOR_TMUX_NAME = 'orchestrator'
+const ATTACHED_TAB_ID = 'attached-tab-id'
 const OWN_SESSION_SLUG = 'quiet-own-session-fixture'
+const OWN_TMUX_NAME = 'worker-quiet-own-session-fixture'
 const OWN_SESSION_ID = 'own-session-id'
+const NO_TMUX_SLUG = 'no-tmux-own-session-fixture'
 
 let tmpDir: string
 let server: Server
@@ -172,14 +142,17 @@ beforeAll(async () => {
   // module-scope chokidar watcher. The own-session branch does a
   // currentTasks.find() and 404s on a miss, so without this the own-session
   // cases below would 404 and pass vacuously — asserting nothing at all.
-  const taskDir = path.join(tmpDir, OWN_SESSION_SLUG)
-  await fs.mkdir(taskDir, { recursive: true })
-  await fs.writeFile(
-    path.join(taskDir, 'TASK.md'),
-    '# Own-session fixture\n\n## Workspace\n- Repo: cockpit-ai\n- Branch: claude/quiet-own-session-fixture\n',
-  )
-  await fs.writeFile(path.join(taskDir, 'STATUS'), 'waiting: QA found 2 issues, triage and dispatch qa-fixes\n')
-  await fs.writeFile(path.join(taskDir, 'ITERM_SESSION'), OWN_SESSION_ID + '\n')
+  for (const [slug, tmuxName] of [[OWN_SESSION_SLUG, OWN_TMUX_NAME], [NO_TMUX_SLUG, null]] as const) {
+    const taskDir = path.join(tmpDir, slug)
+    await fs.mkdir(taskDir, { recursive: true })
+    await fs.writeFile(
+      path.join(taskDir, 'TASK.md'),
+      `# Own-session fixture\n\n## Workspace\n- Repo: cockpit-ai\n- Branch: claude/${slug}\n`,
+    )
+    await fs.writeFile(path.join(taskDir, 'STATUS'), 'waiting: QA found 2 issues, triage and dispatch qa-fixes\n')
+    await fs.writeFile(path.join(taskDir, 'ITERM_SESSION'), OWN_SESSION_ID + '\n')
+    if (tmuxName) await fs.writeFile(path.join(taskDir, 'TMUX_SESSION'), tmuxName + '\n')
+  }
 
   const { app } = await import('./server.js')
   await new Promise<void>((resolve) => {
@@ -198,6 +171,7 @@ beforeAll(async () => {
   // missing task here would send every own-session case down the 404 branch,
   // where they would assert nothing and still go green.
   await waitForTaskToRegister(OWN_SESSION_SLUG)
+  await waitForTaskToRegister(NO_TMUX_SLUG)
 }, 30_000)
 
 afterAll(async () => {
@@ -210,22 +184,24 @@ afterAll(async () => {
 })
 
 beforeEach(async () => {
-  stageInSessionCalls.length = 0
-  pasteIntoSessionQuietCalls.length = 0
-  pasteIntoSessionCalls.length = 0
-  trackedPasteCalls.length = 0
-  const { pasteIntoTrackedSession } = await import('./focusTab.js')
-  vi.mocked(pasteIntoTrackedSession).mockReset()
-  vi.mocked(pasteIntoTrackedSession).mockImplementation((target: unknown, text: string, options: unknown) => {
-    trackedPasteCalls.push({ target, text, options })
-    return Promise.resolve({ status: 'ok' as const, reattached: false })
-  })
-  // No ORCHESTRATOR_TMUX on purpose: with no live tmux session recorded,
-  // writeToOrchestrator takes its fast path and writes to the recorded tab
-  // directly, which is the branch these cases are about.
-  await fs.writeFile(path.join(tmpDir, 'ORCHESTRATOR_SESSION'), ORCHESTRATOR_SESSION_ID)
-  await fs.rm(path.join(tmpDir, 'ORCHESTRATOR_TMUX'), { force: true })
+  const { writeTextToTmuxSession } = await import('./tmuxPaneWrite.js')
+  vi.mocked(writeTextToTmuxSession).mockReset()
+  vi.mocked(writeTextToTmuxSession).mockResolvedValue({ status: 'ok', paneId: '%7' })
+  const { focusITermTab } = await import('./focusTab.js')
+  vi.mocked(focusITermTab).mockClear()
+  await fs.writeFile(path.join(tmpDir, 'ORCHESTRATOR_SESSION'), ATTACHED_TAB_ID)
+  await fs.writeFile(path.join(tmpDir, 'ORCHESTRATOR_TMUX'), ORCHESTRATOR_TMUX_NAME)
 })
+
+async function tmuxWriteCalls() {
+  const { writeTextToTmuxSession } = await import('./tmuxPaneWrite.js')
+  return vi.mocked(writeTextToTmuxSession).mock.calls
+}
+
+async function focusedTabIds() {
+  const { focusITermTab } = await import('./focusTab.js')
+  return vi.mocked(focusITermTab).mock.calls.map((call) => call[1])
+}
 
 describe('GET /api/access', () => {
   it('reports isRemoteAccess false to a loopback caller', async () => {
@@ -242,6 +218,8 @@ describe('GET /api/access', () => {
 })
 
 describe('POST /stage-skill/:slug — orchestrator-target stage (dev)', () => {
+  const DEV_COMMAND = '/pipelinely-dev dev-ready'
+
   // THE regression constraint. If this ever fails, the 2026-09-06 incident is
   // back: a request from the desktop browser got its command actually run
   // instead of staged for review.
@@ -250,34 +228,26 @@ describe('POST /stage-skill/:slug — orchestrator-target stage (dev)', () => {
 
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ submitted: false })
-    expect(stageInSessionCalls).toEqual([
-      { sessionId: ORCHESTRATOR_SESSION_ID, text: '/pipelinely-dev dev-ready' },
-    ])
-    expect(pasteIntoSessionQuietCalls).toEqual([])
-    expect(pasteIntoSessionCalls).toEqual([])
+    expect(await tmuxWriteCalls()).toEqual([[ORCHESTRATOR_TMUX_NAME, DEV_COMMAND, { submit: false }]])
   })
 
-  it('a loopback request with no flag is staged, exactly as it is today', async () => {
+  it('a loopback request with no flag is staged, exactly as it is today, and brings the attached tab forward', async () => {
     const res = await postStageSkill(loopbackUrl, 'dev-ready', { stage: 'dev' })
 
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ submitted: false })
-    expect(stageInSessionCalls).toHaveLength(1)
-    expect(pasteIntoSessionQuietCalls).toEqual([])
+    expect(await tmuxWriteCalls()).toEqual([[ORCHESTRATOR_TMUX_NAME, DEV_COMMAND, { submit: false }]])
+    expect(await focusedTabIds()).toEqual([ATTACHED_TAB_ID])
   })
 
-  it.skipIf(lanAddress === null)('a remote request carrying autoSubmit:true is submitted, quietly', async () => {
+  it.skipIf(lanAddress === null)('a remote request carrying autoSubmit:true is submitted, without jumping the developer\'s windows', async () => {
     const res = await postStageSkill(remoteUrl(), 'dev-ready', { stage: 'dev', autoSubmit: true })
 
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ submitted: true })
-    expect(pasteIntoSessionQuietCalls).toEqual([
-      { sessionId: ORCHESTRATOR_SESSION_ID, text: '/pipelinely-dev dev-ready' },
-    ])
-    expect(stageInSessionCalls).toEqual([])
-    // Never the focus-stealing variant — an unattended, phone-triggered write
-    // must not jump the developer's windows.
-    expect(pasteIntoSessionCalls).toEqual([])
+    expect(await tmuxWriteCalls()).toEqual([[ORCHESTRATOR_TMUX_NAME, DEV_COMMAND, { submit: true }]])
+    // An unattended, phone-triggered write must not jump the developer's windows.
+    expect(await focusedTabIds()).toEqual([])
   })
 
   it.skipIf(lanAddress === null)('a remote request with no flag is staged', async () => {
@@ -285,58 +255,54 @@ describe('POST /stage-skill/:slug — orchestrator-target stage (dev)', () => {
 
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ submitted: false })
-    expect(stageInSessionCalls).toHaveLength(1)
-    expect(pasteIntoSessionQuietCalls).toEqual([])
+    expect(await tmuxWriteCalls()).toEqual([[ORCHESTRATOR_TMUX_NAME, DEV_COMMAND, { submit: false }]])
   })
 
   // The flag is read with === true, so a client that sends a truthy-but-wrong
   // value gets the safe answer rather than an accidental submit.
   it.skipIf(lanAddress === null)('a remote request whose autoSubmit is truthy but not the boolean true is staged', async () => {
     for (const value of ['true', 1, {}, ['yes']]) {
-      stageInSessionCalls.length = 0
-      pasteIntoSessionQuietCalls.length = 0
+      const { writeTextToTmuxSession } = await import('./tmuxPaneWrite.js')
+      vi.mocked(writeTextToTmuxSession).mockClear()
 
       const res = await postStageSkill(remoteUrl(), 'dev-ready', { stage: 'dev', autoSubmit: value })
 
       expect(await res.json()).toEqual({ submitted: false })
-      expect(pasteIntoSessionQuietCalls).toEqual([])
-      expect(stageInSessionCalls).toHaveLength(1)
+      expect(await tmuxWriteCalls()).toEqual([[ORCHESTRATOR_TMUX_NAME, DEV_COMMAND, { submit: false }]])
+    }
+  })
+
+  it('no ORCHESTRATOR_TMUX recorded: refuses with 503 and types nothing', async () => {
+    await fs.rm(path.join(tmpDir, 'ORCHESTRATOR_TMUX'), { force: true })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    try {
+      const res = await postStageSkill(loopbackUrl, 'dev-ready', { stage: 'dev' })
+      expect(res.status).toBe(503)
+      expect(await tmuxWriteCalls()).toEqual([])
+    } finally {
+      errorSpy.mockRestore()
     }
   })
 })
 
 describe('POST /stage-skill/:slug — own-session-target stage (qa-fixes)', () => {
-  // Routed through pasteIntoTrackedSession, not stageInSession/
-  // pasteIntoSessionQuiet directly — see server.ts's own comment on why
-  // (reattach-and-retry resilience, same helper /pipelinely-handover/:slug uses).
-  it('a LOOPBACK request carrying autoSubmit:true is still only staged (submit:false, focus:true)', async () => {
+  it('a LOOPBACK request carrying autoSubmit:true is still only staged, and focuses the attached tab', async () => {
     const res = await postStageSkill(loopbackUrl, OWN_SESSION_SLUG, { stage: 'qa-fixes', autoSubmit: true })
 
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ submitted: false })
-    expect(trackedPasteCalls).toHaveLength(1)
-    expect(trackedPasteCalls[0].text).toBe('/pipelinely-qa-fixes')
-    expect(trackedPasteCalls[0].options).toEqual({ submit: false, focus: true })
-    expect(trackedPasteCalls[0].target).toEqual({
-      sessionId: OWN_SESSION_ID,
-      tmuxSession: null,
-      sessionFilePath: path.join(tmpDir, OWN_SESSION_SLUG, 'ITERM_SESSION'),
-    })
-    expect(stageInSessionCalls).toEqual([])
-    expect(pasteIntoSessionQuietCalls).toEqual([])
-    expect(pasteIntoSessionCalls).toEqual([])
+    expect(await tmuxWriteCalls()).toEqual([[OWN_TMUX_NAME, '/pipelinely-qa-fixes', { submit: false }]])
+    expect(await focusedTabIds()).toEqual([ATTACHED_TAB_ID])
   })
 
-  it.skipIf(lanAddress === null)('a remote request carrying autoSubmit:true is submitted, quietly (submit:true, focus:false)', async () => {
+  it.skipIf(lanAddress === null)('a remote request carrying autoSubmit:true is submitted, without focusing iTerm', async () => {
     const res = await postStageSkill(remoteUrl(), OWN_SESSION_SLUG, { stage: 'qa-fixes', autoSubmit: true })
 
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ submitted: true })
-    expect(trackedPasteCalls).toHaveLength(1)
-    expect(trackedPasteCalls[0].options).toEqual({ submit: true, focus: false })
-    expect(stageInSessionCalls).toEqual([])
-    expect(pasteIntoSessionQuietCalls).toEqual([])
-    expect(pasteIntoSessionCalls).toEqual([])
+    expect(await tmuxWriteCalls()).toEqual([[OWN_TMUX_NAME, '/pipelinely-qa-fixes', { submit: true }]])
+    expect(await focusedTabIds()).toEqual([])
   })
 
   it.skipIf(lanAddress === null)('a remote request with no flag is staged', async () => {
@@ -344,56 +310,47 @@ describe('POST /stage-skill/:slug — own-session-target stage (qa-fixes)', () =
 
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ submitted: false })
-    expect(trackedPasteCalls).toHaveLength(1)
-    expect(trackedPasteCalls[0].options).toEqual({ submit: false, focus: true })
+    expect(await tmuxWriteCalls()).toEqual([[OWN_TMUX_NAME, '/pipelinely-qa-fixes', { submit: false }]])
+    expect(await focusedTabIds()).toEqual([ATTACHED_TAB_ID])
   })
 
-  // The actual bug this branch used to have: a closed tab whose tmux session
-  // is still alive no longer flatly refuses — pasteIntoTrackedSession
-  // reattaches it, and the route reports success either way.
-  it('200 when the result is { status: "ok", reattached: true } — the reattach-then-retry case', async () => {
-    const { pasteIntoTrackedSession } = await import('./focusTab.js')
-    vi.mocked(pasteIntoTrackedSession).mockResolvedValueOnce({ status: 'ok', reattached: true })
+  it('409 with the refusal reason when the pane is not ready, and nothing is focused', async () => {
+    const { writeTextToTmuxSession } = await import('./tmuxPaneWrite.js')
+    vi.mocked(writeTextToTmuxSession).mockResolvedValueOnce({ status: 'refused', reason: 'dialog-open' })
 
     const res = await postStageSkill(loopbackUrl, OWN_SESSION_SLUG, { stage: 'qa-fixes' })
-    expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ submitted: false })
+    expect(res.status).toBe(409)
+    expect((await res.json()).reason).toBe('dialog-open')
+    expect(await focusedTabIds()).toEqual([])
   })
 
-  it('409 with { reattached: true } on reattach-paste-failed, and logs it', async () => {
-    const { pasteIntoTrackedSession } = await import('./focusTab.js')
-    vi.mocked(pasteIntoTrackedSession).mockResolvedValueOnce({ status: 'reattach-paste-failed' })
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  it('503 when the pane fell back to a shell', async () => {
+    const { writeTextToTmuxSession } = await import('./tmuxPaneWrite.js')
+    vi.mocked(writeTextToTmuxSession).mockResolvedValueOnce({ status: 'refused', reason: 'stray-shell' })
+
+    const res = await postStageSkill(loopbackUrl, OWN_SESSION_SLUG, { stage: 'qa-fixes' })
+    expect(res.status).toBe(503)
+  })
+
+  it('500 with the failing step when the tmux write fails', async () => {
+    const { writeTextToTmuxSession } = await import('./tmuxPaneWrite.js')
+    vi.mocked(writeTextToTmuxSession).mockResolvedValueOnce({ status: 'failed', step: 'submit', error: 'boom' })
+
+    const res = await postStageSkill(loopbackUrl, OWN_SESSION_SLUG, { stage: 'qa-fixes' })
+    expect(res.status).toBe(500)
+    expect((await res.json()).step).toBe('submit')
+  })
+
+  it('503 and no write when the task has no TMUX_SESSION recorded', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
     try {
-      const res = await postStageSkill(loopbackUrl, OWN_SESSION_SLUG, { stage: 'qa-fixes' })
-      expect(res.status).toBe(409)
-      const body = await res.json()
-      expect(body.reattached).toBe(true)
-      expect(body.error).toContain('the command still failed to stage')
+      const res = await postStageSkill(loopbackUrl, NO_TMUX_SLUG, { stage: 'qa-fixes' })
+      expect(res.status).toBe(503)
+      expect(await tmuxWriteCalls()).toEqual([])
       expect(errorSpy).toHaveBeenCalled()
     } finally {
       errorSpy.mockRestore()
     }
-  })
-
-  it('503 on no-session, with hadRecordedSession=true wording — the tab is gone and there is no live tmux session to reattach', async () => {
-    const { pasteIntoTrackedSession } = await import('./focusTab.js')
-    vi.mocked(pasteIntoTrackedSession).mockResolvedValueOnce({ status: 'no-session', hadRecordedSession: true })
-
-    const res = await postStageSkill(loopbackUrl, OWN_SESSION_SLUG, { stage: 'qa-fixes' })
-    expect(res.status).toBe(503)
-    const body = await res.json()
-    expect(body.error).toContain("own tab not found")
-  })
-
-  it('503 on no-session, with hadRecordedSession=false wording — never had a session recorded at all', async () => {
-    const { pasteIntoTrackedSession } = await import('./focusTab.js')
-    vi.mocked(pasteIntoTrackedSession).mockResolvedValueOnce({ status: 'no-session', hadRecordedSession: false })
-
-    const res = await postStageSkill(loopbackUrl, OWN_SESSION_SLUG, { stage: 'qa-fixes' })
-    expect(res.status).toBe(503)
-    const body = await res.json()
-    expect(body.error).toContain('has no recorded session to stage into')
   })
 })

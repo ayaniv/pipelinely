@@ -1,5 +1,5 @@
 import type { BacklogItem, DoneDateGroup, Task } from '../../../../src/types'
-import { pillStatusFor, type PillStatusKey } from '../../taskScope'
+import { isPlanApprovedParent, isUnstartedParent, pillStatusFor, type PillStatusKey } from '../../taskScope'
 
 // activeTasksOf (the one "non-done, on-board task" predicate) lives in
 // taskScope.ts — shared with the header's spend pill.
@@ -20,6 +20,30 @@ export function projectOptions(activeTasks: Task[], doneGroups: DoneDateGroup[],
   return [...projects].sort()
 }
 
+export interface PartitionedTasks {
+  // Plan-approved fan-out parents with a wave under way or finished: shown
+  // only in the Parent tasks section.
+  parents: Task[]
+  // Plan-approved parents whose first wave has not started: listed in the
+  // Backlog tab, never on Active.
+  unstartedParents: Task[]
+  // Everything else: the tasks that get a card or a row, and are counted.
+  leaves: Task[]
+}
+
+// A plan-approved parent never runs on its own (no stage, no status of its own
+// to act on), so it must not appear in Needs you / Working nor feed the Active
+// count or the waiting/working chips. One still awaiting plan review is not
+// partitioned out: its plan-review CTA is the developer's next step.
+export function partitionParents(tasks: Task[]): PartitionedTasks {
+  const approved = tasks.filter(isPlanApprovedParent)
+  return {
+    parents: approved.filter((task) => !isUnstartedParent(task)),
+    unstartedParents: approved.filter(isUnstartedParent),
+    leaves: tasks.filter((task) => !isPlanApprovedParent(task)),
+  }
+}
+
 const STATUS_ORDER: Record<string, number> = { waiting: 0, paused: 1, review: 2, working: 3, handover: 4, done: 5 }
 const UNKNOWN_STATUS_RANK = 9
 
@@ -27,10 +51,18 @@ function sortByLifecycleStatus(tasks: Task[]): Task[] {
   return [...tasks].sort((a, b) => (STATUS_ORDER[a.status] ?? UNKNOWN_STATUS_RANK) - (STATUS_ORDER[b.status] ?? UNKNOWN_STATUS_RANK))
 }
 
+// A Needs-you card carries a labelled rail and a callout, so it gets room for
+// two per row on a laptop; a Working card stays compact.
+const NEEDS_YOU_MIN_CARD_PX = 420
+const WORKING_MIN_CARD_PX = 300
+
 export interface ActiveGroupDefinition {
+  // The table view's name for the group (its testid and column set).
+  key: 'needs' | 'working'
   label: string
   testId: string
-  art: string
+  // The narrowest a card in this group may get before the grid drops a column.
+  minCardPx: number
   includes: (key: PillStatusKey) => boolean
 }
 
@@ -39,9 +71,14 @@ export interface ActiveGroupDefinition {
 // use), not a hardcoded status match, so a paused/idle/orphaned task still
 // lands in a bucket rather than being silently dropped.
 export const ACTIVE_GROUPS: ActiveGroupDefinition[] = [
-  { label: 'Needs you', testId: 'active-group-needs', art: 'head-beige-v3.png', includes: (key) => key === 'needs-you' || key === 'waiting' },
-  { label: 'Working', testId: 'active-group-working', art: 'head-blue-v3.png', includes: (key) => key !== 'needs-you' && key !== 'waiting' },
+  { key: 'needs', label: 'Needs you', testId: 'active-group-needs', minCardPx: NEEDS_YOU_MIN_CARD_PX, includes: (key) => key === 'needs-you' || key === 'waiting' },
+  { key: 'working', label: 'Working', testId: 'active-group-working', minCardPx: WORKING_MIN_CARD_PX, includes: (key) => key !== 'needs-you' && key !== 'waiting' },
 ]
+
+// min(100%, …): a plain pixel minimum overflows a 375px viewport.
+export function cardGridColumns(minCardPx: number): string {
+  return `repeat(auto-fill, minmax(min(100%, ${minCardPx}px), 1fr))`
+}
 
 export interface ActiveGroup {
   definition: ActiveGroupDefinition
@@ -74,6 +111,13 @@ export function pulseCounts(activeTasks: Task[]): PulseCounts {
     needsYou: activeTasks.filter((task) => task.attentionStatus === 'needs-you').length,
     working: activeTasks.filter((task) => task.status === 'working' && task.attentionStatus !== 'needs-you').length,
   }
+}
+
+// The visible tasks the developer has marked off focus. Takes the set rather
+// than reading clientState so every surface that counts off-focus tasks is fed
+// the one same set and cannot disagree.
+export function offFocusCount(visibleTasks: Task[], offFocusSlugs: ReadonlySet<string>): number {
+  return visibleTasks.filter((task) => offFocusSlugs.has(task.slug)).length
 }
 
 // Sunday–Thursday work week, matching this team's convention (not Mon–Fri).

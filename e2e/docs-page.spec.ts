@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
+import { openSidebarItem } from './fixtures/boardTabs.js'
 
 // M0 — the dashboard's own Docs page: a third full page (/docs) next to
 // Settings and Help, rendering docs/user-guide.md server-side through the
@@ -52,13 +53,14 @@ function recordDocsRequests(page: Page): string[] {
 
 async function openDocsFromSidebar(page: Page): Promise<void> {
   await page.goto('/')
-  await page.getByTestId('sidebar-docs-btn').click()
+  await openSidebarItem(page, 'sidebar-docs-btn')
   await expect(docsPage(page)).toBeVisible()
 }
 
 test.describe('sidebar Docs item', () => {
   test('is a real button, the same shape as the Settings and Help items beside it', async ({ page }) => {
     await page.goto('/')
+    await page.getByTestId('sidebar-account').click()
     const btn = page.getByTestId('sidebar-docs-btn')
 
     await expect(btn).toBeVisible()
@@ -71,7 +73,7 @@ test.describe('sidebar Docs item', () => {
     await page.goto('/')
     await expect(docsPage(page)).toBeHidden()
 
-    await page.getByTestId('sidebar-docs-btn').click()
+    await openSidebarItem(page, 'sidebar-docs-btn')
 
     await expect(docsPage(page)).toBeVisible()
     expect(new URL(page.url()).pathname).toBe('/docs')
@@ -92,11 +94,11 @@ test.describe('sidebar Docs item', () => {
     await page.goto('/settings')
     await expect(page.getByTestId('settings-page')).toBeVisible()
 
-    await page.getByTestId('sidebar-docs-btn').click()
+    await openSidebarItem(page, 'sidebar-docs-btn')
     await expect(docsPage(page)).toBeVisible()
     await expect(page.getByTestId('settings-page')).toBeHidden()
 
-    await page.getByTestId('sidebar-help-btn').click()
+    await openSidebarItem(page, 'sidebar-help-btn')
     await expect(page.getByTestId('help-page')).toBeVisible()
     await expect(docsPage(page)).toBeHidden()
   })
@@ -156,14 +158,14 @@ test.describe('Docs page — rendering the guide', () => {
     await expect(page.getByTestId('board-column')).toBeVisible()
     expect(requests, 'the board must not pay for the guide').toEqual([])
 
-    await page.getByTestId('sidebar-docs-btn').click()
+    await openSidebarItem(page, 'sidebar-docs-btn')
     await expect(docsBody(page).locator('h1')).toHaveCount(1)
     expect(requests).toEqual(['GET'])
 
     // Leave and come back: the already-loaded guide is reused.
     await page.getByTestId('tab-btn-backlog').click()
     await expect(docsPage(page)).toBeHidden()
-    await page.getByTestId('sidebar-docs-btn').click()
+    await openSidebarItem(page, 'sidebar-docs-btn')
     await expect(docsPage(page)).toBeVisible()
 
     expect(requests).toEqual(['GET'])
@@ -200,7 +202,7 @@ test.describe('Docs page — rendering the guide', () => {
     await expect(page.getByTestId('docs-error')).toBeVisible()
 
     await page.getByTestId('tab-btn-backlog').click()
-    await page.getByTestId('sidebar-docs-btn').click()
+    await openSidebarItem(page, 'sidebar-docs-btn')
 
     await expect(docsBody(page).locator('h1')).toHaveCount(1)
     await expect(page.getByTestId('docs-error')).toBeHidden()

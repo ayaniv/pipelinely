@@ -8,7 +8,9 @@ import type { ReactFlowProps } from '@xyflow/react'
 // selection lives in the pipeline (the stage / milestone that's open), not in
 // React Flow, and keyboard/touch behaviour is the page's own (native buttons,
 // native scrolling).
-export const DISPLAY_ONLY_FLOW_PROPS: Partial<ReactFlowProps> = {
+// `satisfies`, not an annotation: the inferred type lists only the props set
+// here, so it spreads into a ReactFlow of any node type (the wave graph's own).
+export const DISPLAY_ONLY_FLOW_PROPS = {
   nodesDraggable: false,
   nodesConnectable: false,
   nodesFocusable: false,
@@ -34,7 +36,7 @@ export const DISPLAY_ONLY_FLOW_PROPS: Partial<ReactFlowProps> = {
   minZoom: 1,
   maxZoom: 1,
   defaultViewport: { x: 0, y: 0, zoom: 1 },
-}
+} satisfies Partial<ReactFlowProps>
 
 // React Flow marks a node pointer-events:none unless it's draggable, selectable
 // or has its own handler — all switched off above — which lets the pane swallow

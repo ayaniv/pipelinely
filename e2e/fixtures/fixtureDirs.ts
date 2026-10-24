@@ -16,3 +16,9 @@ export const FIXTURE_WORKTREES_DIR = path.join(__dirname, 'worktrees')
 // ~/.config/pipelinely/remote-token. e2e/remote-auth.spec.ts writes and
 // deletes it per test, so it is gitignored scratch, never a checked-in secret.
 export const FIXTURE_REMOTE_TOKEN_FILE = path.join(__dirname, 'remote-token', 'token')
+
+// The fixture server's bookmarks folder, in place of the real
+// ~/.config/pipelinely/bookmarks. Gitignored scratch: e2e/bookmarks-page.spec.ts
+// empties and re-seeds it per test with invented bookmarks only, and
+// src/bookmarksPrivacy.test.ts proves it can never be committed.
+export const FIXTURE_BOOKMARKS_DIR = path.join(__dirname, 'bookmarks')

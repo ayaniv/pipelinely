@@ -5,7 +5,7 @@ import { MemoryRouter, Routes, Route, createMemoryRouter, RouterProvider } from 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { TaskDetail } from './TaskDetail'
 import { SNAPSHOT_QUERY_KEY } from '../../data/snapshot'
-import type { Task } from '../../../../src/types'
+import type { Settings, Task, TaskCreature } from '../../../../src/types'
 import { clientState } from '../../data/clientState'
 import { installAppNavigator } from '../../shell/appNavigation'
 import { rememberBoardTab } from '../board/boardTabRoutes'
@@ -27,19 +27,19 @@ function makeTask(overrides: Partial<Task> = {}): Task {
   } as Task
 }
 
-function setSnapshot(queryClient: QueryClient, tasks: Task[]) {
+function setSnapshot(queryClient: QueryClient, tasks: Task[], settings: Partial<Settings> = {}) {
   queryClient.setQueryData(SNAPSHOT_QUERY_KEY, {
     tasks, activeProject: null, weeklyFocus: '', backlog: [], doneGroups: [],
-    settings: { autoMode: false }, orchestratorContextPct: null, isCanonical: false,
+    settings: { autoMode: false, ...settings }, orchestratorContextPct: null, isCanonical: false,
   })
 }
 
-function renderAt(path: string, tasks: Task[] | undefined) {
+function renderAt(path: string, tasks: Task[] | undefined, settings: Partial<Settings> = {}) {
   // The page's own URL, which the app's navigation compares against to decide
   // push vs replace — MemoryRouter's location is separate from it.
   window.history.replaceState(null, '', path)
   const queryClient = new QueryClient()
-  if (tasks) setSnapshot(queryClient, tasks)
+  if (tasks) setSnapshot(queryClient, tasks, settings)
   const result = render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[path]}>
@@ -103,20 +103,20 @@ describe('TaskDetail', () => {
     expect(screen.getByTestId('l2-panel-title')).toHaveTextContent('Dev')
   })
 
-  test('a fan-out parent gets the L1 tab bar, opened on Dev when it is already in dev, and switchable', async () => {
-    renderAt('/task/demo-task', [makeTask({ stage: 'dev', milestones: [{ id: 'M0', name: 'M0', needs: [], estimate: null, specFile: null, wave: 1, task: null, state: 'queued' }] })])
+  test('a fan-out parent gets the pipeline chart in place of the L1 tabs, opened on Dev when it is already in dev, and switchable', async () => {
+    renderAt('/task/demo-task', [makeTask({ stage: 'dev', milestones: [{ id: 'M0', name: 'M0', needs: [], estimate: null, specFile: null, wave: 1, task: null, state: 'queued' as const }] })])
 
-    expect(await screen.findByTestId('l1-tabs')).toBeInTheDocument()
-    expect(screen.getByTestId('l1-tab-dev')).toHaveClass('is-active')
+    expect(await screen.findByTestId('stage-chain-dev')).toHaveAttribute('aria-current', 'step')
+    expect(screen.queryByTestId('l1-tabs')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('l1-tab-plan'))
-    expect(screen.getByTestId('l1-tab-plan')).toHaveClass('is-active')
-    expect(screen.getByTestId('l1-tab-dev')).not.toHaveClass('is-active')
+    fireEvent.click(screen.getByTestId('stage-chain-planning'))
+    expect(screen.getByTestId('stage-chain-planning')).toHaveAttribute('aria-current', 'step')
+    expect(screen.getByTestId('stage-chain-dev')).toHaveAttribute('aria-current', 'false')
   })
 
-  test('a fan-out parent still in planning opens on the Plan tab', () => {
-    renderAt('/task/demo-task', [makeTask({ stage: 'planning', milestones: [{ id: 'M0', name: 'M0', needs: [], estimate: null, specFile: null, wave: 1, task: null, state: 'queued' }] })])
-    expect(screen.getByTestId('l1-tab-plan')).toHaveClass('is-active')
+  test('a fan-out parent still in planning opens on Planning', async () => {
+    renderAt('/task/demo-task', [makeTask({ stage: 'planning', milestones: [{ id: 'M0', name: 'M0', needs: [], estimate: null, specFile: null, wave: 1, task: null, state: 'queued' as const }] })])
+    expect(await screen.findByTestId('stage-chain-planning')).toHaveAttribute('aria-current', 'step')
   })
 
   test('a flat task has no L1 tab bar', async () => {
@@ -347,5 +347,71 @@ describe('TaskDetail: Result tab', () => {
     renderAt('/task/demo-task?stage=result', [makeTask()])
     expect(screen.getByTestId('detail-panel-slot')).toBeInTheDocument()
     expect(screen.queryByTestId('result-tab')).not.toBeInTheDocument()
+  })
+})
+
+describe('TaskDetail: v3 header identity', () => {
+  const creature: TaskCreature = { name: 'Pip', color: '#a5c8d8', shape: '50% 50% 50% 50% / 50% 50% 50% 50%' }
+  const needsYou = { status: 'waiting', attentionStatus: 'needs-you', stage: 'dev', waitingReason: 'Plan reviewed. Two milestones, both ready.' } as Partial<Task>
+
+  test('starts with the 30px creature and its name, before the stage pill', () => {
+    renderAt('/task/demo-task', [makeTask({ creature })])
+    const holder = screen.getByTestId('detail-creature')
+    expect(within(holder).getByTestId('creature')).toHaveAttribute('data-name', 'Pip')
+    expect(within(holder).getByTestId('creature')).toHaveStyle({ width: '30px' })
+    expect(within(holder).getByTestId('creature-name')).toHaveTextContent('Pip')
+    expect(holder.compareDocumentPosition(screen.getByTestId('detail-stage-pill')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  test('omits the creature when placement is off or the task has none', () => {
+    const { unmount } = renderAt('/task/demo-task', [makeTask({ creature })], { creaturePlacement: 'off' })
+    expect(screen.queryByTestId('detail-creature')).not.toBeInTheDocument()
+    unmount()
+    renderAt('/task/demo-task', [makeTask({ creature: null })])
+    expect(screen.queryByTestId('detail-creature')).not.toBeInTheDocument()
+    expect(screen.getByTestId('detail-stage-pill')).toBeInTheDocument()
+  })
+
+  test('the stage pill carries the stage tone, and the attention pill says what the task needs', () => {
+    renderAt('/task/demo-task', [makeTask(needsYou)])
+    expect(screen.getByTestId('detail-stage-pill')).toHaveAttribute('data-tone', 'dev')
+    expect(screen.getByTestId('detail-stage-pill')).toHaveAttribute('data-variant', 'stage')
+    expect(screen.getByTestId('detail-attention')).toHaveAttribute('data-attention', 'needs-you')
+  })
+
+  test('a working task has a live dot in its pill', () => {
+    renderAt('/task/demo-task', [makeTask()])
+    expect(screen.getByTestId('detail-stage-dot')).toHaveClass('is-live')
+    expect(screen.getByTestId('detail-attention')).toHaveAttribute('data-attention', 'working')
+  })
+
+  test('a done task reads "Merged" and a shelved one "Backlog"', () => {
+    const { unmount } = renderAt('/task/demo-task', [makeTask({ status: 'done', stage: null, attentionStatus: 'idle' })])
+    expect(screen.getByTestId('detail-stage-pill')).toHaveAttribute('data-variant', 'merged')
+    expect(screen.getByTestId('detail-stage-pill')).toHaveTextContent('Merged')
+    unmount()
+    renderAt('/task/demo-task', [makeTask({ status: 'shelved', attentionStatus: 'idle' })])
+    expect(screen.getByTestId('detail-stage-pill')).toHaveAttribute('data-variant', 'backlog')
+    expect(screen.getByTestId('detail-stage-pill')).toHaveTextContent('Backlog')
+  })
+
+  test('a Needs-you task shows the summary callout, split at the first sentence', () => {
+    renderAt('/task/demo-task', [makeTask(needsYou)])
+    expect(screen.getByTestId('card-summary-head')).toHaveTextContent('Plan reviewed.')
+    expect(screen.getByTestId('card-summary-rest')).toHaveTextContent('Two milestones, both ready.')
+  })
+
+  test('no summary callout on a working task, nor on a Needs-you task with nothing to say', () => {
+    const { unmount } = renderAt('/task/demo-task', [makeTask({ waitingReason: 'Plan reviewed. Ready.' })])
+    expect(screen.queryByTestId('detail-summary')).not.toBeInTheDocument()
+    unmount()
+    renderAt('/task/demo-task', [makeTask({ ...needsYou, waitingReason: '' })])
+    expect(screen.queryByTestId('detail-summary')).not.toBeInTheDocument()
+  })
+
+  test('the rail marks the task\'s own stage', async () => {
+    renderAt('/task/demo-task', [makeTask({ stage: 'qa' })])
+    expect(await screen.findByTestId('stage-chain-qa')).toHaveAttribute('data-task-stage', 'true')
+    expect(screen.getByTestId('stage-chain-dev')).not.toHaveAttribute('data-task-stage', 'true')
   })
 })

@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { writeFileAtomicSync } from './atomicWrite.js'
 
 // Single-line pointer file in the tasks dir, same convention as
 // ORCHESTRATOR_SESSION / WEEKLY_FOCUS. It lives in a file rather than an env
@@ -127,14 +128,6 @@ export function writeReposDir(tasksDir: string, dir: string, cwd: string, homeDi
   const absoluteDir = check.reposDir
 
   const filePath = path.join(tasksDir, REPOS_DIR_FILE)
-  const tempPath = `${filePath}.${process.pid}.tmp`
-  try {
-    fs.mkdirSync(tasksDir, { recursive: true })
-    fs.writeFileSync(tempPath, `${absoluteDir}\n`)
-    fs.renameSync(tempPath, filePath)
-  } catch (err) {
-    fs.rmSync(tempPath, { force: true })
-    throw err
-  }
+  writeFileAtomicSync(filePath, `${absoluteDir}\n`)
   return absoluteDir
 }

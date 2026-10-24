@@ -25,7 +25,7 @@ import { withOrchestratorSessionLock } from '../fixtures/orchestratorSessionLock
 // non-canonical instance of the dashboard, exactly like a worktree's own
 // local preview server would (see TASK.md: canonical-dispatch-gate). The
 // canonical-dispatch gate inside writeToOrchestrator (server.ts) is checked
-// before ORCHESTRATOR_SESSION is ever read, so every scenario below now
+// before the orchestrator pointer is ever read, so every scenario below now
 // gets the same 403 regardless of whether a session was ever recorded — the
 // old distinct "missing" vs "recorded-but-dead" 503 messages this suite used
 // to distinguish are simply never reached here. Real pasting into a live
@@ -51,7 +51,11 @@ test.describe('resume/focus fallback — non-canonical instance, dispatch always
       await fs.rm(ORCHESTRATOR_SESSION_PATH, { force: true })
       await page.goto('/')
 
-      const btn = page.locator('.card[data-slug="resume-dead-session"] [data-testid="resume-btn"]')
+      // A paused card has no terminal button of its own; resuming goes through
+      // the card menu's "Open terminal", which posts the same /focus/:slug.
+      const paused = page.locator('.card[data-slug="resume-dead-session"]')
+      await paused.getByTestId('card-menu-btn').click()
+      const btn = paused.getByTestId('card-menu-focus')
       await expect(btn).toBeVisible()
 
       const [res] = await Promise.all([

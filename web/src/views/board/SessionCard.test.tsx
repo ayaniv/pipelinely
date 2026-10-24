@@ -7,10 +7,43 @@ import type { Task } from '../../../../src/types'
 const NOW = new Date('2026-09-23T12:00:00Z').getTime()
 
 function renderCard(task: Task, overrides: Partial<Parameters<typeof SessionCard>[0]> = {}) {
-  const props = { task, now: NOW, isOffFocus: false, onToggleOffFocus: vi.fn(), onOpenDetail: vi.fn(), ...overrides }
+  const props = { task, now: NOW, isOffFocus: false, onToggleOffFocus: vi.fn(), onOpenDetail: vi.fn(), creaturePlacement: 'header' as const, ...overrides }
   render(<SessionCard {...props} />)
   return props
 }
+
+const PIP = { name: 'Pip', color: '#a8d8c9', shape: '32% 64% 44% 47% / 63% 60% 47% 55%' }
+
+describe('SessionCard: creature', () => {
+  test('leads the header, before the status pill, on a Needs you card with its name beside it', () => {
+    renderCard(makeTask({ attentionStatus: 'needs-you', status: 'waiting', creature: PIP }))
+    const header = screen.getByTestId('card-header')
+    const creature = within(header).getByTestId('creature')
+    expect(header.firstElementChild).toContainElement(creature)
+    expect(header.firstElementChild).toContainElement(within(header).getByTestId('creature-name'))
+    expect(creature.compareDocumentPosition(within(header).getByTestId('card-status-pill'))).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(within(header).getByTestId('creature-name')).toHaveTextContent('Pip')
+  })
+
+  test('a Working card shows the name too, per the newer design handoff', () => {
+    renderCard(makeTask({ attentionStatus: 'working', status: 'working', creature: PIP }))
+    expect(screen.getByTestId('creature')).toHaveAttribute('title', 'Pip is on this task')
+    expect(screen.getByTestId('creature-name')).toHaveTextContent('Pip')
+  })
+
+  test('renders no creature for a task without one', () => {
+    renderCard(makeTask({ creature: null }))
+    expect(screen.queryByTestId('creature')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('creature-name')).not.toBeInTheDocument()
+    expect(screen.getByTestId('card-title')).toBeInTheDocument()
+  })
+
+  test('renders no creature when the placement is off', () => {
+    renderCard(makeTask({ creature: PIP }), { creaturePlacement: 'off' })
+    expect(screen.queryByTestId('creature')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('creature-name')).not.toBeInTheDocument()
+  })
+})
 
 describe('SessionCard: frame', () => {
   test('carries the attributes the board\'s specs and CSS key off', () => {
@@ -45,16 +78,22 @@ describe('SessionCard: frame', () => {
   })
 
   test('shows the auto-mode badge only when auto mode is on', () => {
-    const { unmount } = render(<SessionCard task={makeTask({ autoMode: true })} now={NOW} isOffFocus={false} onToggleOffFocus={vi.fn()} onOpenDetail={vi.fn()} />)
+    const { unmount } = render(<SessionCard task={makeTask({ autoMode: true })} now={NOW} isOffFocus={false} onToggleOffFocus={vi.fn()} onOpenDetail={vi.fn()} creaturePlacement="header" />)
     expect(screen.getByTestId('card-auto-badge')).toBeInTheDocument()
     unmount()
     renderCard(makeTask({ autoMode: false }))
     expect(screen.queryByTestId('card-auto-badge')).not.toBeInTheDocument()
   })
 
-  test('marks an off-focus card with the drift pill', () => {
+  test('marks an off-focus card with a chip inline after the title, not in the header', () => {
     renderCard(makeTask(), { isOffFocus: true })
-    expect(screen.getByTestId('task-card').querySelector('.drift-pill')).toBeInTheDocument()
+    expect(within(screen.getByTestId('card-title-block')).getByTestId('card-off-focus-chip')).toBeInTheDocument()
+    expect(within(screen.getByTestId('card-header')).queryByTestId('card-off-focus-chip')).not.toBeInTheDocument()
+  })
+
+  test('shows no off-focus chip while the task is on focus', () => {
+    renderCard(makeTask())
+    expect(screen.queryByTestId('card-off-focus-chip')).not.toBeInTheDocument()
   })
 
   test('the mini stage rail draws the five design buckets', () => {
@@ -63,7 +102,7 @@ describe('SessionCard: frame', () => {
   })
 
   test('shows the parent-link chip only for a milestone child', () => {
-    const { unmount } = render(<SessionCard task={makeTask({ projectTitle: 'Parent', projectBase: 'parent-slug' })} now={NOW} isOffFocus={false} onToggleOffFocus={vi.fn()} onOpenDetail={vi.fn()} />)
+    const { unmount } = render(<SessionCard task={makeTask({ projectTitle: 'Parent', projectBase: 'parent-slug' })} now={NOW} isOffFocus={false} onToggleOffFocus={vi.fn()} onOpenDetail={vi.fn()} creaturePlacement="header" />)
     expect(screen.getByTestId('ms-parent-link')).toHaveTextContent('Parent')
     unmount()
     renderCard(makeTask())
@@ -71,9 +110,90 @@ describe('SessionCard: frame', () => {
   })
 })
 
+describe('SessionCard: header', () => {
+  test('wraps instead of squeezing, and reads pill first then the right-aligned group', () => {
+    renderCard(makeTask())
+    const header = screen.getByTestId('card-header')
+    expect(header.firstElementChild).toBe(screen.getByTestId('card-status-pill'))
+    expect(header.lastElementChild).toHaveClass('card-header-right')
+  })
+
+  test.each(['paused', 'shelved', 'done'] as const)('a %s session has no terminal button, and no resume button either', (status) => {
+    renderCard(makeTask({ status }))
+    expect(screen.queryByTestId('focus-btn')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('resume-btn')).not.toBeInTheDocument()
+  })
+
+  test.each(['working', 'waiting', 'review', 'handover'] as const)('a live %s session keeps its terminal button', (status) => {
+    renderCard(makeTask({ status }))
+    expect(screen.getByTestId('focus-btn')).toBeInTheDocument()
+  })
+})
+
+describe('SessionCard: title and PR link', () => {
+  test('the title is a real link to the task', () => {
+    renderCard(makeTask())
+    expect(screen.getByTestId('card-title')).toHaveAttribute('href', '/task/demo-task')
+  })
+
+  test('a modified click is left to the browser rather than opening the task in place', () => {
+    const { onOpenDetail } = renderCard(makeTask())
+    const notPrevented = fireEvent.click(screen.getByTestId('card-title'), { metaKey: true })
+    expect(notPrevented).toBe(true)
+    expect(onOpenDetail).not.toHaveBeenCalled()
+  })
+
+  test('shows the PR link on the slug row only when the task has a PR', () => {
+    const { unmount } = render(<SessionCard task={makeTask({ prNumber: '42' })} now={NOW} isOffFocus={false} onToggleOffFocus={vi.fn()} onOpenDetail={vi.fn()} creaturePlacement="header" />)
+    expect(within(screen.getByTestId('card-slug-row')).getByTestId('card-pr-link')).toHaveAttribute('data-pr', '42')
+    unmount()
+    renderCard(makeTask())
+    expect(screen.queryByTestId('card-pr-link')).not.toBeInTheDocument()
+  })
+
+  test('clicking the PR link does not open the card', () => {
+    const { onOpenDetail } = renderCard(makeTask({ prNumber: '42' }))
+    fireEvent.click(screen.getByTestId('card-pr-link'))
+    expect(onOpenDetail).not.toHaveBeenCalled()
+  })
+})
+
+describe('SessionCard: stage palette', () => {
+  const needsYou = (overrides: Partial<Task> = {}) => makeTask({ status: 'waiting', attentionStatus: 'needs-you', stage: 'code-review', waitingReason: 'Plan reviewed. Ready for dev.', ...overrides })
+
+  test('a Needs-you card labels its rail and shows the summary callout instead of the plain note', () => {
+    renderCard(needsYou())
+    expect(screen.getAllByTestId('mini-stage-label')).toHaveLength(5)
+    expect(screen.getByTestId('card-summary-head')).toHaveTextContent('Plan reviewed.')
+    expect(screen.getByTestId('card-summary-rest')).toHaveTextContent('Ready for dev.')
+    expect(screen.queryByTestId('card-note')).not.toBeInTheDocument()
+  })
+
+  test('a Working card has an unlabelled rail, no callout, and keeps the plain note', () => {
+    renderCard(makeTask({ status: 'working', waitingReason: 'something' }))
+    expect(screen.queryByTestId('mini-stage-label')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('card-summary')).not.toBeInTheDocument()
+    expect(screen.getByTestId('card-note')).toBeInTheDocument()
+  })
+
+  test('the rail and the ctx fill carry the stage colour on every card', () => {
+    renderCard(makeTask({ status: 'working', stage: 'qa' }))
+    expect(screen.getByTestId('ctx-meter-fill').getAttribute('style')).toContain('var(--qaC)')
+    expect(screen.getAllByTestId('mini-stage-node').find((n) => n.dataset.state === 'current')!.getAttribute('style')).toContain('var(--qaC)')
+  })
+
+  test('the status pill takes the stage tone on a Needs-you card and the accent on a Working one', () => {
+    const { unmount } = render(<SessionCard task={needsYou()} now={NOW} isOffFocus={false} onToggleOffFocus={vi.fn()} onOpenDetail={vi.fn()} creaturePlacement="header" />)
+    expect(screen.getByTestId('card-status-pill').getAttribute('style')).toContain('var(--crSoft)')
+    unmount()
+    renderCard(makeTask({ status: 'working', stage: 'code-review' }))
+    expect(screen.getByTestId('card-status-pill').getAttribute('style')).toContain('var(--accentSoft)')
+  })
+})
+
 describe('SessionCard: notes and warnings', () => {
   test('shows the waiting reason, or the paused reason, as the card note', () => {
-    const { unmount } = render(<SessionCard task={makeTask({ waitingReason: 'need a decision' })} now={NOW} isOffFocus={false} onToggleOffFocus={vi.fn()} onOpenDetail={vi.fn()} />)
+    const { unmount } = render(<SessionCard task={makeTask({ waitingReason: 'need a decision' })} now={NOW} isOffFocus={false} onToggleOffFocus={vi.fn()} onOpenDetail={vi.fn()} creaturePlacement="header" />)
     expect(screen.getByTestId('card-note')).toHaveTextContent('need a decision')
     unmount()
     renderCard(makeTask({ status: 'paused', pausedReason: 'parked' }))
@@ -81,7 +201,7 @@ describe('SessionCard: notes and warnings', () => {
   })
 
   test('warns about hot context at or above the warn threshold, but not below it', () => {
-    const { unmount } = render(<SessionCard task={makeTask({ contextPct: 85 })} now={NOW} isOffFocus={false} onToggleOffFocus={vi.fn()} onOpenDetail={vi.fn()} />)
+    const { unmount } = render(<SessionCard task={makeTask({ contextPct: 85 })} now={NOW} isOffFocus={false} onToggleOffFocus={vi.fn()} onOpenDetail={vi.fn()} creaturePlacement="header" />)
     expect(screen.getByTestId('card-ctx-warning')).toHaveTextContent('Context at 85%')
     unmount()
     renderCard(makeTask({ contextPct: 70 }))
@@ -97,7 +217,7 @@ describe('SessionCard: ctx row and footer', () => {
   })
 
   test('a hot, parked task offers Handover; a hot but working one does not', () => {
-    const { unmount } = render(<SessionCard task={makeTask({ contextPct: 74, status: 'paused', attentionStatus: 'paused' })} now={NOW} isOffFocus={false} onToggleOffFocus={vi.fn()} onOpenDetail={vi.fn()} />)
+    const { unmount } = render(<SessionCard task={makeTask({ contextPct: 74, status: 'paused', attentionStatus: 'paused' })} now={NOW} isOffFocus={false} onToggleOffFocus={vi.fn()} onOpenDetail={vi.fn()} creaturePlacement="header" />)
     expect(screen.getByTestId('card-handover')).toBeInTheDocument()
     unmount()
     renderCard(makeTask({ contextPct: 74, status: 'working' }))
@@ -105,7 +225,7 @@ describe('SessionCard: ctx row and footer', () => {
   })
 
   test('a working leaf has no footer; a working milestone parent keeps its own', () => {
-    const { unmount } = render(<SessionCard task={makeTask({ status: 'working' })} now={NOW} isOffFocus={false} onToggleOffFocus={vi.fn()} onOpenDetail={vi.fn()} />)
+    const { unmount } = render(<SessionCard task={makeTask({ status: 'working' })} now={NOW} isOffFocus={false} onToggleOffFocus={vi.fn()} onOpenDetail={vi.fn()} creaturePlacement="header" />)
     expect(screen.getByTestId('task-card').querySelector('.card-footer')).not.toBeInTheDocument()
     unmount()
     renderCard(makeTask({ status: 'working', milestones: [{ id: 'M0' }] as never }))
@@ -137,8 +257,8 @@ describe('SessionCard: opening the detail view', () => {
   })
 
   test('clicking a button inside the card does not also open it', () => {
-    const { onOpenDetail } = renderCard(makeTask({ status: 'paused' }))
-    fireEvent.click(within(screen.getByTestId('task-card')).getByTestId('resume-btn'))
+    const { onOpenDetail } = renderCard(makeTask({ status: 'working' }))
+    fireEvent.click(within(screen.getByTestId('task-card')).getByTestId('focus-btn'))
     expect(onOpenDetail).not.toHaveBeenCalled()
   })
 
@@ -151,7 +271,7 @@ describe('SessionCard: opening the detail view', () => {
 
   test('the parent-link chip navigates to the parent, not to this card', () => {
     const onOpenDetail = vi.fn()
-    render(<SessionCard task={makeTask({ projectTitle: 'Parent', projectBase: 'parent-slug' })} now={NOW} isOffFocus={false} onToggleOffFocus={vi.fn()} onOpenDetail={onOpenDetail} />)
+    render(<SessionCard task={makeTask({ projectTitle: 'Parent', projectBase: 'parent-slug' })} now={NOW} isOffFocus={false} onToggleOffFocus={vi.fn()} onOpenDetail={onOpenDetail} creaturePlacement="header" />)
     fireEvent.click(screen.getByTestId('ms-parent-link'))
     expect(onOpenDetail).toHaveBeenCalledTimes(1)
     expect(onOpenDetail).toHaveBeenCalledWith('parent-slug')
@@ -169,7 +289,7 @@ describe('SessionCard: approval callout', () => {
   const APPROVAL_PROMPT = { session: 'worker-demo-task', question: 'Proceed?', summary: 'Bash command — npm test', options: [{ number: 1, label: 'Yes' }, { number: 2, label: 'No' }], fingerprint: '0123456789abcdef' }
 
   function cardFor(task: Task) {
-    return <SessionCard task={task} now={NOW} isOffFocus={false} onToggleOffFocus={vi.fn()} onOpenDetail={vi.fn()} />
+    return <SessionCard task={task} now={NOW} isOffFocus={false} onToggleOffFocus={vi.fn()} onOpenDetail={vi.fn()} creaturePlacement="header" />
   }
 
   afterEach(() => {
@@ -203,6 +323,32 @@ describe('SessionCard: approval callout', () => {
     expect(fetch).toHaveBeenCalledTimes(1)
     expect(screen.queryByTestId('card-approval')).not.toBeInTheDocument()
     expect(screen.queryByTestId('card-approval-result')).not.toBeInTheDocument()
+  })
+
+  test('sits directly under the summary callout, above the ctx row', () => {
+    renderCard(makeTask({ status: 'waiting', attentionStatus: 'needs-you', waitingReason: 'Plan reviewed. Ready.', approvalPrompt: APPROVAL_PROMPT }))
+    const summary = screen.getByTestId('card-summary')
+    const approval = screen.getByTestId('card-approval')
+    expect(summary.nextElementSibling).toBe(approval)
+    expect(approval.compareDocumentPosition(screen.getByTestId('ctx-meter')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  test('a blocked working leaf has the callout, no empty summary and no dispatch footer', () => {
+    renderCard(makeTask({ status: 'working', attentionStatus: 'needs-you', waitingReason: '', approvalPrompt: APPROVAL_PROMPT }))
+    expect(screen.getByTestId('card-approval')).toBeInTheDocument()
+    expect(screen.queryByTestId('card-summary')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('card-footer')).not.toBeInTheDocument()
+  })
+
+  test.each(['paused', 'shelved', 'done'] as const)('a %s task stopped on a dialog keeps its terminal button', (status) => {
+    renderCard(makeTask({ status, approvalPrompt: APPROVAL_PROMPT }))
+    expect(screen.getByTestId('card-header')).toContainElement(screen.getByTestId('focus-btn'))
+  })
+
+  test('the callout keeps the card from opening the task when an answer button is clicked', () => {
+    const { onOpenDetail } = renderCard(makeTask({ approvalPrompt: APPROVAL_PROMPT }))
+    fireEvent.click(screen.getAllByTestId('card-approval-option')[0])
+    expect(onOpenDetail).not.toHaveBeenCalled()
   })
 
   test('has no callout when the task has no approval prompt', () => {

@@ -22,7 +22,7 @@ const SHELL_ROUTES = [
   { path: '/', route: 'inprogress', view: 'active-sessions' },
   { path: '/backlog', route: 'backlog', view: 'backlog-section' },
   { path: '/done', route: 'done', view: 'done-section' },
-  { path: '/you', route: 'you', view: 'you-section' },
+  { path: '/usage', route: 'usage', view: 'usage-section' },
   { path: '/settings', route: 'settings', view: 'settings-page' },
   { path: '/help', route: 'help', view: 'help-page' },
   { path: '/docs', route: 'docs', view: 'docs-page' },

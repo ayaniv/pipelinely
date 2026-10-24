@@ -7,9 +7,9 @@ import { test, expect } from '@playwright/test'
 // tech-design.md's "Decision 1"), never the orchestrator's own.
 //
 // What this suite can and can't prove: openAnnotationSession has no safe
-// no-op path the way stageInSession does (a fake session id there just
-// fails to match; this route unconditionally opens a real iTerm2 tab when
-// it actually runs) — so the "clicking hits the correct route" and
+// no-op path the way the dispatch writers do (a fake tmux session name there
+// just fails to resolve; this route unconditionally opens a real iTerm2 tab
+// when it actually runs) — so the "clicking hits the correct route" and
 // "failure path" cases below stub the response at the network layer
 // instead of letting the real dispatch run. The 404 (no tech-design.md)
 // case is the one branch safe to hit for real, since the route returns

@@ -10,7 +10,7 @@ import type { Server } from 'node:http'
 // the one real dashboard, with nothing stopping it from pasting real text
 // and pressing Enter into the developer's live orchestrator terminal. This
 // suite exercises the production route handlers directly (mocking only the
-// osascript/tmux-touching functions in focusTab.js, never route logic) to
+// tmux-writing and osascript-touching functions, never route logic) to
 // prove writeToOrchestrator now refuses every write unless
 // COCKPIT_DISPATCH_ENABLED=1 — the signal only the pipelinely skill's
 // own dev-server launch step sets — covering the routes TASK.md names (POST
@@ -21,21 +21,15 @@ import type { Server } from 'node:http'
 // inside writeToOrchestrator itself really does cover every caller, not just
 // the ones that motivated it.
 
-const pasteCalls: { sessionId: string; text: string }[] = []
-const stageCalls: { sessionId: string; text: string }[] = []
+const ORCHESTRATOR_TMUX_NAME = 'orchestrator'
+
+vi.mock('./tmuxPaneWrite.js', () => ({
+  writeTextToTmuxSession: vi.fn(async (_session: string, _text: string, _options: { submit: boolean }) => ({ status: 'ok', paneId: '%7' })),
+}))
 
 vi.mock('./focusTab.js', () => ({
-  pasteIntoSession: vi.fn(async (sessionId: string, text: string) => {
-    pasteCalls.push({ sessionId, text })
-    return true
-  }),
-  stageInSession: vi.fn(async (sessionId: string, text: string) => {
-    stageCalls.push({ sessionId, text })
-    return true
-  }),
+  focusITermTab: vi.fn(async () => undefined),
   tmuxSessionExists: vi.fn(async () => false),
-  tmuxPaneIsStrayShell: vi.fn(async () => false),
-  sessionIsClientOf: vi.fn(async () => false),
   findSessionAttachedToTmux: vi.fn(async () => null),
   reattachAndRecord: vi.fn(async () => null),
   // parseAllTasks (taskParser.ts) calls these to mark each task's own
@@ -50,14 +44,13 @@ vi.mock('./focusTab.js', () => ({
   openVSCode: vi.fn(async () => undefined),
   openBrowserUrl: vi.fn(async () => undefined),
   openAnnotationSession: vi.fn(async () => ({ status: 'error' as const, error: 'not exercised in this suite' })),
-  pasteIntoTrackedSession: vi.fn(async () => ({ status: 'no-session' as const, hadRecordedSession: false })),
   normalizeWhitespace: (value: string) => value.replace(/\s+/g, ' ').trim(),
 }))
 
 let tmpDir: string
 let baseUrl: string
 let server: Server
-let ORCHESTRATOR_SESSION_PATH: string
+let ORCHESTRATOR_TMUX_PATH: string
 
 // The dead-tmux-session fixture task /focus/:slug's fallback needs. Only
 // picked up by currentTasks once chokidar's watcher fires off its STATUS
@@ -79,7 +72,7 @@ async function waitForTaskVisible(slug: string, timeoutMs = 5000): Promise<void>
 beforeAll(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cockpit-canonical-gate-test-'))
   process.env.TASKS_DIR = tmpDir
-  ORCHESTRATOR_SESSION_PATH = path.join(tmpDir, 'ORCHESTRATOR_SESSION')
+  ORCHESTRATOR_TMUX_PATH = path.join(tmpDir, 'ORCHESTRATOR_TMUX')
   const { app } = await import('./server.js')
   await new Promise<void>((resolve) => {
     server = app.listen(0, resolve)
@@ -106,10 +99,15 @@ afterAll(async () => {
 })
 
 beforeEach(async () => {
-  pasteCalls.length = 0
-  stageCalls.length = 0
-  await fs.writeFile(ORCHESTRATOR_SESSION_PATH, 'live-tab-id')
+  const { writeTextToTmuxSession } = await import('./tmuxPaneWrite.js')
+  vi.mocked(writeTextToTmuxSession).mockClear()
+  await fs.writeFile(ORCHESTRATOR_TMUX_PATH, ORCHESTRATOR_TMUX_NAME)
 })
+
+async function tmuxWriteCalls() {
+  const { writeTextToTmuxSession } = await import('./tmuxPaneWrite.js')
+  return vi.mocked(writeTextToTmuxSession).mock.calls
+}
 
 afterEach(() => {
   delete process.env.COCKPIT_DISPATCH_ENABLED
@@ -120,50 +118,56 @@ describe('canonical instance (COCKPIT_DISPATCH_ENABLED=1)', () => {
     process.env.COCKPIT_DISPATCH_ENABLED = '1'
   })
 
-  it('POST /backlog/dispatch succeeds and pastes into the orchestrator session', async () => {
+  it('POST /backlog/dispatch succeeds and sends into the orchestrator tmux session', async () => {
     const res = await fetch(`${baseUrl}/backlog/dispatch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ description: 'canonical item', context: null }),
     })
     expect(res.status).toBe(200)
-    expect(pasteCalls).toEqual([{ sessionId: 'live-tab-id', text: "Let's do this backlog item: canonical item" }])
+    expect(await tmuxWriteCalls()).toEqual([[ORCHESTRATOR_TMUX_NAME, "Let's do this backlog item: canonical item", { submit: true }]])
   })
 
-  it('POST /batch-dispatch succeeds and stages into the orchestrator session', async () => {
+  it('POST /batch-dispatch succeeds and stages into the orchestrator tmux session', async () => {
     const res = await fetch(`${baseUrl}/batch-dispatch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ kind: 'wave', slugs: ['some-milestone-m1'] }),
     })
     expect(res.status).toBe(200)
-    expect(stageCalls).toHaveLength(1)
-    expect(stageCalls[0].sessionId).toBe('live-tab-id')
+    const calls = await tmuxWriteCalls()
+    expect(calls).toHaveLength(1)
+    expect(calls[0][0]).toBe(ORCHESTRATOR_TMUX_NAME)
+    expect(calls[0][2]).toEqual({ submit: false })
   })
 
-  it("POST /focus/:slug's dead-session fallback succeeds and pastes the resume message", async () => {
+  it("POST /focus/:slug's dead-session fallback succeeds and sends the resume message", async () => {
     const res = await fetch(`${baseUrl}/focus/${DEAD_SESSION_SLUG}`, { method: 'POST' })
     expect(res.status).toBe(202)
     expect(await res.json()).toEqual({ fallback: true })
-    expect(pasteCalls).toHaveLength(1)
-    expect(pasteCalls[0].sessionId).toBe('live-tab-id')
-    expect(pasteCalls[0].text).toContain(DEAD_SESSION_SLUG)
+    const calls = await tmuxWriteCalls()
+    expect(calls).toHaveLength(1)
+    expect(calls[0][0]).toBe(ORCHESTRATOR_TMUX_NAME)
+    expect(calls[0][1]).toContain(DEAD_SESSION_SLUG)
+    expect(calls[0][2]).toEqual({ submit: true })
   })
 
-  it('POST /stage-skill/:slug (an orchestrator-target stage) succeeds and stages into the orchestrator session', async () => {
+  it('POST /stage-skill/:slug (an orchestrator-target stage) succeeds and stages into the orchestrator tmux session', async () => {
     const res = await fetch(`${baseUrl}/stage-skill/some-milestone-m1`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ stage: 'dev' }),
     })
     expect(res.status).toBe(200)
-    expect(stageCalls).toHaveLength(1)
-    expect(stageCalls[0].sessionId).toBe('live-tab-id')
+    const calls = await tmuxWriteCalls()
+    expect(calls).toHaveLength(1)
+    expect(calls[0][0]).toBe(ORCHESTRATOR_TMUX_NAME)
+    expect(calls[0][2]).toEqual({ submit: false })
   })
 })
 
 describe('non-canonical instance (COCKPIT_DISPATCH_ENABLED unset)', () => {
-  it('POST /backlog/dispatch is rejected with 403 and never pastes anything', async () => {
+  it('POST /backlog/dispatch is rejected with 403 and types nothing', async () => {
     const res = await fetch(`${baseUrl}/backlog/dispatch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -171,10 +175,10 @@ describe('non-canonical instance (COCKPIT_DISPATCH_ENABLED unset)', () => {
     })
     expect(res.status).toBe(403)
     expect(await res.json()).toEqual({ error: expect.stringContaining('not the canonical orchestrator dashboard') })
-    expect(pasteCalls).toEqual([])
+    expect(await tmuxWriteCalls()).toEqual([])
   })
 
-  it('POST /batch-dispatch is rejected with 403 and never stages anything', async () => {
+  it('POST /batch-dispatch is rejected with 403 and types nothing', async () => {
     const res = await fetch(`${baseUrl}/batch-dispatch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -182,17 +186,17 @@ describe('non-canonical instance (COCKPIT_DISPATCH_ENABLED unset)', () => {
     })
     expect(res.status).toBe(403)
     expect(await res.json()).toEqual({ error: expect.stringContaining('not the canonical orchestrator dashboard') })
-    expect(stageCalls).toEqual([])
+    expect(await tmuxWriteCalls()).toEqual([])
   })
 
-  it("POST /focus/:slug's dead-session fallback is rejected with 403 and never pastes anything", async () => {
+  it("POST /focus/:slug's dead-session fallback is rejected with 403 and types nothing", async () => {
     const res = await fetch(`${baseUrl}/focus/${DEAD_SESSION_SLUG}`, { method: 'POST' })
     expect(res.status).toBe(403)
     expect(await res.json()).toEqual({ error: expect.stringContaining('not the canonical orchestrator dashboard') })
-    expect(pasteCalls).toEqual([])
+    expect(await tmuxWriteCalls()).toEqual([])
   })
 
-  it('POST /stage-skill/:slug (an orchestrator-target stage) is rejected with 403 and never stages anything', async () => {
+  it('POST /stage-skill/:slug (an orchestrator-target stage) is rejected with 403 and types nothing', async () => {
     const res = await fetch(`${baseUrl}/stage-skill/some-milestone-m1`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -200,7 +204,7 @@ describe('non-canonical instance (COCKPIT_DISPATCH_ENABLED unset)', () => {
     })
     expect(res.status).toBe(403)
     expect(await res.json()).toEqual({ error: expect.stringContaining('not the canonical orchestrator dashboard') })
-    expect(stageCalls).toEqual([])
+    expect(await tmuxWriteCalls()).toEqual([])
   })
 })
 

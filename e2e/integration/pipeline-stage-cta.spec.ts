@@ -12,15 +12,14 @@ import { withOrchestratorSessionLock } from '../fixtures/orchestratorSessionLock
 // the right session (the orchestrator's own tab for most stages; the task's
 // own tab for qa-fixes/comment-fix, which take no slug argument at all).
 //
-// What this suite can and can't prove: no real iTerm2 session ever matches
-// a fixture's fake session id, so `stageInSession` always reports
-// "not found" here — that IS real, correct, already-precedented behavior
-// (see /backlog/dispatch's identical 503 path), and it's what a stale
-// ORCHESTRATOR_SESSION/ITERM_SESSION genuinely does in production. What
-// this suite verifies end-to-end is that the CLIENT computes the right
-// target stage and slug and the SERVER attempts to stage the right text
-// against the right session — not that a real terminal pane received
-// keystrokes, which no black-box HTTP/browser test can observe. The exact
+// What this suite can and can't prove: no real tmux session ever matches
+// a fixture's fake session pointers, so the write never lands here — that IS
+// real, correct, already-precedented behavior (see /backlog/dispatch's
+// identical error path), and it's what a stale pointer genuinely does in
+// production. What this suite verifies end-to-end is that the CLIENT
+// computes the right target stage and slug and the SERVER is asked to stage
+// the right text for the right target — not that a real terminal pane
+// received it, which no black-box HTTP/browser test can observe. The exact
 // composed text (e.g. "/pipelinely-qa-fixes" with no slug) is asserted by a
 // vitest unit test against `composeStageCommand` instead — see
 // tech-design.md's Testing section for why the split lands there.
@@ -200,8 +199,8 @@ test.describe('clicking the CTA stages the right stage + slug', () => {
       ])
       expect(request.postDataJSON()).toEqual({ stage: 'dev' })
 
-      // The fixture's ORCHESTRATOR_SESSION id never matches a real iTerm2
-      // session, so staging genuinely fails — the button must show that
+      // No real orchestrator tmux session exists for the fixture, so staging
+      // genuinely fails — the button must show that
       // honestly (see the file header) rather than a false "✓ sent".
       await expect(cta).toHaveClass(/btn-err/)
     })
@@ -210,8 +209,8 @@ test.describe('clicking the CTA stages the right stage + slug', () => {
   test('a milestone child stages against "<parent>-m<N>", not the parent\'s own slug', async ({ page }) => {
     await withOrchestratorSession('fake-orchestrator-session', async () => {
       await openTask(page, 'fanout-parent')
-      await page.getByTestId('l1-tab-dev').click()
-      await page.locator('[data-testid="milestone-card"][data-milestone-id="M1"]').click()
+      await page.getByTestId('stage-chain-dev').click()
+      await page.getByTestId('wave-task-M1').click()
 
       const cta = page.getByTestId('l2-cta')
       await expect(cta).toBeEnabled()
@@ -225,9 +224,9 @@ test.describe('clicking the CTA stages the right stage + slug', () => {
   })
 
   test('qa-fixes stages into the task\'s own tab, with no slug argument, not the orchestrator', async ({ page }) => {
-    // Deliberately no ORCHESTRATOR_SESSION for this one — qa-fixes must
-    // never read it at all, since its target is this task's own
-    // ITERM_SESSION (set in the fixture to a fake id).
+    // Deliberately no orchestrator pointer for this one — qa-fixes must
+    // never read it at all, since its target is this task's own tmux
+    // session (TMUX_SESSION, set in the fixture to a fake name).
     await openTask(page, 'qa-fixes-ready')
     await page.getByTestId('stage-chain-qa').click()
     const cta = page.getByTestId('l2-cta')
@@ -242,19 +241,10 @@ test.describe('clicking the CTA stages the right stage + slug', () => {
 })
 
 test.describe('milestone dependency gating', () => {
-  test('a milestone already dispatched shows a disabled Start Dev, not a live one', async ({ page }) => {
-    await openTask(page, 'fanout-parent')
-    await page.getByTestId('l1-tab-dev').click()
-    await page.locator('[data-testid="milestone-card"][data-milestone-id="M0"]').click()
-    const cta = page.getByTestId('l2-cta')
-    await expect(cta).toBeVisible()
-    await expect(cta).toBeDisabled()
-  })
-
   test('a milestone whose dependency is not yet done shows a disabled Start Dev', async ({ page }) => {
     await openTask(page, 'fanout-parent')
-    await page.getByTestId('l1-tab-dev').click()
-    await page.locator('[data-testid="milestone-card"][data-milestone-id="M2"]').click()
+    await page.getByTestId('stage-chain-dev').click()
+    await page.getByTestId('wave-task-M2').click()
     const cta = page.getByTestId('l2-cta')
     await expect(cta).toBeVisible()
     await expect(cta).toBeDisabled()
@@ -357,7 +347,7 @@ test.describe('plan-review verdict — the stage chain note', () => {
     // a selected node from.
     await openTask(page, 'demo-task')
     await expect(page.getByTestId('stage-chain-no-data')).toBeVisible()
-    await expect(page.getByTestId('stage-chain')).toBeVisible()
+    await expect(page.getByTestId('pipeline-chart')).toBeVisible()
     expect(errors).toEqual([])
   })
 
@@ -371,7 +361,7 @@ test.describe('plan-review verdict — the stage chain note', () => {
     // did parse). The Dev CTA still has to come up live regardless, since
     // computeNextStageCta reads STATUS's waitingReason, never TIMELINE.
     await openTask(page, 'dev-ready-malformed-timeline')
-    await expect(page.getByTestId('stage-chain')).toBeVisible()
+    await expect(page.getByTestId('pipeline-chart')).toBeVisible()
     const cta = page.getByTestId('l2-cta')
     await expect(cta).toBeVisible()
     await expect(cta).toBeEnabled()

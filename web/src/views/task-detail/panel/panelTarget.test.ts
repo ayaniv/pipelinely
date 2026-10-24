@@ -33,6 +33,24 @@ describe('a flat task', () => {
   })
 })
 
+describe('a ds task', () => {
+  it('resolves a ds-only ?stage= to a stage panel instead of dropping it', () => {
+    const t = task({ kind: 'ds' })
+    expect(resolvePanelTarget(t, nav({ l2Tab: 'design-qa' }), [t])).toMatchObject({ kind: 'stage', tab: 'design-qa', child: t })
+    expect(resolvePanelTarget(t, nav({ l2Tab: 'design-intake' }), [t])).toMatchObject({ kind: 'stage', tab: 'design-intake' })
+  })
+
+  it('still routes planning to the plan tab', () => {
+    const t = task({ kind: 'ds' })
+    expect(resolvePanelTarget(t, nav({ l2Tab: 'planning' }), [t])).toEqual({ kind: 'plan', task: t, stage: 'planning' })
+  })
+
+  it('a dev task ignores a ds-only ?stage= and shows its default tab', () => {
+    const t = task({ kind: 'dev' })
+    expect(resolvePanelTarget(t, nav({ l2Tab: 'design-qa' }), [t])).toMatchObject({ kind: 'stage', tab: 'dev' })
+  })
+})
+
 describe('a dispatched milestone child opened on its own', () => {
   const parent = task({ slug: 'p', milestones: [milestone('M1', { needs: ['M0'], state: 'dispatched' })] })
   const child = task({ slug: 'p-m1', projectTitle: 'P', projectBase: 'p' })
@@ -56,17 +74,21 @@ describe('a fan-out parent', () => {
   const m1 = milestone('M1', { needs: ['M0'] })
   const parent = task({ slug: 'p', milestones: [m0, m1], ...PLAN_REVIEWED })
 
-  it('Plan and Plan Review show the plan tab', () => {
-    expect(resolvePanelTarget(parent, nav({ l1Tab: 'plan' }), [parent])).toEqual({ kind: 'plan', task: parent, stage: 'planning' })
+  it('Planning and Plan Review show the plan tab', () => {
+    expect(resolvePanelTarget(parent, nav({ l1Tab: 'planning' }), [parent])).toEqual({ kind: 'plan', task: parent, stage: 'planning' })
     expect(resolvePanelTarget(parent, nav({ l1Tab: 'plan-review' }), [parent])).toEqual({ kind: 'plan', task: parent, stage: 'plan-review' })
   })
 
-  it('Dev with nothing drilled into has no panel — the graph slot owns the milestone list', () => {
-    expect(resolvePanelTarget(parent, nav(), [parent])).toEqual({ kind: 'none' })
+  it('Dev with nothing drilled into shows the milestone list', () => {
+    expect(resolvePanelTarget(parent, nav(), [parent])).toEqual({ kind: 'milestone-graph', task: parent })
   })
 
-  it('a milestone the plan no longer declares has no panel either, rather than a blank one', () => {
-    expect(resolvePanelTarget(parent, nav({ milestoneId: 'M9' }), [parent])).toEqual({ kind: 'none' })
+  it('a milestone the plan no longer declares falls back to the milestone list, rather than a blank panel', () => {
+    expect(resolvePanelTarget(parent, nav({ milestoneId: 'M9' }), [parent])).toEqual({ kind: 'milestone-graph', task: parent })
+  })
+
+  it.each(['cr', 'qa', 'merge'] as const)('%s lists the parent\'s milestones for that stage', (l1Tab) => {
+    expect(resolvePanelTarget(parent, nav({ l1Tab }), [parent])).toEqual({ kind: 'parent-stage', stage: l1Tab, milestones: [m0, m1] })
   })
 
   it('a dispatched milestone drills into its child\'s own stage panel', () => {

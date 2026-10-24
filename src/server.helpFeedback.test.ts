@@ -4,36 +4,29 @@ import path from 'node:path'
 import { startTestServer, stopTestServer, type TestServerHandle } from './serverTestHarness.js'
 
 // Proves the server half of tech-design-help-feedback-tab.md's "stage,
-// don't send" decision and its newline decision: POST /help/pipelinely-feedback writes
-// through stageInSession (never pasteIntoSession), composes
-// `/pipelinely-feedback <message>` with normalizeWhitespace applied to the message, and
-// validates the body the way /backlog/dispatch does — same harness shape as
-// server.handover.test.ts.
+// don't send" decision and its newline decision: POST /help/pipelinely-feedback stages
+// (submit:false) through writeTextToTmuxSession into ORCHESTRATOR_TMUX,
+// composes `/pipelinely-feedback <message>` with normalizeWhitespace applied to the
+// message, and validates the body the way /backlog/dispatch does — same
+// harness shape as server.handover.test.ts.
 
-const pasteCalls: { sessionId: string; text: string }[] = []
-const stageCalls: { sessionId: string; text: string }[] = []
+const ORCHESTRATOR_TMUX_NAME = 'orchestrator'
+
+vi.mock('./tmuxPaneWrite.js', () => ({
+  writeTextToTmuxSession: vi.fn(async (_session: string, _text: string, _options: { submit: boolean }) => ({ status: 'ok', paneId: '%7' })),
+}))
 
 vi.mock('./focusTab.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./focusTab.js')>()
   return {
-    pasteIntoSession: vi.fn((sessionId: string, text: string) => {
-      pasteCalls.push({ sessionId, text })
-      return Promise.resolve(sessionId === 'live-tab-id')
-    }),
-    stageInSession: vi.fn((sessionId: string, text: string) => {
-      stageCalls.push({ sessionId, text })
-      return Promise.resolve(sessionId === 'live-tab-id')
-    }),
-    tmuxSessionExists: vi.fn(async () => false),
-    tmuxPaneIsStrayShell: vi.fn(async () => false),
-    sessionIsClientOf: vi.fn(async () => false),
-    findSessionAttachedToTmux: vi.fn(async () => null),
+    tmuxSessionExists: vi.fn(async () => true),
+    findSessionAttachedToTmux: vi.fn(async () => 'attached-tab-id'),
+    focusITermTab: vi.fn(async () => undefined),
     reattachAndRecord: vi.fn(async () => null),
     reattachOrFocus: vi.fn(async () => 'none' as const),
     openVSCode: vi.fn(async () => undefined),
     openBrowserUrl: vi.fn(async () => undefined),
     openAnnotationSession: vi.fn(async () => ({ status: 'error' as const, error: 'not exercised in this suite' })),
-    pasteIntoTrackedSession: vi.fn(async () => ({ status: 'no-session' as const, hadRecordedSession: false })),
     getLiveSessionIds: vi.fn(async () => null),
     getLiveTmuxSessions: vi.fn(async () => new Set<string>()),
     // normalizeWhitespace is exercised for real — a mocked collapse would
@@ -56,13 +49,16 @@ afterAll(async () => {
 })
 
 beforeEach(async () => {
-  pasteCalls.length = 0
-  stageCalls.length = 0
-  const { stageInSession } = await import('./focusTab.js')
-  vi.mocked(stageInSession).mockClear()
-  await fs.rm(path.join(handle.tmpDir, 'ORCHESTRATOR_SESSION'), { force: true })
-  await fs.rm(path.join(handle.tmpDir, 'ORCHESTRATOR_TMUX'), { force: true })
+  const { writeTextToTmuxSession } = await import('./tmuxPaneWrite.js')
+  vi.mocked(writeTextToTmuxSession).mockClear()
+  vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  await fs.writeFile(path.join(handle.tmpDir, 'ORCHESTRATOR_TMUX'), ORCHESTRATOR_TMUX_NAME)
 })
+
+async function tmuxWriteCalls() {
+  const { writeTextToTmuxSession } = await import('./tmuxPaneWrite.js')
+  return vi.mocked(writeTextToTmuxSession).mock.calls
+}
 
 function postFeedback(message: unknown) {
   return fetch(`${baseUrl}/help/pipelinely-feedback`, {
@@ -73,14 +69,10 @@ function postFeedback(message: unknown) {
 }
 
 describe('POST /help/pipelinely-feedback', () => {
-  it('200: calls stageInSession once with the recorded session id and /pipelinely-feedback <message>; pasteIntoSession never called', async () => {
-    await fs.writeFile(path.join(handle.tmpDir, 'ORCHESTRATOR_SESSION'), 'live-tab-id')
-
+  it('200: stages /pipelinely-feedback <message> (submit:false) into the recorded tmux session, exactly once', async () => {
     const res = await postFeedback('the stepper collapses the wrong node')
     expect(res.status).toBe(200)
-    expect(stageCalls).toHaveLength(1)
-    expect(stageCalls[0]).toEqual({ sessionId: 'live-tab-id', text: '/pipelinely-feedback the stepper collapses the wrong node' })
-    expect(pasteCalls).toHaveLength(0)
+    expect(await tmuxWriteCalls()).toEqual([[ORCHESTRATOR_TMUX_NAME, '/pipelinely-feedback the stepper collapses the wrong node', { submit: false }]])
   })
 
   it.each([
@@ -89,11 +81,9 @@ describe('POST /help/pipelinely-feedback', () => {
     ['a tab', 'a\tb', '/pipelinely-feedback a b'],
     ['runs of spaces', 'a    b', '/pipelinely-feedback a b'],
   ])('collapses %s into one single-space-joined line before staging', async (_label, message, expected) => {
-    await fs.writeFile(path.join(handle.tmpDir, 'ORCHESTRATOR_SESSION'), 'live-tab-id')
-
     const res = await postFeedback(message)
     expect(res.status).toBe(200)
-    expect(stageCalls[0].text).toBe(expected)
+    expect((await tmuxWriteCalls())[0][1]).toBe(expected)
   })
 
   it.each([
@@ -101,46 +91,35 @@ describe('POST /help/pipelinely-feedback', () => {
     ['non-string', 42],
     ['empty', ''],
     ['whitespace-only', '   \n  '],
-  ])('400 for a %s message; no write function called', async (_label, message) => {
+  ])('400 for a %s message; nothing written', async (_label, message) => {
     const res = await postFeedback(message)
     expect(res.status).toBe(400)
-    expect(stageCalls).toHaveLength(0)
-    expect(pasteCalls).toHaveLength(0)
+    expect(await tmuxWriteCalls()).toEqual([])
   })
 
-  it('503 with no ORCHESTRATOR_SESSION recorded; no write function called', async () => {
+  it('503 with no ORCHESTRATOR_TMUX recorded; nothing written, and logged', async () => {
+    await fs.rm(path.join(handle.tmpDir, 'ORCHESTRATOR_TMUX'), { force: true })
     const res = await postFeedback('a message')
     expect(res.status).toBe(503)
-    expect(stageCalls).toHaveLength(0)
-    expect(pasteCalls).toHaveLength(0)
+    expect(await tmuxWriteCalls()).toEqual([])
+    expect(console.error).toHaveBeenCalled()
   })
 
-  it('409 when the recorded tab is dead and the adopted/reattached write fails', async () => {
-    await fs.writeFile(path.join(handle.tmpDir, 'ORCHESTRATOR_SESSION'), 'stale-id')
-    await fs.writeFile(path.join(handle.tmpDir, 'ORCHESTRATOR_TMUX'), 'orchestrator')
-    const { tmuxSessionExists, findSessionAttachedToTmux, stageInSession } = await import('./focusTab.js')
-    vi.mocked(tmuxSessionExists).mockResolvedValueOnce(true)
-    vi.mocked(findSessionAttachedToTmux).mockResolvedValueOnce('adopted-id')
-    vi.mocked(stageInSession).mockResolvedValueOnce(false)
+  it('409 naming the reason when the pane is showing a dialog', async () => {
+    const { writeTextToTmuxSession } = await import('./tmuxPaneWrite.js')
+    vi.mocked(writeTextToTmuxSession).mockResolvedValueOnce({ status: 'refused', reason: 'dialog-open' })
 
     const res = await postFeedback('a message')
     expect(res.status).toBe(409)
-    const body = await res.json()
-    expect(body.reattached).toBe(true)
+    expect((await res.json()).reason).toBe('dialog-open')
   })
 
-  it('500 when stageInSession rejects, and logs it', async () => {
-    await fs.writeFile(path.join(handle.tmpDir, 'ORCHESTRATOR_SESSION'), 'live-tab-id')
-    const { stageInSession } = await import('./focusTab.js')
-    vi.mocked(stageInSession).mockRejectedValueOnce(new Error('boom'))
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  it('500 when writeTextToTmuxSession rejects, and logs it', async () => {
+    const { writeTextToTmuxSession } = await import('./tmuxPaneWrite.js')
+    vi.mocked(writeTextToTmuxSession).mockRejectedValueOnce(new Error('boom'))
 
-    try {
-      const res = await postFeedback('a message')
-      expect(res.status).toBe(500)
-      expect(errorSpy).toHaveBeenCalled()
-    } finally {
-      errorSpy.mockRestore()
-    }
+    const res = await postFeedback('a message')
+    expect(res.status).toBe(500)
+    expect(console.error).toHaveBeenCalled()
   })
 })

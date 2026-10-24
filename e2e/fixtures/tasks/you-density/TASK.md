@@ -8,7 +8,7 @@
 ## Mode: implement
 
 ## Context
-Fixture task for e2e/you-tab.spec.ts. The only done fixture whose per-session
+Fixture task for e2e/usage-tab.spec.ts. The only done fixture whose per-session
 METRICS files the spec writes at runtime, because the heatmap's day cells key
 off `session.startedAt` and a checked-in absolute date would eventually fall
 out of the chart's own rolling 53-week window. Every METRICS-*.json here is

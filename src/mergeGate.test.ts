@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { execa } from 'execa'
-import { evaluateMergeReadiness, formatBranchMismatch, formatMergeBlockers, checkMergeReadiness } from './mergeGate.js'
+import { classifyPrMergeState, evaluateMergeReadiness, formatBranchMismatch, formatMergeBlockers, checkMergeReadiness, readPrMergeState } from './mergeGate.js'
 
 vi.mock('execa', () => ({ execa: vi.fn() }))
 
@@ -232,5 +232,83 @@ describe('evaluateMergeReadiness head branch on refusal', () => {
   it('has no headRefName for a malformed read', () => {
     const result = evaluateMergeReadiness('nonsense')
     expect(result.ready === false && result.headRefName).toBeNull()
+  })
+})
+
+describe('classifyPrMergeState', () => {
+  it.each([
+    ['MERGEABLE', 'CLEAN', 'mergeable'],
+    ['MERGEABLE', 'UNSTABLE', 'mergeable'],
+    ['CONFLICTING', 'DIRTY', 'conflicting'],
+    // The gate reads DIRTY as a conflict on its own, so the dashboard must too.
+    ['MERGEABLE', 'DIRTY', 'conflicting'],
+    ['UNKNOWN', 'UNKNOWN', 'unknown'],
+    [undefined, undefined, 'unknown'],
+    ['SOMETHING_NEW', 'CLEAN', 'unknown'],
+  ])('mergeable %s / mergeStateStatus %s -> %s', (mergeable, mergeStateStatus, expected) => {
+    expect(classifyPrMergeState(mergeable, mergeStateStatus)).toBe(expected)
+  })
+
+  it('agrees with the merge gate about what a conflict is', () => {
+    const dirty = evaluateMergeReadiness(basePrView({ mergeable: 'MERGEABLE', mergeStateStatus: 'DIRTY' }))
+    expect(dirty.ready).toBe(false)
+    expect((dirty as { blockers: { kind: string }[] }).blockers.map((b) => b.kind)).toContain('conflicts')
+  })
+})
+
+describe('readPrMergeState', () => {
+  const mockExeca = vi.mocked(execa)
+  const view = (overrides: Record<string, unknown> = {}) => ({ stdout: JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', headRefName: 'claude/some-task', ...overrides }) })
+
+  beforeEach(() => {
+    mockExeca.mockReset()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(console.error).mockClear()
+  })
+
+  it('reads one gh pr view, from the repo checkout, and classifies it', async () => {
+    mockExeca.mockResolvedValueOnce(view({ mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' }) as never)
+    expect(await readPrMergeState('/repo', '149', 'claude/some-task')).toBe('conflicting')
+    expect(mockExeca).toHaveBeenCalledTimes(1)
+    const [bin, args, opts] = mockExeca.mock.calls[0] as unknown as [string, string[], { cwd: string }]
+    expect(bin).toBe('gh')
+    expect(args.slice(0, 3)).toEqual(['pr', 'view', '149'])
+    expect(opts.cwd).toBe('/repo')
+  })
+
+  it('answers mergeable for a clean open PR', async () => {
+    mockExeca.mockResolvedValueOnce(view() as never)
+    expect(await readPrMergeState('/repo', '149', 'claude/some-task')).toBe('mergeable')
+  })
+
+  it('does not re-read while GitHub is still computing — UNKNOWN is just unknown', async () => {
+    mockExeca.mockResolvedValueOnce(view({ mergeable: 'UNKNOWN', mergeStateStatus: 'UNKNOWN' }) as never)
+    expect(await readPrMergeState('/repo', '149', 'claude/some-task')).toBe('unknown')
+    expect(mockExeca).toHaveBeenCalledTimes(1)
+  })
+
+  it('answers null for a PR that is no longer open', async () => {
+    mockExeca.mockResolvedValueOnce(view({ state: 'MERGED' }) as never)
+    expect(await readPrMergeState('/repo', '149', 'claude/some-task')).toBeNull()
+  })
+
+  it("answers unknown, and logs, for a PR whose head is some other task's branch", async () => {
+    mockExeca.mockResolvedValueOnce(view({ headRefName: 'claude/another-task', mergeable: 'CONFLICTING' }) as never)
+    expect(await readPrMergeState('/repo', '149', 'claude/some-task')).toBe('unknown')
+    expect(console.error).toHaveBeenCalled()
+  })
+
+  it('answers unknown, and logs, when gh fails', async () => {
+    mockExeca.mockRejectedValueOnce(new Error('gh: no such PR'))
+    expect(await readPrMergeState('/repo', '149', 'claude/some-task')).toBe('unknown')
+    expect(console.error).toHaveBeenCalled()
+  })
+
+  it('answers unknown, and logs, when gh prints something that is not the expected JSON', async () => {
+    mockExeca.mockResolvedValueOnce({ stdout: 'not json' } as never)
+    expect(await readPrMergeState('/repo', '149', 'claude/some-task')).toBe('unknown')
+    mockExeca.mockResolvedValueOnce({ stdout: '[]' } as never)
+    expect(await readPrMergeState('/repo', '149', 'claude/some-task')).toBe('unknown')
+    expect(console.error).toHaveBeenCalledTimes(2)
   })
 })

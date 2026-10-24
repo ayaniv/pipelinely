@@ -80,7 +80,7 @@ test.describe('react active board: granular reconciliation', () => {
 
     await pushSnapshot(page, { taskPatches: { [STAGE_CTA_SLUG]: { waitingReason: 'plan reviewed, ready for dev — edited mid-test' } } })
 
-    await expect(card(page, STAGE_CTA_SLUG).getByTestId('card-note')).toContainText('edited mid-test')
+    await expect(card(page, STAGE_CTA_SLUG).getByTestId('card-summary')).toContainText('edited mid-test')
     await expect(card(page, WORKING_SLUG).getByTestId('focus-btn')).toHaveAttribute('data-stable-marker', '1')
   })
 
@@ -374,7 +374,7 @@ test.describe('react active board: global progress', () => {
 })
 
 test.describe('react active board: card actions', () => {
-  test('a "See details" footer CTA opens that task\'s detail view', async ({ page }) => {
+  test('a "Show task" footer CTA opens that task\'s detail view', async ({ page }) => {
     await page.goto('/')
     await card(page, SEE_DETAILS_SLUG).getByTestId('card-cta-btn').click()
 
@@ -494,7 +494,7 @@ test.describe('react active board: card actions', () => {
     await expect(card(page, WORKING_SLUG)).toBeVisible()
 
     await card(page, WORKING_SLUG).getByTestId('card-menu-btn').click()
-    await card(page, WORKING_SLUG).getByTestId('card-menu-toggle-off-focus').click()
+    await page.getByTestId('card-menu-toggle-off-focus').click()
 
     await expect(card(page, WORKING_SLUG).locator('.drift-pill')).toBeVisible()
 

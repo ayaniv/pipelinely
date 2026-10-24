@@ -8,11 +8,39 @@ export interface Plan {
 
 export type AutoModeOverride = 'auto' | 'manual' | 'inherit'
 
-// ${TASKS_DIR}/SETTINGS.json — orchestrator-level preferences. One key
-// today; JSON because the backlog item asks for a settings file, not a
+// Which stage chain a task runs: the dev pipeline, or the design-system one
+// (Figma component -> coreui code). No KIND file means 'dev'.
+export type PipelineKind = 'dev' | 'ds'
+
+// ${TASKS_DIR}/SETTINGS.json — orchestrator-level preferences. A
+// handful of keys; JSON because the backlog item asks for a settings file, not a
 // setting file.
 export interface Settings {
   autoMode: boolean
+  // Where task creatures show: in the card/row/detail header, or nowhere.
+  creaturePlacement: CreaturePlacement
+  // Off hides the weekly-focus pane and makes the focus count as empty
+  // everywhere it is read (the dispatch gate included); the stored text
+  // stays on disk so turning it back on restores it.
+  weeklyFocusEnabled: boolean
+  // The recorded consent for starting QA unattended; read by auto mode and
+  // every other unattended caller, and by nothing else counting as consent.
+  qaStartPolicy: QaStartPolicy
+}
+
+export type CreaturePlacement = 'header' | 'off'
+
+// The recorded consent for starting QA unattended. 'ask-every-time' is the
+// default and what an absent or invalid value means; the other value is the
+// developer's own yes, given once on the Settings page.
+export type QaStartPolicy = 'ask-every-time' | 'cockpit-ai-ui-preapproved'
+
+// A task's permanent identity, stored in its own CREATURE file. Assigned once
+// by the server (src/creature.ts), then only ever read.
+export interface TaskCreature {
+  name: string
+  color: string   // #rrggbb
+  shape: string   // an 8-value CSS border-radius: "a% b% c% d% / e% f% g% h%"
 }
 
 // A single "- [ ] <description> (<date>)" line from BACKLOG.md, with an
@@ -66,6 +94,22 @@ export type Stage =
   | 'code-review'
   | 'comment-fix'
   | 'merge'
+  // The design-system pipeline's own stages (see PipelineKind). Dev tasks
+  // never write these names to TIMELINE.
+  | 'design-intake'
+  | 'design-qa'
+  | 'design-approval'
+  | 'design-fixes'
+  | 'adopt'
+  // Off the main line: merging the base branch into a PR that conflicts with
+  // it. Entered from wherever the task stood, and hands back to that same
+  // STATUS when done (see pipelinely-merge-conflicts/SKILL.md).
+  | 'merge-conflicts'
+
+// Whether an open PR can merge into its base, as GitHub last reported it.
+// 'unknown' covers GitHub still computing it and any failure to read it — it
+// never changes what the dashboard offers.
+export type PrMergeState = 'mergeable' | 'conflicting' | 'unknown'
 
 // One line of the append-only TIMELINE file: when a stage was entered, and an
 // optional free-text note the worker recorded with it.
@@ -205,6 +249,7 @@ export interface Task {
   qaCasesParseMismatch: string[]  // same idea as findingsParseMismatch, for QA_REPORT.md's Failing/Passing Cases sections — see findQaCasesParseMismatch
 
   // Multi-milestone project progress — only set when slug matches "<projectBase>-m<N>".
+  creature: TaskCreature | null  // parsed from the CREATURE file; null when absent or invalid
   projectBase?: string      // slug with the trailing "-m<N>" stripped
   milestoneCurrent?: number // N + 1 (this milestone counts as reached)
   milestoneTotal?: number   // milestone count from the repo's plan.md; undefined if unreadable/unparseable
@@ -259,6 +304,16 @@ export interface Task {
   // when it doesn't have one. 'inherit' is a real state, not a missing
   // value, which is why this is a union and not boolean | null.
   autoModeOverride: AutoModeOverride
+
+  // ${TASKS_DIR}/<slug>/KIND — a one-word file no stage rewrites (unlike
+  // TASK.md, which pipelinely-qa overwrites). Absent or unrecognised is 'dev'.
+  kind: PipelineKind
+  // ${TASKS_DIR}/<slug>/DESIGN_QA.md verbatim: pipelinely-design-qa's comparison
+  // table, rendered at the designer's approval gate. null until design QA ran.
+  designQaReport: string | null
+  // The bullets of the plan's "## Affected apps" section (tech-design.md):
+  // the apps pipelinely-adopt queues a follow-up for. [] when absent or empty.
+  affectedApps: string[]
   // The resolved answer for THIS task: computeEffectiveAutoMode(override,
   // settings.autoMode). Computed in parseAllTasks, never stored — the
   // client reads this rather than re-deriving the rule, so there is no
@@ -280,6 +335,9 @@ export interface Task {
   // with the task's own branch, else a strict TIMELINE-note match. Every client
   // reads this instead of re-scanning notes. Never read from a task dir file.
   prNumber?: string
+  // prNumber's merge state, resolved server-side (prLookup.ts) while that PR
+  // is open and the task is still in flight. Absent otherwise.
+  prMergeState?: PrMergeState
   doneNote?: string        // text after "done: " prefix (trimmed) — the worker's closing note, e.g. what merged and what didn't
   handoverSession?: number // number parsed from "handover: session #N" pattern
   updatedAt: Date          // mtime of STATUS file

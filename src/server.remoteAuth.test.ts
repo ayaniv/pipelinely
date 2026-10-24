@@ -16,29 +16,19 @@ import { firstNonLoopbackIPv4, rawHttpRequest } from './testNetwork.js'
 // loopback with a proxy header, which is what `tailscale serve` produces and
 // which the gate must treat as remote.
 
-const stageInSessionCalls: { sessionId: string; text: string }[] = []
-const pasteIntoSessionQuietCalls: { sessionId: string; text: string }[] = []
+vi.mock('./tmuxPaneWrite.js', () => ({
+  writeTextToTmuxSession: vi.fn(async (_session: string, _text: string, _options: { submit: boolean }) => ({ status: 'ok', paneId: '%7' })),
+}))
 
 // Same shape as server.autoSubmit.test.ts: spread the real module, override
 // only what shells out to osascript/tmux.
 vi.mock('./focusTab.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./focusTab.js')>()),
-  stageInSession: vi.fn(async (sessionId: string, text: string) => {
-    stageInSessionCalls.push({ sessionId, text })
-    return true
-  }),
-  pasteIntoSessionQuiet: vi.fn(async (sessionId: string, text: string) => {
-    pasteIntoSessionQuietCalls.push({ sessionId, text })
-    return true
-  }),
-  pasteIntoSession: vi.fn(async () => true),
   focusITermTab: vi.fn(async () => false),
   getLiveSessionIds: vi.fn(async () => null),
   getLiveTmuxSessions: vi.fn(async () => new Set<string>()),
   getSessionTty: vi.fn(async () => null),
   tmuxSessionExists: vi.fn(async () => false),
-  tmuxPaneIsStrayShell: vi.fn(async () => false),
-  sessionIsClientOf: vi.fn(async () => false),
   findSessionAttachedToTmux: vi.fn(async () => null),
   reattachAndRecord: vi.fn(async () => null),
   reattachTmuxSession: vi.fn(async () => null),
@@ -47,6 +37,8 @@ vi.mock('./focusTab.js', async (importOriginal) => ({
 
 const TOKEN = 'server-wiring-token-0123456789abcdefghijklmno'
 const ORCHESTRATOR_SESSION_ID = 'orchestrator-session-id'
+const ORCHESTRATOR_TMUX_NAME = 'orchestrator'
+const DEV_COMMAND = '/pipelinely-dev dev-ready'
 const PROXIED = { 'X-Forwarded-For': '100.64.1.2' }
 
 let tmpDir: string
@@ -129,13 +121,19 @@ afterAll(async () => {
 })
 
 beforeEach(async () => {
-  stageInSessionCalls.length = 0
-  pasteIntoSessionQuietCalls.length = 0
+  const { writeTextToTmuxSession } = await import('./tmuxPaneWrite.js')
+  vi.mocked(writeTextToTmuxSession).mockClear()
   vi.spyOn(console, 'warn').mockImplementation(() => {})
   await fs.writeFile(path.join(tmpDir, 'ORCHESTRATOR_SESSION'), ORCHESTRATOR_SESSION_ID)
+  await fs.writeFile(path.join(tmpDir, 'ORCHESTRATOR_TMUX'), ORCHESTRATOR_TMUX_NAME)
   await fs.mkdir(path.dirname(tokenFile), { recursive: true })
   await fs.writeFile(tokenFile, TOKEN, { mode: 0o600 })
 })
+
+async function tmuxWriteCalls() {
+  const { writeTextToTmuxSession } = await import('./tmuxPaneWrite.js')
+  return vi.mocked(writeTextToTmuxSession).mock.calls
+}
 
 describe('the desktop (plain loopback) is untouched', () => {
   it('reads /api/tasks with no cookie', async () => {
@@ -145,7 +143,7 @@ describe('the desktop (plain loopback) is untouched', () => {
   it('still only stages a loopback autoSubmit:true — the 2026-09-06 constraint', async () => {
     const res = await postStageSkill(loopbackUrl, {}, { stage: 'dev', autoSubmit: true })
     expect(await res.json()).toEqual({ submitted: false })
-    expect(pasteIntoSessionQuietCalls).toEqual([])
+    expect(await tmuxWriteCalls()).toEqual([[ORCHESTRATOR_TMUX_NAME, DEV_COMMAND, { submit: false }]])
   })
 
   it('works with remote access off too', async () => {
@@ -174,8 +172,7 @@ describe('a remote client with no session is stopped before every route', () => 
       const res = await fetch(`${loopbackUrl}${route.path}`, { method: route.method, headers: PROXIED })
       expect(res.status, `${route.method} ${route.path}`).toBe(401)
     }
-    expect(stageInSessionCalls).toEqual([])
-    expect(pasteIntoSessionQuietCalls).toEqual([])
+    expect(await tmuxWriteCalls()).toEqual([])
   })
 
   it('401s the static bundle, so nothing is served ahead of the gate', async () => {
@@ -186,14 +183,13 @@ describe('a remote client with no session is stopped before every route', () => 
   it('never reaches the terminal for a POST /stage-skill autoSubmit:true — the audit finding', async () => {
     const res = await postStageSkill(loopbackUrl, PROXIED, { stage: 'dev', autoSubmit: true })
     expect(res.status).toBe(401)
-    expect(stageInSessionCalls).toEqual([])
-    expect(pasteIntoSessionQuietCalls).toEqual([])
+    expect(await tmuxWriteCalls()).toEqual([])
   })
 
   it.skipIf(lanAddress === null)(`does the same for a real LAN peer (${NO_LAN_REASON})`, async () => {
     const res = await postStageSkill(`http://${lanAddress}:${port}`, {}, { stage: 'dev', autoSubmit: true })
     expect(res.status).toBe(401)
-    expect(pasteIntoSessionQuietCalls).toEqual([])
+    expect(await tmuxWriteCalls()).toEqual([])
   })
 
   it('sends a page navigation to the login page', async () => {
@@ -227,8 +223,7 @@ describe('a page on another site, reaching the desktop dashboard through its bro
       'Content-Type': 'application/x-www-form-urlencoded',
     })
     expect(res.status).toBe(403)
-    expect(stageInSessionCalls).toEqual([])
-    expect(pasteIntoSessionQuietCalls).toEqual([])
+    expect(await tmuxWriteCalls()).toEqual([])
   })
 })
 
@@ -250,7 +245,7 @@ describe('a signed-in remote client', () => {
   it.skipIf(lanAddress === null)(`auto-submits from a real LAN peer, as today (${NO_LAN_REASON})`, async () => {
     const res = await postStageSkill(`http://${lanAddress}:${port}`, { Cookie: sessionCookie() }, { stage: 'dev', autoSubmit: true })
     expect(await res.json()).toEqual({ submitted: true })
-    expect(pasteIntoSessionQuietCalls).toHaveLength(1)
+    expect(await tmuxWriteCalls()).toEqual([[ORCHESTRATOR_TMUX_NAME, DEV_COMMAND, { submit: true }]])
   })
 
   // The default answer to QUESTIONS.md's proxy question: a proxy header can
@@ -259,7 +254,6 @@ describe('a signed-in remote client', () => {
   it('only stages when it arrives over loopback through a proxy', async () => {
     const res = await postStageSkill(loopbackUrl, { ...PROXIED, Cookie: sessionCookie() }, { stage: 'dev', autoSubmit: true })
     expect(await res.json()).toEqual({ submitted: false })
-    expect(pasteIntoSessionQuietCalls).toEqual([])
-    expect(stageInSessionCalls).toHaveLength(1)
+    expect(await tmuxWriteCalls()).toEqual([[ORCHESTRATOR_TMUX_NAME, DEV_COMMAND, { submit: false }]])
   })
 })

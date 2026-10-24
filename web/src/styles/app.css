@@ -104,6 +104,12 @@
       --driftSoft:     var(--rd-t);
       --driftInk:      #8a3f5c;
       --grid:          #e2e8e8;
+      /* Stage palette (v3): C = main, Soft = callout background, Ink = text. */
+      --planC: #6d94a8; --planSoft: #e9f0f3; --planInk: #33566a;
+      --devC: #8f86b0; --devSoft: #efedf4; --devInk: #4c4470;
+      --crC: #b0718b; --crSoft: #f5eaee; --crInk: #7a3a54;
+      --qaC: #bd9a63; --qaSoft: #f5efe4; --qaInk: #6d5326;
+      --mergeC: #8aa283; --mergeSoft: #ebf0e9; --mergeInk: #46603f;
     }
 
     /* OS-driven dark default — used only when the user hasn't made an
@@ -156,6 +162,12 @@
         --driftSoft:     var(--rd-t);
         --driftInk:      #e8b6c8;
         --grid:          #222c2e;
+        /* Stage palette (v3): C = main, Soft = callout background, Ink = text. */
+        --planC: #8fb2c4; --planSoft: #22323a; --planInk: #b6d0dd;
+        --devC: #a9a1c9; --devSoft: #28253a; --devInk: #d0cae6;
+        --crC: #cc8fa6; --crSoft: #35232b; --crInk: #e8b6c8;
+        --qaC: #c8a672; --qaSoft: #332b1e; --qaInk: #e2c795;
+        --mergeC: #9db396; --mergeSoft: #232f27; --mergeInk: #b9cdb2;
       }
     }
 
@@ -208,6 +220,12 @@
       --driftSoft:     var(--rd-t);
       --driftInk:      #e8b6c8;
       --grid:          #222c2e;
+      /* Stage palette (v3): C = main, Soft = callout background, Ink = text. */
+      --planC: #8fb2c4; --planSoft: #22323a; --planInk: #b6d0dd;
+      --devC: #a9a1c9; --devSoft: #28253a; --devInk: #d0cae6;
+      --crC: #cc8fa6; --crSoft: #35232b; --crInk: #e8b6c8;
+      --qaC: #c8a672; --qaSoft: #332b1e; --qaInk: #e2c795;
+      --mergeC: #9db396; --mergeSoft: #232f27; --mergeInk: #b9cdb2;
     }
 
     :root[data-theme="light"] {
@@ -257,6 +275,12 @@
       --driftSoft:     var(--rd-t);
       --driftInk:      #8a3f5c;
       --grid:          #e2e8e8;
+      /* Stage palette (v3): C = main, Soft = callout background, Ink = text. */
+      --planC: #6d94a8; --planSoft: #e9f0f3; --planInk: #33566a;
+      --devC: #8f86b0; --devSoft: #efedf4; --devInk: #4c4470;
+      --crC: #b0718b; --crSoft: #f5eaee; --crInk: #7a3a54;
+      --qaC: #bd9a63; --qaSoft: #f5efe4; --qaInk: #6d5326;
+      --mergeC: #8aa283; --mergeSoft: #ebf0e9; --mergeInk: #46603f;
     }
 
     body {
@@ -323,12 +347,27 @@
 
     .sidebar-spacer { flex: 1 1 auto; }
 
-    .sidebar-foot { display: flex; flex-direction: column; gap: 2px; padding: 12px; border-top: 1px solid var(--border); }
+    /* The account row's Settings / Usage / Docs / Help group. Height animates
+       through grid-template-rows 0fr → 1fr (a real height can't be
+       transitioned from auto), with opacity and a small lift. Closed, it is
+       also visibility:hidden — after the transition, so the close still
+       animates — because a zero-height box is clipped but not hidden. */
+    .sidebar-account-menu {
+      display: grid; grid-template-rows: 0fr; opacity: 0; transform: translateY(8px); visibility: hidden;
+      transition: grid-template-rows 0.26s ease, opacity 0.26s ease, transform 0.26s ease, visibility 0s linear 0.26s;
+    }
+    .sidebar-account-menu[data-open="true"] {
+      grid-template-rows: 1fr; opacity: 1; transform: none; visibility: visible;
+      transition: grid-template-rows 0.26s ease, opacity 0.26s ease, transform 0.26s ease, visibility 0s;
+    }
+    .sidebar-account-menu-clip { min-height: 0; overflow: hidden; }
+    .sidebar-account-menu-items { display: flex; flex-direction: column; gap: 2px; padding: 12px; border-top: 1px solid var(--border); }
     .sidebar-foot-item {
       display: flex; align-items: center; gap: 11px; padding: 9px 13px; border-radius: 11px;
       font-size: 13.5px; font-weight: 600; color: var(--text2); cursor: default;
     }
     .sidebar-foot-item:hover { background: var(--panel2); color: var(--text); }
+    .sidebar-foot-item.is-active { background: var(--panel2); color: var(--text); }
     .sidebar-foot-icon { display: grid; place-items: center; flex: none; color: inherit; }
     .app-sidebar.is-collapsed .sidebar-foot-item { justify-content: center; padding: 9px 0; }
     .app-sidebar.is-collapsed .sidebar-foot-label { display: none; }
@@ -400,7 +439,7 @@
       padding: 12px 14px; border-top: 1px solid var(--border); cursor: pointer;
     }
     .sidebar-account:hover { background: var(--surface2); }
-    /* .sidebar-account is a real <button> now (the You tab's trigger), same
+    /* .sidebar-account is a real <button> (the group's toggle), same
        reset the Settings row already needed — but restating its own border-top,
        which this rule's element+class specificity would otherwise beat the
        .sidebar-account rule and take away with it, and clearing the UA's own
@@ -417,7 +456,8 @@
       font-family: 'JetBrains Mono', monospace; font-size: 11.5px; font-weight: 700;
     }
     .sidebar-account-name { flex: 1 1 auto; font-size: 13.5px; font-weight: 600; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .sidebar-account-chevron { flex: none; color: var(--text3); }
+    .sidebar-account-chevron { flex: none; color: var(--text3); transition: transform 0.26s ease; }
+    .sidebar-account[aria-expanded="true"] .sidebar-account-chevron { transform: rotate(180deg); }
     .app-sidebar.is-collapsed .sidebar-account { justify-content: center; padding: 12px 0; }
     .app-sidebar.is-collapsed .sidebar-account-name,
     .app-sidebar.is-collapsed .sidebar-account-chevron { display: none; }
@@ -448,7 +488,18 @@
       .sidebar-scrim.is-visible { display: block; }
     }
 
-    .app-main { flex: 1 1 auto; min-width: 0; }
+    /* The design's main column: two soft washes at the top over a dot grid. */
+    :root { --main-grid-step: 22px; }
+    .app-main {
+      flex: 1 1 auto; min-width: 0;
+      background-color: var(--bg);
+      background-image:
+        radial-gradient(900px 380px at 12% -8%, var(--accentSoft), transparent 70%),
+        radial-gradient(700px 320px at 92% -4%, var(--sageSoft), transparent 72%),
+        radial-gradient(circle at 1px 1px, var(--grid) 1px, transparent 0);
+      background-size: auto, auto, var(--main-grid-step) var(--main-grid-step);
+      background-repeat: no-repeat, no-repeat, repeat;
+    }
 
     /* ── Header ──────────────────────────────────────────────────────────── */
     /* Same max-width/margin/padding as .page-column (below), so the pill row
@@ -457,7 +508,8 @@
        formula alone isn't enough once the column caps at 1180px and centres
        itself. Not `.page-column` itself: that class also carries a bottom
        padding this row doesn't want. */
-    header {
+    .app-main > header { background: transparent; }
+    .app-header-inner {
       display: flex;
       align-items: center;
       justify-content: flex-end;
@@ -466,8 +518,26 @@
       max-width: 1180px;
       margin: 0 auto;
       padding: 14px clamp(16px, 2.6vw, 32px) 0;
-      background: transparent;
     }
+
+    /* Sticky on the inner task view only (body.detail-open, set by
+       TaskDetail); the board keeps its static header. The translucent --bg
+       plus blur lets the content scroll under the bar. backdrop-filter makes
+       this header a containing block for position:fixed descendants, so
+       anything added to #header-chrome must portal (as ModalFrame does) or
+       it gets clipped to the bar. */
+    body.detail-open .app-main > header {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      padding: 12px 0;
+      background: color-mix(in oklab, var(--bg) 78%, transparent);
+      -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+    }
+    /* The bar's own 12px padding replaces the board header's top gap. */
+    body.detail-open .app-header-inner { padding-top: 0; padding-bottom: 0; }
 
     .hamburger-btn {
       display: none; place-items: center; width: 36px; height: 36px; flex: none;
@@ -753,7 +823,7 @@
     body.full-page-open #board { display: none; }
     body.full-page-open #weekly-focus { display: none; }
 
-    /* You is meant to show just the chart, not the rest of the board's
+    /* Usage is meant to show just the chart, not the rest of the board's
        chrome (QA caught this live — see the comments on #weekly-focus and
        #board-filters above). [data-active-tab] is set by the React tab bar (useTabPanelSync), not a
        body-level class like detail-open/settings-open above, because it has
@@ -762,11 +832,11 @@
        class), same reason button.sidebar-account has to restate its own
        border-top elsewhere on this page — so no !important needed. Each
        element's own hidden/open state (board-filters' `hidden` attribute in
-       particular) is left untouched, so leaving You restores exactly
+       particular) is left untouched, so leaving Usage restores exactly
        whatever was showing before. */
-    #board[data-active-tab="you"] #weekly-focus,
-    #board[data-active-tab="you"] .board-toolbar,
-    #board[data-active-tab="you"] #board-filters {
+    #board[data-active-tab="usage"] #weekly-focus,
+    #board[data-active-tab="usage"] .board-toolbar,
+    #board[data-active-tab="usage"] #board-filters {
       display: none;
     }
 
@@ -822,19 +892,21 @@
     .tab-btn:hover { background: var(--panel2); color: var(--text); }
     /* The design's own fill/border/ink for the active row — not the
        accent-tinted sel/sel-border this repo drifted to. */
-    .tab-btn.is-active { background: var(--surface2); border-color: var(--border); color: var(--ink); }
+    .tab-btn.is-active { background: var(--surface2); border-color: var(--border); color: var(--ink); font-weight: 700; }
 
     .tab-icon { display: grid; place-items: center; flex: none; color: var(--text3); }
     .tab-btn.is-active .tab-icon { color: var(--ink); }
     .tab-label { flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+    /* content-box like the design's pill: 22px of content plus its padding and border (36px), and the row's own weight. */
     .tab-count {
       flex: none;
+      box-sizing: content-box;
       min-width: 22px;
       text-align: center;
       font-family: 'JetBrains Mono', ui-monospace, monospace;
       font-size: 11px;
-      font-weight: 600;
+      font-weight: inherit;
       color: var(--text2);
       background: var(--surface2);
       border: 1px solid var(--border);
@@ -931,7 +1003,6 @@
        (Dashboard v2 line 217) — set per-group via inline style since the two
        groups use different PNGs (renderActiveGroups), the same pattern
        ctxMeterHtml already uses for per-instance data-driven styling. */
-    .active-group-art { width: 36px; height: 36px; flex: none; margin-right: -2px; background-repeat: no-repeat; background-position: center; background-size: contain; }
     .active-group-label { font-size: 13px; font-weight: 700; letter-spacing: 0.01em; color: var(--text2); white-space: nowrap; }
     .active-group-count { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; color: var(--text3); }
     .active-group-rule { flex: 1 1 auto; height: 1px; background: linear-gradient(90deg, var(--border), transparent); }
@@ -940,6 +1011,71 @@
       /* min(100%,300px): the plain 300px minimum overflows a 375px viewport. */
       grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
       gap: 14px;
+    }
+
+    /* ── Parent tasks section ─────────────────────────────────────────────
+       The Active tab's overview of every fan-out parent, above Needs you. Not
+       a card: a full-width row per parent that opens to its waves. Colour
+       comes from tokens alone, so dark mode needs no rules of its own. */
+    .parent-rows { display: flex; flex-direction: column; gap: 8px; }
+    .parent-row { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+    .parent-row-head {
+      display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; align-items: center;
+      gap: 6px 14px; padding: 12px 16px; cursor: pointer;
+    }
+    .parent-row-head:hover { background: var(--surface2); }
+    .parent-creature { display: flex; align-items: center; justify-content: center; min-width: 22px; }
+    .parent-main { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+    .parent-line { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+    /* The title takes priority: it never shrinks, only stops at the line's
+       width, so the project gives up all of its width before the title is cut. */
+    .parent-title { flex-shrink: 0; max-width: 100%; min-width: 0; font-size: 14px; font-weight: 700; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .parent-project { flex-shrink: 1; min-width: 0; font-size: 12px; color: var(--text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .parent-icons { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+    .parent-icon-wave { display: flex; align-items: center; gap: 3px; }
+    .parent-progress { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11.5px; color: var(--text2); white-space: nowrap; }
+    .parent-wave-btn-slot { display: inline-flex; }
+    .parent-wave-btn {
+      display: inline-flex; align-items: center; gap: 7px; padding: 7px 13px; border-radius: 9px;
+      font: inherit; font-size: 12.5px; font-weight: 700; white-space: nowrap; border: 0;
+    }
+    .parent-wave-btn.is-run { background: var(--ink); color: var(--bg); cursor: pointer; }
+    .parent-wave-btn.is-run:hover:not(:disabled) { background: var(--accent); }
+    .parent-wave-btn.is-run:disabled { opacity: 0.6; cursor: progress; }
+    .parent-wave-btn.is-locked { background: var(--surface2); color: var(--text3); border: 1px solid var(--border); cursor: not-allowed; }
+    /* A 22px target around the 14px icon; the negative margin puts the icon,
+       not the target, against the row's right padding as the v4 design does. */
+    .parent-chevron {
+      display: grid; place-items: center; width: 22px; height: 22px; margin-right: -4px; padding: 0; border: 0; border-radius: 6px;
+      background: none; color: var(--text3); cursor: pointer; transition: transform 0.2s ease;
+    }
+    .parent-chevron svg { width: 14px; height: 14px; }
+    .parent-chevron.is-open { transform: rotate(90deg); }
+    .parent-chevron:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    /* Left padding lines the body up with the title (16 + 22 creature + 14 gap, about 54).
+       min(100%, 220px) keeps one column from overflowing a row narrower than 220px. */
+    .parent-expanded {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 14px 22px;
+      border-top: 1px solid var(--border); padding: 4px 16px 16px 54px;
+    }
+    .parent-wave-col { display: flex; flex-direction: column; gap: 7px; min-width: 0; padding-top: 12px; }
+    .parent-wave-eyebrow { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; color: var(--text3); }
+    .parent-milestone-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .parent-milestone-id { flex: none; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; color: var(--text3); }
+    .parent-milestone-title { min-width: 0; font-size: 12.5px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .parent-milestone-line[data-state="done"] .parent-milestone-title { color: var(--text2); }
+    .parent-milestone-line[data-state="idle"] .parent-milestone-title { color: var(--text3); }
+    .parent-open-plan { grid-column: 1 / -1; justify-self: start; font-size: 12.5px; font-weight: 700; color: var(--accent); text-decoration: none; }
+    .parent-open-plan:hover { text-decoration: underline; }
+
+    /* The three milestone states, 15px everywhere. Idle is an empty ring, done
+       a filled circle with a tick, working a quarter arc turning on a ring. */
+    .milestone-icon { flex: none; display: block; }
+    .milestone-icon-idle-ring { fill: none; stroke: var(--border2); stroke-width: 2; }
+    .milestone-icon-spin { transform-origin: 12px 12px; animation: milestoneSpin 1s linear infinite; }
+    @keyframes milestoneSpin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      .milestone-icon-spin { animation: none; }
     }
 
     /* ── Empty state ──────────────────────────────────────────────────────
@@ -1037,20 +1173,67 @@
        — keyed off the same pillStatusFor grouping the section headers below
        and the status pill itself already use, not the raw lifecycle status,
        so a paused/idle card reads the same as a working one here. */
-    .session-card.is-needs-you { border-color: var(--amber); }
-    .session-card:not(.is-needs-you) { background: var(--surfaceMute); }
+    .session-card.is-needs-you { background: var(--surface); border-color: var(--amber); }
+    .session-card:not(.is-needs-you) { background: var(--surfaceMute); border-color: var(--border); }
     .session-card.is-needs-you:hover,
     .session-card:not(.is-needs-you):hover { border-color: var(--border2); }
 
-    .card-header-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 16px 18px 0; }
+    /* Wraps rather than squeezes: on a narrow card the right-hand group drops
+       to its own line instead of clipping the pill. */
+    .card-header-row { display: flex; align-items: center; justify-content: space-between; gap: 8px 10px; flex-wrap: wrap; padding: 16px 18px 0; }
     .card-status-pill { display: flex; align-items: center; gap: 7px; flex: none; padding: 4px 11px 4px 9px; border-radius: 999px; min-width: 0; }
     .card-status-dot-wrap { position: relative; width: 7px; height: 7px; flex: none; }
     .card-status-dot, .card-status-dot-halo { position: absolute; inset: 0; border-radius: 999px; }
     .card-status-dot.is-live { animation: pulseDot 2.6s ease-in-out infinite; }
     .card-status-dot-halo.is-live { animation: breathe 2.8s ease-in-out infinite; }
     .card-status-label { font-size: 11.5px; font-weight: 700; letter-spacing: 0.01em; white-space: nowrap; }
-    .drift-pill { margin-right: auto; padding: 4px 11px; border-radius: 999px; background: var(--driftSoft); color: var(--driftInk); font-size: 11.5px; font-weight: 700; white-space: nowrap; }
-    .card-header-right { display: flex; align-items: center; gap: 8px; flex: none; }
+    .drift-pill { padding: 4px 11px; border-radius: 999px; background: var(--driftSoft); color: var(--driftInk); font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+    /* The body keeps its size; a name too long for the card ellipsises rather
+       than escaping it (max-width + min-width: 0 let the flex child shrink). */
+    .card-creature { display: flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; }
+    .card-creature .creature { flex: none; }
+    .creature-name { font-size: 12.5px; font-weight: 700; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    /* A task's creature, drawn in CSS only. --creature-size is set inline by
+       <Creature>; the visor and eyes are fractions of it. Drawn flat: the
+       body's shadow is removed on request (the v4 design still has one). */
+    .creature { position: relative; display: inline-block; flex: none; }
+    .creature-visor {
+      position: absolute; left: 50%; top: 56%; transform: translate(-50%, -50%);
+      width: 62%; height: 38%; border-radius: 999px; background: #ffffff;
+      display: flex; align-items: center; justify-content: center; gap: calc(var(--creature-size) * 0.1);
+    }
+    /* One diameter for both axes, so an eye stays a circle at any size, and a
+       whole number of pixels: Chrome snaps the two edges of a fractional box
+       separately, which paints an oval or a lopsided pair. 3px on the
+       design's 24px body. */
+    .creature-eye {
+      --creature-eye-size: round(calc(var(--creature-size) * 0.125), 1px);
+      width: var(--creature-eye-size); height: var(--creature-eye-size); border-radius: 50%; background: #1c2426;
+    }
+    /* A bare body (the Parent tasks row): two upright eyes straight on the
+       colour, at the v4 design's 22x20 positions (6px in, 7px down). */
+    .creature.is-bare .creature-eye { position: absolute; top: 35%; width: 2.5px; height: 3.5px; border-radius: 9px; }
+    .creature.is-bare .creature-eye:first-child { left: 27%; }
+    .creature.is-bare .creature-eye:last-child { right: 27%; }
+    /* A working task's creature types away: the v4 design's bob on the body
+       (squashing from its feet) and its blink on the eyes. Transform only, so
+       nothing around it reflows. */
+    .creature.is-working { transform-origin: 50% 100%; animation: creatureBob 1.1s ease-in-out infinite; }
+    .creature.is-working .creature-eye { animation: creatureBlink 4.5s ease-in-out infinite; }
+    @keyframes creatureBob {
+      0%, 100% { transform: translateY(0) scaleY(1); }
+      12%, 36%, 60% { transform: translateY(0.8px) scaleY(0.95); }
+      24%, 48%, 72%, 88% { transform: translateY(0) scaleY(1); }
+    }
+    @keyframes creatureBlink {
+      0%, 90%, 100% { transform: scaleY(1); }
+      94% { transform: scaleY(0.1); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .creature.is-working, .creature.is-working .creature-eye { animation: none; }
+    }
+    .card-header-right { display: flex; align-items: center; gap: 8px; flex: none; margin-left: auto; }
+    .session-card .card-header-right .card-icon-btn { width: 24px; height: 24px; }
 
     .card-icon-btn {
       display: grid; place-items: center; width: 26px; height: 26px; flex: none;
@@ -1060,7 +1243,7 @@
 
     .card-menu-wrap { position: relative; flex: none; }
     .card-menu {
-      position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; min-width: 168px; padding: 6px;
+      position: fixed; top: 0; left: 0; z-index: 60; min-width: 168px; padding: 6px;
       border-radius: 12px; background: var(--surface); border: 1px solid var(--border2);
       box-shadow: 0 12px 32px rgba(20,30,32,.16);
     }
@@ -1085,6 +1268,13 @@
       letter-spacing: -0.01em; text-wrap: pretty; text-decoration: none;
     }
     .session-card .card-title:hover { color: var(--accent); }
+    /* The title and its chips read as one line of prose, so the "off focus"
+       chip follows the last word of a wrapped title rather than sitting on a
+       line of its own. */
+    .card-title-line { line-height: 1.3; }
+    .session-card .card-title-line .card-title { display: inline; }
+    .card-title-line .drift-pill { display: inline-block; margin-left: 8px; padding: 2px 9px; font-size: 11px; vertical-align: 2px; }
+    .card-title-line .card-auto-badge { margin-left: 6px; }
     .card-slug-row { display: flex; align-items: center; gap: 7px; margin-top: 7px; min-width: 0; }
     .card-slug-project { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; font-weight: 600; color: var(--text2); white-space: nowrap; flex: none; }
     .card-slug-sep { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: var(--border2); flex: none; }
@@ -1092,6 +1282,12 @@
     .card-copy-btn { width: 20px; height: 20px; border-radius: 6px; }
     .card-copied { font-size: 11px; color: var(--sage); font-weight: 600; }
     .card-copied[hidden] { display: none; }
+    .card-pr-link {
+      display: inline-flex; align-items: center; gap: 5px; flex: none; margin-left: auto; padding: 2px 6px; border: none; border-radius: 6px;
+      background: none; cursor: pointer; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; font-weight: 600; color: var(--text2);
+    }
+    .card-pr-link:hover { color: var(--accent); background: var(--surface2); }
+    .card-pr-link:disabled { cursor: default; }
     /* Same shared href="#" :visited landmine as .card-title above — every
        parent chip on the board points at the same URL. */
     .card-parent-chip,
@@ -1104,6 +1300,21 @@
     .card-parent-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     .card-rail-row { display: flex; align-items: center; padding: 16px 18px 0; }
+    /* The labels hang below the nodes (absolutely positioned, so the rail's
+       own height is unchanged), so the row reserves their room. */
+    .card-rail-row.has-labels { padding-bottom: 20px; }
+    .mini-stage-label {
+      position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+      font-size: 10.5px; font-weight: 600; color: var(--text3); white-space: nowrap;
+    }
+    .mini-stage-label[data-current="true"] { font-weight: 700; color: var(--ink); }
+
+    /* Summary callout: stage-soft box, set per tone inline (STAGE_TONE_VARS). */
+    .stage-summary { display: flex; align-items: center; gap: 12px; margin: 14px 18px 0; padding: 11px 14px; border-radius: 12px; font-size: 13px; line-height: 1.45; }
+    .stage-summary-icon { display: grid; place-items: center; flex: none; height: 19px; }
+    .stage-summary-text { min-width: 0; text-wrap: pretty; }
+    .stage-summary-head { font-weight: 700; }
+    .stage-summary-rest { margin-top: 1px; color: var(--text2); }
 
     .card-ctx-row { position: relative; z-index: 1; display: flex; align-items: center; gap: 11px; height: 32px; padding: 14px 18px 0; }
     .card-ctx-label { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; color: var(--text3); white-space: nowrap; flex: none; }
@@ -1164,6 +1375,9 @@
       background: var(--ink); border-color: var(--ink); color: var(--bg);
     }
     .session-card .card-footer .btn-primary:hover { background: var(--accent); border-color: var(--accent); }
+    /* The outlined secondary reads in ink like the design; a flash (.btn-ok / .btn-err) keeps its own colour. */
+    .session-card .card-footer .btn:not(.btn-primary):not(.btn-ok):not(.btn-err) { gap: 7px; color: var(--ink); font-weight: 700; }
+    .session-card .card-footer .btn:not(.btn-primary):not(.btn-ok):not(.btn-err):hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
     /* The base row above is a single non-wrapping flex row, so the merge
        banner would otherwise sit inline beside the buttons — this modifier
        lets it wrap onto its own line above them instead. */
@@ -1733,7 +1947,11 @@
     .backlog-row-project { flex: none; }
     .backlog-row-context { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text3); margin-top: 3px; }
     .backlog-row-actions { display: flex; align-items: center; gap: 8px; flex: none; margin-left: auto; }
-    .backlog-icon-btn { width: 32px; height: 32px; }
+    /* Borderless until hovered, as in the v4 design; a failed delete keeps the error flash's own border. */
+    .backlog-icon-btn { width: 32px; height: 32px; border-radius: 9px; }
+    .backlog-icon-btn:not(.btn-err) { border-color: transparent; }
+    .backlog-icon-btn:not(.btn-err):hover { background: var(--surface2); border-color: transparent; color: var(--ink); }
+    .backlog-icon-btn.is-delete:not(.btn-err):hover { color: var(--amber); }
     .backlog-row-run {
       display: flex; align-items: center; gap: 7px; padding: 8px 13px 8px 11px; border-radius: 9px;
       border: none; cursor: pointer; background: var(--accentSoft); color: var(--accent);
@@ -1864,10 +2082,14 @@
     .detail-head-text { min-width: 0; flex: 1 1 380px; }
     .detail-title-row { display: flex; align-items: center; gap: 8px; }
     .detail-status-line { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
-    .detail-status-dot { width: 7px; height: 7px; border-radius: 999px; flex: none; }
-    .detail-status-dot.is-live { animation: pulseDot 2.6s ease-in-out infinite; }
-    .detail-status-label { font-size: 12px; font-weight: 700; white-space: nowrap; }
     .detail-tag-pill { padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+
+    /* dashboard-v3-update M5: the inner view's identity row (creature, stage
+       pill, attention word) and its summary callout. */
+    .detail-creature { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
+    .detail-creature .creature { flex: none; }
+    .detail-attention { font-size: 12px; font-weight: 700; white-space: nowrap; }
+    .detail-summary-slot .stage-summary { margin: 12px 0 0; max-width: 640px; }
     .detail-title { margin: 0; font-size: clamp(22px, 2.4vw, 27px); font-weight: 800; line-height: 1.22; letter-spacing: -0.02em; text-wrap: pretty; }
     .detail-slug-row { display: flex; align-items: center; gap: 8px; margin-top: 11px; min-width: 0; }
     .detail-slug-value { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1938,7 +2160,7 @@
     /* The 3-dots menu opened from the milestone header card is wider than
        the board's own card menu (210px vs 168px) — the design's own value
        for this specific menu. */
-    .card-menu-wrap.ms-head-menu .card-menu { min-width: 210px; }
+    .card-menu.ms-head-menu { min-width: 210px; }
 
     /* The design's mono two-row block a milestone's Dev tab opens on
        (renderL2Panel's 'dev' branch) — needs: / verifier:, under an
@@ -1977,35 +2199,13 @@
       font-size: 13.5px; color: var(--text3);
     }
 
-    /* The milestone rail's OWN treatment — 92px columns (not 82px), 1.5px
-       rings (not 2px), sage completes (not accent), dashed upcoming rings.
-       Scoped under .is-milestone rather than a second copy of
-       .stage-chain-node/.stage-chain-check fighting the Pipeline rail's own
-       rules over the same classes (see renderStageChain's `milestone` opt). */
-    .stepper-wide.is-milestone .stage-chain-node { width: 92px; }
-    .stepper-wide.is-milestone .stage-chain-check { border-width: 1.5px; }
-    .stepper-wide.is-milestone .stage-chain-node.is-done .stage-chain-check {
-      background: var(--sageSoft); border-color: var(--sage); color: var(--sageInk);
-    }
-    .stepper-wide.is-milestone .stage-chain-node:not(.is-done):not(.is-current) .stage-chain-check {
-      border-style: dashed;
-    }
-    .stepper-wide.is-milestone .stage-chain-data {
-      font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10.5px;
-    }
-
     /* The stage stepper — a panel of its own, above the stage body panel.
        Two renderings of the same computed node list (see renderStageChain):
-       .stepper-wide (circles + connectors, every node's own state line) is
-       the default; @media flips to .stepper-compact below 641px. Both are
+       .stepper-wide (the pipeline chart) is the default; @media flips to .stepper-compact below 641px. Both are
        always in the DOM — no matchMedia listener, no resize-triggered
-       re-render. The design gives .stepper-wide its own card geometry
-       (margin/padding/columns); .stepper-compact is cockpit's own answer to
-       small screens (DRIFT-2, docs/design-drift.md) and keeps its own. */
-    .stepper-wide {
-      margin: 26px 0 0; padding: 26px clamp(18px, 2.4vw, 26px);
-      border-radius: 16px; background: var(--surface); border: 1px solid var(--border);
-    }
+       re-render. .stepper-compact is cockpit's own answer to small screens
+       (DRIFT-2, docs/design-drift.md). */
+    .stepper-wide { margin: 26px 0 0; }
     .stepper-compact {
       background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
       padding: 18px 20px; display: none;
@@ -2015,56 +2215,173 @@
       .stepper-compact { display: flex; }
     }
 
-    /* The 8px/2px bleed (negative margin cancelling the row's own padding)
-       keeps the current node's `inset:-5px` breathing halo from being
-       clipped by this row's own overflow-x — without it only the first and
-       last nodes show a half-drawn ring. */
-    .stage-chain {
-      display: flex; align-items: flex-start; gap: 0; overflow-x: auto;
-      padding: 8px 8px 2px; margin: -8px -8px -2px;
-    }
-    /* The rail is a React Flow canvas (StageChainGraph) — the
-       connectors are its edges, drawn between the same node-edge points the old
-       flex:1 spans covered. The handles only anchor those edges. */
-    .stage-flow-canvas { flex: none; }
-    .stage-flow .stage-flow-handle.react-flow__handle {
-      top: 18px; width: 1px; height: 1px; min-width: 0; opacity: 0; pointer-events: none;
-    }
-    /* Scoped under .stage-flow to outrank React Flow's own .react-flow__edge-path
-       (its stylesheet loads after this one). */
-    .stage-flow .stage-chain-edge { fill: none; stroke: var(--sel-border); stroke-width: 2; }
-    .stage-flow .react-flow__edge.is-traversed .stage-chain-edge { stroke: var(--accent); }
-    .stage-chain-node {
-      display: flex; flex-direction: column; align-items: center; gap: 9px;
-      width: 82px; flex: none; padding: 4px; border: none; background: none;
-      font-family: inherit; text-align: center; cursor: pointer;
-      border-radius: 10px; transition: opacity 0.12s;
-    }
-    .stage-chain-node:focus-visible { outline: 2px solid var(--bl); outline-offset: 2px; }
+    /* Compact tile's own check/name/data (the wide rail's per-node rules went
+       with the chart). */
     .stage-chain-check {
       width: 28px; height: 28px; flex: none; border-radius: 50%; position: relative;
       display: flex; align-items: center; justify-content: center;
       font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; font-weight: 800;
       background: transparent; border: 2px solid var(--border2); color: var(--muted2);
-      transition: border-color 0.12s, background-color 0.12s, color 0.12s;
     }
     .stage-chain-name { font-size: 12px; font-weight: 600; color: var(--muted2); line-height: 1.25; }
     .stage-chain-data { font-size: 11px; color: var(--muted); line-height: 1.3; }
-    .stage-chain-node.is-done .stage-chain-check { background: var(--accent); border-color: var(--accent); color: var(--surface); }
-    .stage-chain-node.is-done .stage-chain-name { color: var(--text3); }
-    .stage-chain-node.is-current .stage-chain-check { background: var(--accentSoft); border-color: var(--accent); color: var(--accentInk); }
-    .stage-chain-node.is-current .stage-chain-check::after {
-      content: ""; position: absolute; inset: -5px; border-radius: 50%;
-      border: 1.5px solid var(--accent); animation: breathe 2.8s ease-in-out infinite;
+    .stepper-tile.is-done .stage-chain-check { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+    .stepper-tile.is-unrecorded { opacity: 0.4; }
+
+    /* ── Pipeline chart (dashboard-v4 M1) ────────────────────────────────────
+       A plain surface box holding a React Flow canvas. content-box, so the
+       inline height IS the inner (client) height the viewport maths computed:
+       the box is exactly the scaled content plus its padding. Every colour is
+       a token, so dark mode is the token swap alone. */
+    .pipeline-chart {
+      position: relative; box-sizing: content-box; overflow: hidden;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
     }
-    .stage-chain-node.is-current .stage-chain-name { color: var(--ink); font-weight: 700; }
-    .stage-chain-node.is-selected .stage-chain-check { box-shadow: 0 0 0 4px var(--sel); }
-    /* A finished task's un-reached stages: distinct from a genuine future
-       stage on an active task, so "not recorded" doesn't read as "still
-       coming". No colour cue either way — this state means "no data", not
-       "didn't happen" — but lower opacity still marks it apart. */
-    .stage-chain-node.is-unrecorded { opacity: 0.4; }
-    .stage-chain-node.is-unrecorded .stage-chain-check { color: var(--muted); }
+    .pipeline-chart .stage-flow { height: 100%; background: transparent; }
+    .pipeline-chart[data-fits="false"] .react-flow__pane { cursor: grab; }
+    .pipeline-chart[data-fits="false"] .react-flow__pane.dragging { cursor: grabbing; }
+    .pipeline-chart .pipeline-handle.react-flow__handle {
+      width: 1px; height: 1px; min-width: 0; min-height: 0; border: none; opacity: 0; pointer-events: none;
+      transform: none; right: auto; bottom: auto;
+    }
+    /* The circle's centre line: 9px of halo room above a 50px circle. The
+       loop handles sit just below the 108px node, under its label block. */
+    .pipeline-chart .pipeline-handle-left.react-flow__handle { left: 50px; top: 34px; }
+    .pipeline-chart .pipeline-handle-right.react-flow__handle { left: 100px; top: 34px; }
+    .pipeline-chart .pipeline-handle-bottom.react-flow__handle { left: 75px; top: 112px; }
+
+    .pipeline-node {
+      width: 100%; height: 100%; padding: 9px 0 0; border: none; background: none; border-radius: 10px;
+      display: flex; flex-direction: column; align-items: center; gap: 6px;
+      font-family: inherit; text-align: center; cursor: pointer;
+    }
+    .pipeline-node:focus-visible { outline: 2px solid var(--bl); outline-offset: -2px; }
+    .stage-node-orb { position: relative; width: 50px; height: 50px; flex: none; }
+    .stage-node-circle {
+      position: relative; z-index: 1; box-sizing: border-box; width: 50px; height: 50px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--surface); border: 2px dashed var(--border2); color: #fff;
+    }
+    .pipeline-node[data-state="done"] .stage-node-circle,
+    .pipeline-node[data-state="current"] .stage-node-circle { background: var(--node-c); border: 2px solid var(--node-c); }
+    .stage-node-check { font-size: 22px; font-weight: 800; line-height: 1; }
+    .stage-node-pulse { display: flex; gap: 4px; }
+    .stage-node-pulse-dot { width: 6px; height: 6px; border-radius: 50%; background: #fff; animation: pulseDot 1.2s ease-in-out infinite; }
+    .stage-node-halo { position: absolute; inset: -9px; border-radius: 50%; background: var(--node-soft); animation: stageHalo 2.8s ease-in-out infinite; }
+    @keyframes stageHalo {
+      0%, 100% { transform: scale(0.92); opacity: 0.55; }
+      50%      { transform: scale(1.04); opacity: 1; }
+    }
+    .stage-node-ring { position: absolute; z-index: 2; inset: -5px; border-radius: 50%; border: 2px solid var(--node-c); pointer-events: none; }
+
+    .flow-label-block { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 100%; min-width: 0; padding: 0 6px; box-sizing: border-box; }
+    .stage-node-name { font-size: 13.5px; font-weight: 700; line-height: 1.3; color: var(--text); }
+    .stage-node-sub { max-width: 100%; font-size: 11px; line-height: 1.3; color: var(--text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pipeline-node[data-selected="true"] .stage-node-name { font-weight: 800; }
+    .pipeline-node[data-selected="true"] .stage-node-sub { color: var(--node-ink); }
+    .stage-node-dots { display: flex; justify-content: center; gap: 5px; margin-top: 3px; }
+    .stage-node-dot-group { display: inline-flex; gap: 3px; }
+    .stage-node-dot { box-sizing: border-box; width: 6px; height: 6px; border-radius: 50%; }
+    .stage-node-dot[data-status="merged"] { background: var(--sage); }
+    .stage-node-dot[data-status="review"] { background: var(--crC); }
+    .stage-node-dot[data-status="working"] { background: var(--devC); }
+    .stage-node-dot[data-status="queued"] { border: 1.5px solid var(--border2); }
+
+    .pipeline-chart .pipeline-edge { stroke-width: 2.5px; fill: none; }
+    .pipeline-chart .pipeline-edge[data-reached="false"] { stroke-dasharray: 6 6; }
+    .pipeline-chart .pipeline-loop { stroke: var(--crC); stroke-width: 2px; stroke-dasharray: 6 5; fill: none; animation: reworkFlow 1.1s linear infinite; }
+    @keyframes reworkFlow { to { stroke-dashoffset: -11; } }
+    .stage-rework-label {
+      position: absolute; pointer-events: none; padding: 1px 6px; border-radius: 6px; white-space: nowrap;
+      font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10.5px; color: var(--crInk); background: var(--surface);
+    }
+
+    /* ── Wave graph (dashboard-v4 M2) ────────────────────────────────────────
+       Shares the pipeline chart's box, handle and edge rules (the box carries
+       both classes). Circle sizes mirror ORB_BOX in waveGraphLayout.ts; every
+       colour is a token, so dark mode is the token swap alone. */
+    .wave-orb {
+      position: relative; width: 100%; height: 100%; padding: 8px 0 0; box-sizing: border-box;
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+      border: none; background: none; font-family: inherit; text-align: center; color: var(--text);
+    }
+    button.wave-orb { cursor: pointer; }
+    button.wave-orb:focus-visible { outline: 2px solid var(--bl); outline-offset: -2px; border-radius: 10px; }
+    .wave-orb-slot { position: relative; flex: none; }
+    .wave-node .wave-orb-slot { width: 54px; height: 54px; }
+    .wave-task .wave-orb-slot, .wave-more .wave-orb-slot { width: 42px; height: 42px; }
+    .wave-circle {
+      position: relative; z-index: 1; box-sizing: border-box; width: 100%; height: 100%; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--surface); border: 2px dashed var(--border2); color: #fff;
+    }
+    .wave-node[data-state="complete"] .wave-circle, .wave-task[data-status="merged"] .wave-circle { background: var(--sage); border: 2px solid var(--sage); }
+    .wave-node[data-state="running"] .wave-circle, .wave-task[data-status="working"] .wave-circle { background: var(--devC); border: 2px solid var(--devC); }
+    .wave-task[data-status="review"] .wave-circle { background: var(--crC); border: 2px solid var(--crC); }
+    .wave-node[data-state="locked"] .wave-circle { color: var(--text3); }
+    .wave-task[data-status="queued"] .wave-circle { color: var(--text3); }
+    .wave-halo { position: absolute; inset: -8px; border-radius: 50%; background: var(--devSoft); animation: stageHalo 2.8s ease-in-out infinite; }
+    .wave-task[data-status="review"] .wave-halo { background: var(--crSoft); }
+    .wave-number { font-size: 20px; font-weight: 800; line-height: 1; }
+    .wave-check { font-size: 20px; font-weight: 800; line-height: 1; }
+    .wave-task .wave-check { font-size: 17px; }
+    .wave-task-id { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; font-weight: 700; }
+    .wave-more-count { font-size: 12px; font-weight: 800; color: var(--text2); }
+    .wave-orb .flow-label-block { justify-content: flex-start; overflow: hidden; }
+    .wave-node-name { font-size: 13.5px; font-weight: 700; line-height: 1.3; }
+    .wave-sub { font-size: 11px; line-height: 1.3; color: var(--text3); white-space: nowrap; }
+    .wave-task-title, .wave-root-title {
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+      font-size: 12.5px; font-weight: 700; line-height: 1.25; max-width: 100%;
+    }
+    .wave-root-title { font-size: 13.5px; }
+    .wave-task-sub, .wave-root-sub {
+      max-width: 100%; font-size: 11px; line-height: 1.3; color: var(--text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .wave-root-sub { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+    .wave-root-blob { display: flex; align-items: center; justify-content: center; border-radius: 50%; filter: drop-shadow(0 6px 12px color-mix(in srgb, var(--text) 14%, transparent)); }
+    .wave-root-blob.is-plain { background: var(--devC); }
+    .wave-edge-label { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10.5px; fill: var(--text3); }
+    .wave-graph-fade {
+      position: absolute; top: 0; right: 0; bottom: 0; z-index: 4; width: 56px; pointer-events: none;
+      background: linear-gradient(to right, transparent, var(--surface));
+    }
+    .wave-graph-controls {
+      display: flex; flex-direction: column; overflow: hidden; margin: 12px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    }
+    .wave-graph-controls .react-flow__controls-button {
+      width: 26px; height: 26px; padding: 0; border: none; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      background: var(--surface); color: var(--text2); font-family: inherit; font-size: 15px; line-height: 1; cursor: pointer;
+    }
+    .wave-graph-controls .react-flow__controls-button:last-child { border-bottom: none; }
+    .wave-graph-controls .react-flow__controls-button:hover { color: var(--text); }
+
+    /* The Dev panel's header over the wave graph. */
+    .wave-panel { display: flex; flex-direction: column; gap: 10px; }
+    .wave-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+    .wave-panel-heading { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex-wrap: wrap; }
+    .wave-panel-title { font-size: 15px; font-weight: 800; letter-spacing: -0.01em; color: var(--ink); }
+    .wave-panel-meta { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11.5px; color: var(--text3); }
+    .run-next-wave-btn {
+      display: inline-flex; align-items: center; gap: 7px; border-radius: 8px; font-weight: 700;
+      background: var(--ink); color: var(--bg); border-color: var(--ink);
+    }
+    .run-next-wave-status:empty { display: none; }
+
+    /* A fan-out parent's Code review / QA / Merge: the milestones sitting there. */
+    .parent-stage-list { display: flex; flex-direction: column; gap: 8px; }
+    .parent-stage-row {
+      display: flex; align-items: center; gap: 12px; padding: 12px 14px; text-align: left;
+      border: 1px solid var(--border); border-radius: 12px; background: var(--surface);
+      font-family: inherit; font-size: 13px; color: var(--text); cursor: pointer;
+    }
+    .parent-stage-row:hover { border-color: var(--sel-border); }
+    .parent-stage-row:focus-visible { outline: 2px solid var(--bl); outline-offset: 2px; }
+    .parent-stage-row-id { font-family: 'JetBrains Mono', ui-monospace, monospace; font-weight: 700; color: var(--text3); }
+    .parent-stage-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .parent-stage-row-status { font-size: 12px; color: var(--text2); flex: none; }
 
     /* Compact — prev/tile/next, the one genuinely new behaviour this
        milestone adds (see tech-design.md). */
@@ -2098,26 +2415,6 @@
     .detail-fanout { display: flex; flex-direction: column; gap: 14px; }
     .detail-fanout:empty { display: none; }
 
-    /* Level 1 only (Plan / Plan Review / Dev) — level 2 is a stage chain,
-       not tabs, and gets its own CSS in Task 13. */
-    .l1-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); }
-    .l1-tab {
-      display: flex; align-items: center; gap: 6px;
-      padding: 9px 13px; border: none; border-bottom: 2px solid transparent;
-      background: none; font-family: inherit; font-size: 12.5px; font-weight: 600;
-      color: var(--text3); cursor: pointer;
-      transition: color 0.12s, border-color 0.12s;
-    }
-    .l1-tab:hover { color: var(--text); }
-    .l1-tab.is-active { color: var(--bl); border-bottom-color: var(--bl); }
-    .l1-tab:focus-visible { outline: 2px solid var(--bl); outline-offset: -2px; }
-    .l1-round {
-      font-size: 10px; font-weight: 700; color: var(--muted);
-      background: color-mix(in srgb, var(--text) 6%, transparent);
-      border-radius: 20px; padding: 1px 6px;
-    }
-    .l1-tab.is-active .l1-round { color: var(--bl); background: color-mix(in srgb, var(--bl) 12%, transparent); }
-    .l1-panel { display: flex; flex-direction: column; gap: 14px; }
     /* The Pipeline design's own single bordered card per stage tab — header,
        body and the footer CTA bar all inside one .l2-panel, per its own
        detail.title/meta/pill + body + primary/secondary structure. The
@@ -2149,46 +2446,8 @@
     .ms-dot-done { background: var(--sg); }
     .ms-progress-label { font-size: 11px; color: var(--muted); }
 
-    .wave { display: flex; flex-direction: column; gap: 14px; }
-    .wave-header {
-      display: flex; align-items: center; gap: 12px;
-      padding-bottom: 10px; border-bottom: 1px solid var(--border);
-    }
-    .wave-name {
-      font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11.5px; font-weight: 700;
-      letter-spacing: 0.06em; color: var(--text);
-    }
-    .wave-rule { font-size: 12px; color: var(--text2); font-weight: 500; }
-    .wave-batch-btn { margin-left: auto; border-radius: 8px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
-    .wave-complete-pill {
-      margin-left: auto; padding: 3px 9px; border-radius: 999px;
-      background: var(--sageSoft); color: var(--sageInk); font-size: 11px; font-weight: 700; white-space: nowrap;
-    }
-    /* The wave graph is a React Flow canvas (MilestoneGraph).
-       The 280px minimum track and 12px gap live in milestoneGraphLayout.ts now
-       (a canvas can't use a CSS grid); the frame just gives it the row's width.
-       touch-action is loosened from React Flow's `none` so a finger dragging over
-       the graph still scrolls the page — the graph has no pan or zoom of its own. */
-    .milestone-flow-frame { width: 100%; }
-    .milestone-flow .react-flow__pane,
-    .milestone-flow .react-flow__renderer { touch-action: pan-y; }
-    .milestone-flow .milestone-flow-handle.react-flow__handle {
-      width: 1px; height: 1px; min-width: 0; opacity: 0; pointer-events: none;
-    }
-    .milestone-flow .react-flow__edge-path { fill: none; stroke: var(--border2); stroke-width: 1.5; }
-    .milestone-flow .react-flow__edge.is-satisfied .react-flow__edge-path { stroke: var(--sage); }
-
     /* A wrapper that must not become a layout box of its own. */
     .slot-contents { display: contents; }
-
-    /* .card.session-card already supplies the base surface/radius/shadow/
-       hover-lift this card needs (see renderMilestoneCard) — only the
-       keyboard focus ring is added here, since this card (unlike a session
-       card) carries tabindex="0". */
-    .ms-card:focus-visible { outline: 2px solid var(--bl); outline-offset: 2px; }
-    .ms-dispatch-status:empty { display: none; }
-    .ms-card-id { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; font-weight: 700; letter-spacing: 0.05em; color: var(--text3); }
-    .ms-card-meta { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 11px; color: var(--muted); margin-top: 9px; }
 
     .step-col { padding-top: 14px; position: relative; padding-right: 10px; }
     .step-col::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: var(--border); }
@@ -2304,3 +2563,257 @@
        direct flex child of its old parent, so layout is unchanged. */
     .sidebar-account-slot,
     .standup-slot { display: contents; }
+
+    /* ── Toolbar pills (Active tab): Push forward, + New task ─────────────────────
+       One base so the two always match in height; Push forward is outlined in the
+       accent, New task is filled ink. The off focus chip is a pulse chip in
+       the same soft/ink pair as the card's drift-pill. */
+    .toolbar-pill {
+      display: flex; align-items: center; gap: 7px; padding: 6px 13px 6px 11px; border-radius: 999px;
+      border: 1px solid var(--ink); background: var(--ink); color: var(--bg); cursor: pointer;
+      font-family: inherit; font-size: 12.5px; font-weight: 700; line-height: 1.2; white-space: nowrap;
+      transition: background 0.2s ease, border-color 0.2s ease;
+    }
+    .toolbar-pill:hover { background: var(--accent); border-color: var(--accent); }
+    .push-forward { position: relative; display: inline-flex; align-items: center; gap: 6px; }
+    .push-forward-pill { border-color: var(--accent); background: var(--surface); color: var(--accentInk); }
+    .push-forward-pill:hover { background: var(--accentSoft); border-color: var(--accent); }
+    .push-forward-pill.is-sent { background: var(--accentSoft); }
+    .push-forward-pill.is-running svg { animation: pulseDot 1s ease-in-out infinite; }
+    .push-forward-pill.is-deferred { border-color: var(--amber); color: var(--amberInk); }
+    .push-forward-pill.is-failed { border-color: var(--drift); color: var(--driftInk); }
+    .push-forward-needs-you-toggle {
+      padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface);
+      color: var(--text2); cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 600; white-space: nowrap;
+    }
+    .push-forward-needs-you-toggle:hover { border-color: var(--accent); color: var(--accentInk); }
+    .needs-you-panel {
+      position: absolute; top: calc(100% + 8px); left: 0; z-index: 20; min-width: 280px; max-width: min(420px, 90vw);
+      display: flex; flex-direction: column; gap: 4px; padding: 8px; border-radius: 12px;
+      border: 1px solid var(--border); background: var(--surface); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    }
+    .needs-you-empty { margin: 0; padding: 8px 10px; font-size: 12.5px; color: var(--text3); }
+    .needs-you-item {
+      display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 10px; border-radius: 8px;
+      border: none; background: transparent; cursor: pointer; text-align: left; font-family: inherit;
+    }
+    .needs-you-item:hover { background: var(--accentSoft); }
+    .needs-you-item-slug { font-size: 12.5px; font-weight: 700; color: var(--ink); }
+    .needs-you-item-reason { font-size: 12px; color: var(--text3); }
+    .pulse-chip-off-focus { background: var(--driftSoft); }
+    .pulse-chip-off-focus .pulse-chip-text, .pulse-chip-off-focus .pulse-chip-value { color: var(--driftInk); }
+
+    /* ── New task modal ──────────────────────────────────────────────────── */
+    .new-task-card { max-width: 520px; }
+    .new-task-prompt {
+      display: block; width: 100%; box-sizing: border-box; padding: 12px 14px; border-radius: 12px;
+      border: 1px solid var(--border); background: var(--surfaceMute); color: var(--ink);
+      font-family: inherit; font-size: 14px; line-height: 1.5; resize: vertical; outline: none;
+    }
+    .new-task-prompt:focus { border-color: var(--accent); }
+    .new-task-label { font-size: 12px; font-weight: 700; color: var(--text3); }
+    .new-task-error { font-size: 12.5px; font-weight: 600; color: var(--driftInk); }
+    .new-task-start-btn {
+      display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 9px; border: none;
+      cursor: pointer; background: var(--ink); color: var(--bg); font-family: inherit; font-size: 13px; font-weight: 700;
+    }
+    .new-task-start-btn:hover:not(:disabled) { background: var(--accent); }
+    .new-task-start-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* ── dashboard-v3 M4: Active table view ─────────────────────────────── */
+    .active-view-slot { display: contents; }
+    .active-view-switch { display: inline-flex; gap: 2px; padding: 3px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); }
+    .active-view-btn {
+      display: grid; place-items: center; border: none; background: none; cursor: pointer; width: 30px; height: 26px; border-radius: 999px; color: var(--text3);
+      transition: background 0.2s ease, color 0.2s ease;
+    }
+    .active-view-btn:hover { color: var(--accent); }
+    .active-view-btn.is-active { background: var(--accentSoft, var(--surface2)); color: var(--accent); }
+
+    /* Measured from Pipelinely Dashboard v4's table (DESIGN_DIFF.md §1). */
+    :root {
+      --table-radius: 16px;
+      --table-head-pad-y: 11px;
+      --table-row-pad-y: 14px;
+    }
+    .active-table-scroll {
+      overflow-x: auto;
+      border: 1px solid var(--border); border-radius: var(--table-radius); background: var(--surface);
+    }
+    .active-table { width: 100%; }
+    .table-header-row, .table-row { display: grid; grid-template-columns: var(--table-columns); column-gap: var(--table-col-gap); padding: 0 var(--table-pad-x); }
+    .table-header-row {
+      align-items: center; padding-top: var(--table-head-pad-y); padding-bottom: var(--table-head-pad-y); background: var(--surface2);
+      border-bottom: 1px solid var(--border); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text3);
+    }
+    .table-header-row > .table-col { align-self: stretch; display: flex; align-items: center; gap: 5px; }
+    .table-col.is-sortable { cursor: pointer; user-select: none; }
+    .table-col.is-sortable:hover { color: var(--ink); }
+    .table-col[aria-sort="ascending"], .table-col[aria-sort="descending"] { color: var(--ink); }
+    .table-sort-arrow { width: 8px; font-size: 10px; text-align: center; }
+    /* A divider above every row but the first, so the last row never doubles the box's own border. */
+    .table-row {
+      align-items: center;
+      padding-top: var(--table-row-pad-y); padding-bottom: var(--table-row-pad-y); border-top: 1px solid var(--border); cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    .table-row[data-is-first] { border-top-color: transparent; }
+    .table-row:hover { background: var(--surface2); }
+    .table-cell { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 7px; font-size: 13px; line-height: 1.45; color: var(--text2); }
+    .table-cell-task { flex-direction: row; gap: 10px; }
+    .row-creature { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: none; width: 40px; padding-top: 1px; }
+    .row-creature-name { width: 40px; font-size: 10.5px; font-weight: 700; line-height: 1; color: var(--text3); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* min-width: 0 and anywhere-wrapping: an unbroken long title must wrap inside its cell, not run over the next columns. */
+    .row-task-text { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1 1 0; }
+    .row-time { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; line-height: normal; color: var(--text3); white-space: nowrap; margin-bottom: -3px; }
+    .table-cell-task .card-title-line { font-size: 14px; font-weight: 700; line-height: 1.3; text-wrap: pretty; }
+    /* A visited task keeps the ink title, as on the card. */
+    .table-cell-task .card-title,
+    .table-cell-task .card-title:visited { font: inherit; letter-spacing: normal; color: var(--ink); text-decoration: none; overflow-wrap: anywhere; }
+    .table-cell-task .card-title:hover { color: var(--accent); }
+    .table-cell-task .card-title-line .drift-pill { margin-left: 7px; padding: 1px 8px; font-size: 10.5px; line-height: 1.5; }
+    .table-cell-task .card-slug-row { gap: 6px; margin-top: 0; line-height: normal; }
+    .table-cell-task .card-slug-value { font-size: 11px; }
+    .table-cell-task .card-copy-btn { border-color: transparent; }
+    .table-cell-task .card-copy-btn:hover { background: var(--surface2); border-color: transparent; color: var(--ink); }
+    .table-cell-task .card-parent-chip { gap: 5px; padding: 2px 9px 2px 7px; font-size: 11px; line-height: normal; }
+    .row-project { max-width: 100%; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; font-weight: 600; line-height: normal; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .table-cell-stage { line-height: normal; }
+    .table-cell-stage .card-status-pill { padding: 3px 10px 3px 8px; }
+    .table-cell-stage .card-status-label { font-size: 11.5px; }
+    .table-cell-ctx { gap: 7px; }
+    .row-ctx-meter { display: flex; align-items: center; gap: 8px; align-self: stretch; }
+    .row-ctx-meter .card-ctx-track { height: 5px; }
+    .table-cell-ctx .card-handover-pill { height: 24px; padding: 0 11px; box-sizing: border-box; }
+    /* Head and rest are separate blocks: the head is the lead sentence, the rest the detail under it. */
+    .table-state-text { display: flex; flex-direction: column; gap: 1px; text-wrap: pretty; }
+    .table-state-head { font-weight: 700; }
+    .table-running-text { font-weight: 700; color: var(--text2); }
+    .row-actions-buttons { display: flex; align-items: center; gap: 6px; }
+    .row-actions-buttons .card-icon-btn { width: 24px; height: 24px; }
+    .table-cell-actions { align-items: flex-end; }
+    .table-cell-actions .card-pr-link { margin-left: 0; padding: 0; gap: 4px; font-size: 11px; }
+    .table-cell-actions .card-pr-link:hover { background: none; }
+    .table-cell-next { gap: 0; }
+    .row-cta { display: flex; flex-direction: column; align-items: stretch; gap: 5px; width: 100%; }
+    .row-cta .btn { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 11px; border-radius: 8px; font-size: 12px; font-weight: 700; line-height: normal; text-align: center; }
+    .row-cta-link {
+      align-self: center; background: none; border: none; padding: 1px 2px; cursor: pointer; font: inherit; font-size: 11.5px; font-weight: 600; line-height: normal; white-space: nowrap;
+      color: var(--text2); text-decoration: underline; text-decoration-color: var(--border2); text-underline-offset: 3px;
+    }
+    .row-cta-link:hover { color: var(--accent); text-decoration-color: var(--accent); }
+
+    /* ── Bookmarks: the sidebar row and the /bookmarks page ──────────────────
+       The row wears .tab-btn, so its look, active state and collapsed layout
+       are the tabs'. Only its slot (padding of the tab bar, a divider above)
+       is new. Everything else uses the existing tokens, so dark mode is the
+       token swap and nothing more. */
+    .sidebar-bookmarks-slot { display: flex; flex-direction: column; padding: 0 12px 14px; margin-top: -8px; }
+    .sidebar-bookmarks-divider { height: 1px; margin: 10px 4px; background: var(--border); }
+
+    #bookmarks-page { padding: 14px clamp(16px, 2.6vw, 32px) 64px; display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+    .full-page-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+    .full-page-heading { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+    .full-page-heading .detail-title { margin: 0; font-weight: 800; letter-spacing: -0.025em; color: var(--ink); }
+    #bookmarks-page .detail-title { margin-bottom: 0; }
+    .bookmarks-subtitle { font-size: 13px; color: var(--text3); text-wrap: pretty; }
+    .bookmarks-path { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; color: var(--text2); overflow-wrap: anywhere; }
+    .bookmarks-save-hint {
+      display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 10px;
+      background: var(--surface); border: 1px solid var(--border); font-size: 12.5px; color: var(--text3); flex-wrap: wrap;
+    }
+    .bookmarks-save-command { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; font-weight: 600; color: var(--ink); }
+
+    .bookmarks-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .bookmarks-search {
+      flex: 1 1 260px; min-width: 0; display: flex; align-items: center; gap: 9px; padding: 0 13px; height: 38px; box-sizing: border-box;
+      border-radius: 11px; background: var(--surface); border: 1px solid var(--border); color: var(--text3);
+    }
+    .bookmarks-search svg { flex: none; }
+    .bookmarks-search input {
+      flex: 1 1 auto; min-width: 0; border: none; outline: none; background: transparent; padding: 0;
+      font-family: inherit; font-size: 13.5px; color: var(--ink);
+    }
+    .bookmarks-search:focus-within { border-color: var(--accent); }
+    .bookmarks-kind-control { display: flex; gap: 2px; padding: 3px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); max-width: 100%; overflow-x: auto; }
+    .bookmarks-kind-btn {
+      padding: 5px 12px; border: none; border-radius: 999px; background: transparent; cursor: pointer;
+      font-family: inherit; font-size: 12.5px; font-weight: 600; white-space: nowrap; color: var(--text3);
+    }
+    .bookmarks-kind-btn:hover { color: var(--accent); }
+    .bookmarks-kind-btn.is-active { background: var(--accentSoft); color: var(--accent); }
+
+    .bookmarks-tags { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: -6px; }
+    .bookmarks-tags-label { font-size: 12px; color: var(--text3); margin-right: 2px; }
+    .bookmarks-tag-chip {
+      padding: 4px 10px; border-radius: 999px; cursor: pointer; border: 1px solid var(--border); background: var(--surface);
+      font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11.5px; color: var(--text2);
+    }
+    .bookmarks-tag-chip.is-active { border-color: var(--accent); background: var(--accentSoft); color: var(--accent); }
+
+    .bookmarks-state {
+      padding: 34px 18px; border-radius: 16px; background: var(--surface); border: 1px solid var(--border);
+      text-align: center; font-size: 13.5px; color: var(--text3);
+    }
+    .bookmarks-state code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px; color: var(--ink); }
+    .bookmarks-state.is-error { color: var(--driftInk); }
+    .bookmarks-state.is-warning { padding: 10px 14px; text-align: left; font-size: 12.5px; color: var(--text2); }
+
+    .bookmark-list { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+    .bookmark-card {
+      display: flex; flex-direction: column; gap: 11px; padding: 15px 18px 16px; min-width: 0;
+      border-radius: 14px; background: var(--surface); border: 1px solid var(--border);
+    }
+    .bookmark-card-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+    .bookmark-kind-badge {
+      display: flex; align-items: center; gap: 6px; padding: 3px 9px 3px 7px; border-radius: 7px;
+      background: var(--surface2); font-size: 11.5px; font-weight: 700; color: var(--text2); white-space: nowrap;
+    }
+    .bookmark-source { font-size: 12.5px; font-weight: 600; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+    .bookmark-meta { font-size: 12px; color: var(--text3); white-space: nowrap; }
+    .bookmark-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+    .bookmark-action-btn, .bookmark-open-btn {
+      display: flex; align-items: center; gap: 6px; padding: 6px 11px; border-radius: 9px; cursor: pointer;
+      font-family: inherit; font-size: 12px; font-weight: 700; white-space: nowrap; text-decoration: none;
+    }
+    .bookmark-action-btn { border: 1px solid var(--border); background: var(--surface); color: var(--text2); }
+    .bookmark-action-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .bookmark-action-btn[data-state="copied"] { color: var(--sageInk); }
+    .bookmark-action-btn[data-state="failed"] { color: var(--driftInk); }
+    .bookmark-open-btn { border: 1px solid var(--ink); background: var(--ink); color: var(--bg); padding-inline: 12px; }
+    .bookmark-open-btn:hover { background: var(--accent); border-color: var(--accent); }
+    .bookmark-delete-btn {
+      display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; cursor: pointer;
+      color: var(--text3); border: 1px solid transparent; background: transparent;
+    }
+    .bookmark-delete-btn:hover { border-color: var(--border); color: var(--driftInk); }
+
+    .bookmark-title { font-size: 14px; font-weight: 700; color: var(--ink); overflow-wrap: anywhere; }
+    .bookmark-text {
+      font-size: 13.5px; line-height: 1.55; color: var(--ink); white-space: pre-wrap; text-wrap: pretty; overflow-wrap: anywhere;
+    }
+    .bookmark-text[data-expanded="false"] { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
+    .bookmark-text.is-quote { border-left: 3px solid var(--border2); padding-left: 12px; }
+    .bookmark-toggle {
+      align-self: flex-start; margin-top: -4px; padding: 0; border: none; background: none; cursor: pointer;
+      font-family: inherit; font-size: 12px; font-weight: 700; color: var(--accent);
+    }
+    .bookmark-toggle:hover { text-decoration: underline; }
+    .bookmark-note { font-size: 12.5px; color: var(--text2); overflow-wrap: anywhere; }
+    .bookmark-gone {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 12px; border-radius: 10px;
+      background: var(--surface2); font-size: 12.5px; color: var(--text2);
+    }
+    .bookmark-gone-session { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11.5px; color: var(--text3); overflow-wrap: anywhere; }
+    .bookmark-tags { display: flex; gap: 6px; flex-wrap: wrap; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; color: var(--text3); }
+
+    .bookmark-toasts { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; z-index: 40; max-width: calc(100vw - 32px); }
+    .bookmark-undo-toast {
+      display: flex; align-items: center; gap: 14px; padding: 10px 12px 10px 16px; border-radius: 12px;
+      background: var(--ink); color: var(--bg); font-size: 13px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    }
+    .bookmark-undo-message { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .bookmark-undo-btn {
+      padding: 4px 10px; border: none; border-radius: 8px; background: transparent; cursor: pointer;
+      font-family: inherit; font-size: 12.5px; font-weight: 700; color: var(--bg); text-decoration: underline;
+    }

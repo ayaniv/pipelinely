@@ -35,8 +35,4 @@ This runs `src/pipelinelyMergeCli.ts` against the real tasks dir — the same `m
 
 Update the status board row directly — this skill doesn't write `STATUS`/`TIMELINE` itself (the CLI does), and doesn't `TaskCreate` (there's no tab to track).
 
-**Also retire the dead tab, on exit 0 only:** the task's `worker-<slug>` tmux session has nothing left to do once its PR is merged and the worktree is gone.
-
-```
-tmux kill-session -t =worker-<slug> 2>/dev/null; exit 0
-```
+**Session retirement is the CLI's job now.** On a merge (exit 0) the CLI itself retires every tmux session of the task (`worker-<slug>` and its stage tabs) and kills them with a plain `tmux kill-session`, attached ones included (an open iTerm tab's claude gets SIGHUP and exits), and prints one line, `sessions: retired a, b (was attached)` (or `sessions: none`). Do not run your own `tmux kill-session`, and never type `/exit` or anything else into a tab; report that line to the developer, and relay any `failed` entries so they can close those themselves.

@@ -1,0 +1,6 @@
+2026-10-01T09:00:00Z planning done
+2026-10-01T10:00:00Z plan-review round 1: looks good
+2026-10-01T12:00:00Z dev PR #913 opened: the change
+2026-10-01T13:00:00Z code-review APPROVED
+2026-10-01T14:00:00Z qa 1 failure
+2026-10-01T15:00:00Z qa-fixes fixed the failing case

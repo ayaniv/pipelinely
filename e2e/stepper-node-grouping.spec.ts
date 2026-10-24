@@ -108,8 +108,8 @@ test.describe('stepper node grouping — regression: no folded activity', () => 
   // Planning/Plan Review nodes to begin with.
   test('a milestone child chain also renders the folded four-node count', async ({ page }) => {
     await page.goto('/task/fanout-parent')
-    await page.getByTestId('l1-tab-dev').click()
-    await page.locator('[data-testid="milestone-card"][data-milestone-id="M0"]').click()
+    await page.getByTestId('stage-chain-dev').click()
+    await page.getByTestId('wave-task-M0').click()
 
     const wide = page.getByTestId('stepper-wide')
     await expect(wide.locator('.stage-chain-node')).toHaveCount(MILESTONE_VISIBLE_COUNT)

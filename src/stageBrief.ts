@@ -2,7 +2,8 @@ import { execFile } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import { parseMilestoneSlug, parseTaskMdContent } from './taskParser.js'
+import { findPrNumber, parseMilestoneSlug, parseTaskMdContent, parseTimelineContent } from './taskParser.js'
+import { resolveBaseRef } from './gitOps.js'
 import { STAGE_SKILL_DIR } from './stageScope.js'
 
 const execFileAsync = promisify(execFile)
@@ -10,7 +11,6 @@ const execFileAsync = promisify(execFile)
 const TEMPLATE_START_MARKER = '<!-- brief-template:start -->'
 const TEMPLATE_END_MARKER = '<!-- brief-template:end -->'
 const NONE_RECORDED = 'none recorded'
-const BRIEF_FILE = 'TASK-cr.md'
 const INTENT_FILE = 'INTENT.md'
 const REVIEW_REPORT_FILE = 'task-pr-review.md'
 
@@ -39,23 +39,45 @@ const PLACEHOLDERS = [
   'verifyLine',
   'priorReviewBlock',
   'doNotRead',
+  'conflictingFiles',
+  'previousStatus',
+  'baseRef',
 ] as const
 type Placeholder = (typeof PLACEHOLDERS)[number]
 const PLACEHOLDER_RE = /\{\{(\w+)\}\}/g
 
 export type BriefValues = Record<string, string>
 
-// The only inputs a brief is built from: a stage, a task, a PR number and
-// where things live. No free-text parameter on purpose — a brief derived from
-// files cannot carry the dev worker's own account of what it built.
-export interface StageBriefOptions {
-  stage: 'code-review'
+// The only inputs a brief is built from: a stage, a task, (for code review) a
+// PR number and where things live. No free-text parameter on purpose — a
+// brief derived from files cannot carry the dev worker's own account of what
+// it built. The conflict fix reads its PR from the task's TIMELINE instead.
+interface StageBriefLocations {
   slug: string
-  prNumber: number
   tasksDir: string
   worktreesDir: string
   skillsDir: string
 }
+
+export type StageBriefOptions = StageBriefLocations & ({ stage: 'code-review'; prNumber: number } | { stage: 'merge-conflicts' })
+
+export type BriefStage = StageBriefOptions['stage']
+
+const BRIEF_FILE: Record<BriefStage, string> = {
+  'code-review': 'TASK-cr.md',
+  'merge-conflicts': 'TASK-merge.md',
+}
+
+// The one list of stages a brief can be rendered for: the stage-brief CLI
+// accepts exactly these, and INTENT_BRIEF_STAGES (nextAction.ts) must stay
+// within it, so no dispatch is gated on a brief that cannot be written.
+export function isBriefStage(value: string | undefined): value is BriefStage {
+  return value !== undefined && Object.hasOwn(BRIEF_FILE, value)
+}
+
+// Named in the brief when no base ref resolves, so the worker looks it up
+// rather than merging a guess.
+const UNRESOLVED_BASE_REF = 'origin/<base>'
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -121,7 +143,7 @@ interface TaskLocations {
   worktree: string
 }
 
-function locateTask(opts: StageBriefOptions): TaskLocations {
+function locateTask(opts: StageBriefLocations): TaskLocations {
   const milestone = parseMilestoneSlug(opts.slug)
   return {
     slug: opts.slug,
@@ -253,28 +275,111 @@ async function readTaskFields(where: TaskLocations): Promise<{ title: string; re
   return { title: stripStageSuffix(fields.title), repo: fields.repo, branch: fields.branch || `claude/${where.slug}` }
 }
 
+// The PR this task opened, by the same strict TIMELINE-note match the
+// dashboard falls back to (findPrNumber) — a note that merely mentions some
+// other PR never counts.
+async function readPrNumberFromTimeline(where: TaskLocations): Promise<string> {
+  const timeline = await readTextIfPresent(path.join(where.taskDir, 'TIMELINE'))
+  const prNumber = findPrNumber({ reviewRef: undefined, prNumber: undefined, stageHistory: parseTimelineContent(timeline ?? '') })
+  if (!prNumber) throw new Error(`No PR found in ${path.join(where.taskDir, 'TIMELINE')}: no dev note says this task opened one`)
+  return prNumber
+}
+
+const TREE_ID_RE = /^[0-9a-f]{40,64}$/
+
+// `git merge-tree --write-tree --name-only` exits 1 on a conflicted merge and
+// prints the would-be tree's id, then one conflicted path per line, then a
+// blank line before its informational messages. It ALSO exits 1 for a bad
+// ref, printing no tree id — null then, so that reads as a failure.
+function parseConflictedPaths(mergeTreeStdout: string): string[] | null {
+  const [treeId, ...rest] = mergeTreeStdout.split('\n')
+  if (!TREE_ID_RE.test(treeId ?? '')) return null
+  const blank = rest.indexOf('')
+  const paths = blank === -1 ? rest : rest.slice(0, blank)
+  return [...new Set(paths.filter(Boolean))].sort()
+}
+
+interface ConflictReport {
+  baseRef: string
+  conflictingFiles: string
+}
+
+function unavailable(where: TaskLocations, baseRef: string, reason: string): ConflictReport {
+  console.error(`stage-brief: cannot list ${where.slug}'s files conflicting with ${baseRef}: ${reason}`)
+  return {
+    baseRef,
+    conflictingFiles: `unavailable (${reason}) — find the PR's base with \`gh pr view --json baseRefName\`, fetch it, and run \`git merge-tree --write-tree --name-only HEAD origin/<base>\``,
+  }
+}
+
+// Read-only: merge-tree writes no ref, index or worktree file. The base is the
+// one the repo has (resolveBaseRef, the same resolution the dashboard's diff
+// uses), read from local refs only — the renderer never fetches, so the brief
+// tells the worker to fetch and recompute.
+async function describeConflicts(where: TaskLocations): Promise<ConflictReport> {
+  let baseRef: string | null
+  try {
+    baseRef = await resolveBaseRef(where.worktree)
+  } catch (err) {
+    return unavailable(where, UNRESOLVED_BASE_REF, errorMessage(err).split('\n')[0])
+  }
+  if (!baseRef) return unavailable(where, UNRESOLVED_BASE_REF, 'no base ref found in the worktree')
+
+  try {
+    await execFileAsync('git', ['-C', where.worktree, 'merge-tree', '--write-tree', '--name-only', 'HEAD', baseRef])
+    return { baseRef, conflictingFiles: `(none — HEAD merges cleanly with ${baseRef} as of its last fetch; fetch and check again)` }
+  } catch (err) {
+    const { code, stdout } = err as { code?: unknown; stdout?: unknown }
+    const conflicted = code === 1 && typeof stdout === 'string' ? parseConflictedPaths(stdout) : null
+    if (conflicted) return { baseRef, conflictingFiles: conflicted.map((file) => `- \`${file}\``).join('\n') }
+    const lines = errorMessage(err).split('\n')
+    return unavailable(where, baseRef, lines.find((line) => line.trim() && !line.startsWith('Command failed')) ?? lines[0])
+  }
+}
+
+// The STATUS the task stood at when the conflict fix was dispatched — what
+// the worker restores once the branch merges cleanly again.
+async function readPreviousStatus(taskDir: string): Promise<string> {
+  const status = await readTextIfPresent(path.join(taskDir, 'STATUS'))
+  return status?.split('\n').find((line) => line.trim() !== '')?.trim() ?? NONE_RECORDED
+}
+
+async function stageValues(opts: StageBriefOptions, where: TaskLocations): Promise<BriefValues> {
+  if (opts.stage === 'code-review') {
+    const intent = await buildIntentBlock(where)
+    return {
+      prNumber: String(opts.prNumber),
+      intentBlock: intent.text,
+      priorReviewBlock: await buildPriorReviewBlock(where),
+      doNotRead: buildDoNotRead(intent.namedSources),
+    }
+  }
+  return {
+    prNumber: await readPrNumberFromTimeline(where),
+    intentBlock: (await buildIntentBlock(where)).text,
+    ...(await describeConflicts(where)),
+    previousStatus: await readPreviousStatus(where.taskDir),
+  }
+}
+
 export async function writeStageBrief(opts: StageBriefOptions): Promise<string> {
   const where = locateTask(opts)
   const skillPath = path.join(opts.skillsDir, STAGE_SKILL_DIR[opts.stage]!, 'SKILL.md')
   const template = extractBriefTemplate(await fs.readFile(skillPath, 'utf-8'), skillPath)
 
   const { title, repo, branch } = await readTaskFields(where)
-  const intent = await buildIntentBlock(where)
   const values: BriefValues = {
     title,
     repo,
     branch,
-    prNumber: String(opts.prNumber),
     worktree: where.worktree,
     taskDir: where.taskDir,
-    intentBlock: intent.text,
     planLine: await buildPlanLine(where),
     verifyLine: await readVerifyLine(where.taskDir),
-    priorReviewBlock: await buildPriorReviewBlock(where),
-    doNotRead: buildDoNotRead(intent.namedSources),
+    ...(await stageValues(opts, where)),
   }
 
-  const briefPath = path.join(where.taskDir, BRIEF_FILE)
+  const briefPath = path.join(where.taskDir, BRIEF_FILE[opts.stage])
   await fs.writeFile(briefPath, `${renderBriefTemplate(template, values)}\n`)
   return briefPath
 }

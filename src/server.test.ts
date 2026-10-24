@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -249,10 +249,10 @@ describe('POST /settings', () => {
       body: JSON.stringify({ autoMode: true }),
     })
     expect(res.status).toBe(200)
-    expect(JSON.parse(await fs.readFile(path.join(tmpDir, 'SETTINGS.json'), 'utf-8'))).toEqual({ autoMode: true })
+    expect(JSON.parse(await fs.readFile(path.join(tmpDir, 'SETTINGS.json'), 'utf-8'))).toEqual({ autoMode: true, creaturePlacement: 'header', weeklyFocusEnabled: true, qaStartPolicy: 'ask-every-time' })
 
     const api = await fetch(`${baseUrl}/api/tasks`)
-    expect((await api.json()).settings).toEqual({ autoMode: true })
+    expect((await api.json()).settings).toEqual({ autoMode: true, creaturePlacement: 'header', weeklyFocusEnabled: true, qaStartPolicy: 'ask-every-time' })
 
     // Restore for other tests sharing this tmpDir/server.
     await fetch(`${baseUrl}/settings`, {
@@ -269,6 +269,55 @@ describe('POST /settings', () => {
       body: JSON.stringify({ autoMode: 'yes' }),
     })
     expect(res.status).toBe(400)
+  })
+
+  const postSettings = (body: unknown) =>
+    fetch(`${baseUrl}/settings`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+
+  it('merges creaturePlacement on its own without erasing autoMode, and the other way round', async () => {
+    expect((await postSettings({ autoMode: true })).status).toBe(200)
+    expect((await postSettings({ creaturePlacement: 'off' })).status).toBe(200)
+    expect(JSON.parse(await fs.readFile(path.join(tmpDir, 'SETTINGS.json'), 'utf-8'))).toEqual({ autoMode: true, creaturePlacement: 'off', weeklyFocusEnabled: true, qaStartPolicy: 'ask-every-time' })
+
+    expect((await postSettings({ autoMode: false })).status).toBe(200)
+    expect(JSON.parse(await fs.readFile(path.join(tmpDir, 'SETTINGS.json'), 'utf-8'))).toEqual({ autoMode: false, creaturePlacement: 'off', weeklyFocusEnabled: true, qaStartPolicy: 'ask-every-time' })
+    expect((await (await fetch(`${baseUrl}/api/tasks`)).json()).settings).toEqual({ autoMode: false, creaturePlacement: 'off', weeklyFocusEnabled: true, qaStartPolicy: 'ask-every-time' })
+
+    // Restore for other tests sharing this tmpDir/server.
+    await postSettings({ creaturePlacement: 'header' })
+  })
+
+  it.each(['cockpit-ai-ui-preapproved', 'ask-every-time'])('records qaStartPolicy %s without dropping autoMode or creaturePlacement', async (qaStartPolicy) => {
+    expect((await postSettings({ autoMode: true, creaturePlacement: 'off' })).status).toBe(200)
+    expect((await postSettings({ qaStartPolicy })).status).toBe(200)
+
+    const expected = { autoMode: true, creaturePlacement: 'off', weeklyFocusEnabled: true, qaStartPolicy }
+    expect(JSON.parse(await fs.readFile(path.join(tmpDir, 'SETTINGS.json'), 'utf-8'))).toEqual(expected)
+    expect((await (await fetch(`${baseUrl}/api/tasks`)).json()).settings).toEqual(expected)
+
+    // Restore for other tests sharing this tmpDir/server.
+    await postSettings({ autoMode: false, creaturePlacement: 'header', weeklyFocusEnabled: true, qaStartPolicy: 'ask-every-time' })
+  })
+
+  it.each([
+    ['an unknown policy', { qaStartPolicy: 'always' }],
+    ['a boolean policy', { qaStartPolicy: true }],
+    ['a valid field next to an invalid policy', { autoMode: true, qaStartPolicy: 'preapproved' }],
+  ])('rejects %s with 400 and writes nothing', async (_label, body) => {
+    const before = await fs.readFile(path.join(tmpDir, 'SETTINGS.json'), 'utf-8').catch(() => null)
+    expect((await postSettings(body)).status).toBe(400)
+    expect(await fs.readFile(path.join(tmpDir, 'SETTINGS.json'), 'utf-8').catch(() => null)).toBe(before)
+  })
+
+  it.each([
+    ['an unknown placement', { creaturePlacement: 'rail' }],
+    ['a non-string placement', { creaturePlacement: true }],
+    ['a valid field next to an invalid one', { autoMode: true, creaturePlacement: 'rail' }],
+    ['neither field', {}],
+  ])('rejects %s with 400 and writes nothing', async (_label, body) => {
+    const before = await fs.readFile(path.join(tmpDir, 'SETTINGS.json'), 'utf-8').catch(() => null)
+    expect((await postSettings(body)).status).toBe(400)
+    expect(await fs.readFile(path.join(tmpDir, 'SETTINGS.json'), 'utf-8').catch(() => null)).toBe(before)
   })
 })
 
@@ -356,5 +405,84 @@ describe('POST /annotate-plan/:slug', () => {
     await fs.mkdir(path.join(tmpDir, slug), { recursive: true })
     const res = await fetch(`${baseUrl}/annotate-plan/${slug}`, { method: 'POST' })
     expect(res.status).toBe(404)
+  })
+})
+
+describe('creature assignment on refresh', () => {
+  it('stores a CREATURE for a new task and serves it in /api/tasks', async () => {
+    await createTaskDir('creature-new-task')
+    await waitForTask('creature-new-task')
+    await expect.poll(async () => {
+      const data = (await (await fetch(`${baseUrl}/api/tasks`)).json()) as { tasks: { slug: string; creature: unknown }[] }
+      return data.tasks.find((t) => t.slug === 'creature-new-task')?.creature ?? null
+    }, { timeout: 5000 }).not.toBeNull()
+    const stored = JSON.parse(await fs.readFile(path.join(tmpDir, 'creature-new-task', 'CREATURE'), 'utf-8'))
+    expect(stored).toEqual(expect.objectContaining({ name: expect.any(String), color: expect.stringMatching(/^#[0-9a-f]{6}$/) }))
+  })
+
+  it('shows a hand-edited CREATURE on the next broadcast', async () => {
+    await createTaskDir('creature-hand-edit')
+    await waitForTask('creature-hand-edit')
+    const edited = { name: 'Handmade', color: '#112233', shape: '40% 40% 40% 40% / 40% 40% 40% 40%' }
+    await expect.poll(async () => fs.access(path.join(tmpDir, 'creature-hand-edit', 'CREATURE')).then(() => true, () => false), { timeout: 5000 }).toBe(true)
+    await fs.writeFile(path.join(tmpDir, 'creature-hand-edit', 'CREATURE'), JSON.stringify(edited))
+    await expect.poll(async () => {
+      const data = (await (await fetch(`${baseUrl}/api/tasks`)).json()) as { tasks: { slug: string; creature: unknown }[] }
+      return data.tasks.find((t) => t.slug === 'creature-hand-edit')?.creature
+    }, { timeout: 5000 }).toEqual(edited)
+  })
+})
+
+describe('weekly focus switch', () => {
+  const postJson = (route: string, body: unknown) =>
+    fetch(`${baseUrl}${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  const snapshot = async () => (await fetch(`${baseUrl}/api/tasks`)).json()
+  const focusPath = () => path.join(tmpDir, 'WEEKLY_FOCUS')
+
+  afterEach(async () => {
+    await postJson('/settings', { weeklyFocusEnabled: true })
+    await fs.rm(focusPath(), { force: true })
+  })
+
+  it('accepts a boolean weeklyFocusEnabled and merges it without erasing the other settings', async () => {
+    await postJson('/settings', { autoMode: true })
+    expect((await postJson('/settings', { weeklyFocusEnabled: false })).status).toBe(200)
+    expect(JSON.parse(await fs.readFile(path.join(tmpDir, 'SETTINGS.json'), 'utf-8'))).toEqual({
+      autoMode: true, creaturePlacement: 'header', weeklyFocusEnabled: false, qaStartPolicy: 'ask-every-time',
+    })
+    expect((await snapshot()).settings.weeklyFocusEnabled).toBe(false)
+    await postJson('/settings', { autoMode: false })
+  })
+
+  it.each([['a string', 'false'], ['a number', 0], ['null', null]])('rejects %s with 400 and writes nothing', async (_label, value) => {
+    const before = await fs.readFile(path.join(tmpDir, 'SETTINGS.json'), 'utf-8').catch(() => null)
+    expect((await postJson('/settings', { weeklyFocusEnabled: value })).status).toBe(400)
+    expect(await fs.readFile(path.join(tmpDir, 'SETTINGS.json'), 'utf-8').catch(() => null)).toBe(before)
+  })
+
+  it('serves the stored focus while enabled', async () => {
+    expect((await postJson('/weekly-focus', { text: 'ship it' })).status).toBe(200)
+    expect((await snapshot()).weeklyFocus).toBe('ship it')
+  })
+
+  it('serves an empty focus while disabled, but keeps the stored text so re-enabling brings it back', async () => {
+    await postJson('/weekly-focus', { text: 'ship it' })
+    await postJson('/settings', { weeklyFocusEnabled: false })
+    expect((await snapshot()).weeklyFocus).toBe('')
+    expect(await fs.readFile(focusPath(), 'utf-8')).toBe('ship it')
+
+    await postJson('/settings', { weeklyFocusEnabled: true })
+    expect((await snapshot()).weeklyFocus).toBe('ship it')
+  })
+
+  it('refuses a focus edit while disabled with 409 and leaves the stored text alone', async () => {
+    await postJson('/weekly-focus', { text: 'ship it' })
+    await postJson('/settings', { weeklyFocusEnabled: false })
+
+    const res = await postJson('/weekly-focus', { text: 'sneaky' })
+
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: 'weekly focus is disabled' })
+    expect(await fs.readFile(focusPath(), 'utf-8')).toBe('ship it')
   })
 })

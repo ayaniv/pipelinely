@@ -1,4 +1,5 @@
 import { test, expect, type Page, type Request, type Route } from '@playwright/test'
+import { openSidebarItem } from './fixtures/boardTabs.js'
 
 // The sidebar's Help item becomes a real page (/help) whose one job is to
 // STAGE `/pipelinely-feedback <message>` into the orchestrator's own session — never
@@ -9,7 +10,8 @@ import { test, expect, type Page, type Request, type Route } from '@playwright/t
 //     the URL, the request shape, the reported outcome), with every
 //     orchestrator-side POST route-stubbed.
 //   - that the route composes `/pipelinely-feedback <message>` and writes it through
-//     stageInSession (submit:false), with newlines collapsed, is proved
+//     writeToOrchestrator in 'stage' mode (paste, no Enter), with newlines
+//     collapsed, is proved
 //     against the real handler in src/server.helpFeedback.test.ts, where
 //     focusTab can be mocked.
 //
@@ -17,7 +19,7 @@ import { test, expect, type Page, type Request, type Route } from '@playwright/t
 // real server are the two contract cases at the bottom, which assert the
 // request-validation boundary (400) and the canonical-dispatch gate (403).
 // writeToOrchestrator checks isCanonicalDispatchInstance() before it reads
-// ORCHESTRATOR_SESSION or takes the lock, so neither case touches a pointer
+// ORCHESTRATOR_TMUX or takes the lock, so neither case touches a pointer
 // file, osascript, or tmux.
 //
 // Selectors are data-testid only; no assertion selects by visible copy.
@@ -88,13 +90,14 @@ function sendBtn(page: Page) {
 
 async function openHelpFromSidebar(page: Page): Promise<void> {
   await page.goto('/')
-  await page.getByTestId('sidebar-help-btn').click()
+  await openSidebarItem(page, 'sidebar-help-btn')
   await expect(helpPage(page)).toBeVisible()
 }
 
 test.describe('sidebar Help item', () => {
   test('is a real button, the same shape as the Settings item next to it', async ({ page }) => {
     await page.goto('/')
+    await page.getByTestId('sidebar-account').click()
     const btn = page.getByTestId('sidebar-help-btn')
     await expect(btn).toBeVisible()
     expect(await btn.evaluate((el) => el.tagName)).toBe('BUTTON')
@@ -105,7 +108,7 @@ test.describe('sidebar Help item', () => {
     await page.goto('/')
     await expect(helpPage(page)).toBeHidden()
 
-    await page.getByTestId('sidebar-help-btn').click()
+    await openSidebarItem(page, 'sidebar-help-btn')
 
     await expect(helpPage(page)).toBeVisible()
     expect(new URL(page.url()).pathname).toBe('/help')
@@ -122,11 +125,11 @@ test.describe('sidebar Help item', () => {
     await page.goto('/settings')
     await expect(page.getByTestId('settings-page')).toBeVisible()
 
-    await page.getByTestId('sidebar-help-btn').click()
+    await openSidebarItem(page, 'sidebar-help-btn')
     await expect(helpPage(page)).toBeVisible()
     await expect(page.getByTestId('settings-page')).toBeHidden()
 
-    await page.getByTestId('sidebar-settings-btn').click()
+    await openSidebarItem(page, 'sidebar-settings-btn')
     await expect(page.getByTestId('settings-page')).toBeVisible()
     await expect(helpPage(page)).toBeHidden()
   })

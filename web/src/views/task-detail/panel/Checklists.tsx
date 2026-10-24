@@ -61,7 +61,7 @@ export function FindingsChecklist({ findings, selected, onToggle }: FindingsChec
       <div className="finding-list">
         {findings.map((finding, i) => (
           <div key={i} className={`finding-row${isInteractive ? '' : ' read-only'}`} data-testid="finding-row">
-            {isInteractive && <TriageCheckbox index={i} isSelected={selected[i]} ariaLabel={`Select finding ${i + 1}`} onToggle={onToggle} />}
+            {isInteractive && <TriageCheckbox index={i} isSelected={selected[i]} ariaLabel={`Select ${finding.severity} finding: ${finding.category} — ${finding.description} (${finding.location})`} onToggle={onToggle} />}
             <span className={`pill pill-${finding.severity}`} data-testid="finding-severity">{finding.severity}</span>
             <div className="finding-body">
               <span className="finding-category">{finding.category}</span>
@@ -89,7 +89,7 @@ export function QaFailuresChecklist({ failures, selected, onToggle }: QaFailures
       <div className="finding-list">
         {failures.map((failure, i) => (
           <div key={i} className="finding-row no-severity" data-testid="finding-row">
-            <TriageCheckbox index={i} isSelected={selected[i]} ariaLabel={`Select failing case ${i + 1}`} onToggle={onToggle} />
+            <TriageCheckbox index={i} isSelected={selected[i]} ariaLabel={`Select failing case: ${failure.label} — ${failure.description} (${failure.location})`} onToggle={onToggle} />
             <div className="finding-body">
               <span className="finding-category">{failure.label}</span>
               <span className="finding-description">{failure.description}</span>

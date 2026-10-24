@@ -3,9 +3,9 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import type { StageEvent, Task } from '../../../../../src/types'
 import type { ChainStageId } from '../../../pipelineStages'
-import { makeTask } from '../../../testing/makeTask'
+import { makeMilestone, makeTask } from '../../../testing/makeTask'
 import { TaskDetailNavProvider, type TaskDetailNavApi } from '../detailNav'
-import { StageChainGraph, type StageChainGraphProps } from './StageChainGraph'
+import { ParentChartGraph, StageChainGraph, type StageChainGraphProps } from './StageChainGraph'
 
 const event = (stageValue: string): StageEvent => ({ stage: stageValue as StageEvent['stage'], at: '2026-01-01T00:00:00Z', note: null })
 
@@ -77,20 +77,20 @@ describe('StageChainGraph', () => {
     expect(navApi.selectStageTab).not.toHaveBeenCalled()
   })
 
-  test('the milestone rail adds the state word to every node; the flat one does not', () => {
+  test('a milestone draws its four stages as chart nodes with their status line; a flat task draws five', () => {
     const { unmount } = renderChain({ child: makeTask(), stages: 'milestone' })
-    expect(screen.getAllByTestId('stage-node-data')).toHaveLength(4)
-    expect(screen.getByTestId('stepper-wide')).toHaveClass('is-milestone')
+    expect(screen.getAllByTestId('stage-node-sub')).toHaveLength(4)
+    expect(screen.queryByTestId('stage-chain-planning')).not.toBeInTheDocument()
     unmount()
 
     renderChain({ child: makeTask(), stages: 'flat' })
-    expect(screen.queryByTestId('stage-node-data')).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('stage-node-sub')).toHaveLength(5)
   })
 
-  test('an undispatched milestone (no child) draws every node pending and no gap note', () => {
+  test('an undispatched milestone (no child) draws every node not started and no gap note', () => {
     renderChain({ child: null, stages: 'milestone' })
 
-    expect(screen.getByTestId('stage-chain-dev')).toHaveClass('is-pending')
+    expect(screen.getByTestId('stage-chain-dev')).toHaveAttribute('data-state', 'todo')
     expect(screen.queryByTestId('stage-chain-no-data')).not.toBeInTheDocument()
   })
 
@@ -128,5 +128,41 @@ describe('StageChainGraph', () => {
   test('fails loudly outside a task detail rather than drawing an unselectable chain', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     expect(() => render(<StageChainGraph child={makeTask()} stages="flat" />)).toThrow(/TaskDetailNavProvider/)
+  })
+})
+
+describe('ParentChartGraph', () => {
+  const dispatched = (id: string, stage: 'dev' | 'code-review') => makeMilestone({ id, state: 'dispatched', task: makeTask({ slug: `p-${id.toLowerCase()}`, stage }) })
+  const parent = (milestones = [dispatched('M0', 'dev'), dispatched('M1', 'code-review')]) =>
+    makeTask({ slug: 'p', stage: 'dev', stageHistory: [event('planning'), event('plan-review')], milestones })
+
+  function renderParent(task: Task, l1Tab: TaskDetailNavApi['nav']['l1Tab'] = 'dev') {
+    navApi = { nav: { l1Tab, l2Tab: null, milestoneId: null }, selectL1Tab: vi.fn(), selectStageTab: vi.fn(), selectMilestone: vi.fn(), leaveMilestone: vi.fn() }
+    return render(<TaskDetailNavProvider value={navApi}><ParentChartGraph task={task} /></TaskDetailNavProvider>)
+  }
+
+  test('draws the five parent stages with the selected one marked', () => {
+    renderParent(parent(), 'cr')
+    for (const id of ['planning', 'dev', 'cr', 'qa', 'merge']) expect(screen.getByTestId(`stage-chain-${id}`)).toBeInTheDocument()
+    expect(screen.getByTestId('stage-chain-cr')).toHaveAttribute('aria-current', 'step')
+    expect(screen.getByTestId('stage-chain-dev')).toHaveAttribute('aria-current', 'false')
+  })
+
+  test('a click selects the parent stage through selectL1Tab, not the ?stage= param', () => {
+    renderParent(parent())
+    fireEvent.click(screen.getByTestId('stage-chain-qa'))
+    expect(navApi.selectL1Tab).toHaveBeenCalledWith('qa')
+    expect(navApi.selectStageTab).not.toHaveBeenCalled()
+  })
+
+  test('Planning routes to Plan Review once the plan review is recorded', () => {
+    renderParent(parent())
+    fireEvent.click(screen.getByTestId('stage-chain-planning'))
+    expect(navApi.selectL1Tab).toHaveBeenCalledWith('plan-review')
+  })
+
+  test('Dev carries one dot per milestone', () => {
+    renderParent(parent())
+    expect(screen.getAllByTestId('stage-node-dot').map((dot) => dot.dataset.status)).toEqual(['working', 'review'])
   })
 })

@@ -18,16 +18,22 @@ export interface CtxMeterTestIds {
 
 export interface CtxMeterProps {
   ctx: number | null
+  // The fill's colour, when the meter carries a stage tone; otherwise it is
+  // amber when hot and the accent when not. A stage-toned meter (card, table
+  // row) also keeps its surface2 track when hot, as in the design.
+  fillColor?: string
   testIds?: CtxMeterTestIds
+  // Off where a column header already names the meter (the Active table's Ctx column).
+  isLabelled?: boolean
 }
 
-export function CtxMeter({ ctx, testIds }: CtxMeterProps) {
+export function CtxMeter({ ctx, fillColor, testIds, isLabelled = true }: CtxMeterProps) {
   const hot = ctxIsHot(ctx)
   return (
     <>
-      <span className="card-ctx-label" data-testid="card-ctx-label">ctx</span>
-      <div className="card-ctx-track" data-testid={testIds?.track} style={{ background: hot ? 'var(--amberSoft)' : 'var(--surface2)' }}>
-        <div className="card-ctx-fill" data-testid={testIds?.fill} style={{ width: ctx === null ? '0%' : `${ctx}%`, background: hot ? 'var(--amber)' : 'var(--accent)' }} />
+      {isLabelled && <span className="card-ctx-label" data-testid="card-ctx-label">ctx</span>}
+      <div className="card-ctx-track" data-testid={testIds?.track} style={{ background: hot && !fillColor ? 'var(--amberSoft)' : 'var(--surface2)' }}>
+        <div className="card-ctx-fill" data-testid={testIds?.fill} style={{ width: ctx === null ? '0%' : `${ctx}%`, background: fillColor ?? (hot ? 'var(--amber)' : 'var(--accent)') }} />
       </div>
       <span className="card-ctx-pct" data-testid={testIds?.pct} style={{ color: hot ? 'var(--amberInk)' : 'var(--text2)' }}>
         {ctx === null ? '—' : `${ctx}%`}

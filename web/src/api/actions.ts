@@ -1,4 +1,4 @@
-import type { Stage } from '../../../src/types'
+import type { CreaturePlacement, QaStartPolicy, Settings, Stage } from '../../../src/types'
 import type { AnswerDialogReason, AnswerDialogRequestBody, AnswerDialogResponseBody } from '../../../src/answerDialogWire'
 import type { Logger } from '../log'
 
@@ -20,6 +20,21 @@ export interface PostActionOptions {
 export interface ActionOutcome {
   ok: boolean
   label: string
+}
+
+export async function serverErrorOf(res: Response): Promise<string | undefined> {
+  const data = (await res.json().catch(() => null)) as { error?: string } | null
+  return data?.error
+}
+
+// The 409 every dispatch route answers when the target pane is not ready to
+// be typed into (a dialog is open, copy mode, no bracketed paste). The server
+// names the cause and what to do; the generic label is only for a body that
+// carries none.
+const PANE_NOT_READY_LABEL = 'not ready — click again'
+
+export async function paneNotReadyLabel(res: Response): Promise<string> {
+  return (await serverErrorOf(res)) ?? PANE_NOT_READY_LABEL
 }
 
 function actionUrl(action: string, slug: string): string {
@@ -148,9 +163,33 @@ export async function postSkipStage(slug: string, stage: string, { fetchImpl, lo
   }
 }
 
+// What the 409 (task left the gate) and 400 (blank notes) refusals mean to the designer.
+const DESIGN_APPROVAL_FAILURE_LABEL: Record<number, string> = { 409: 'not at the gate', 400: 'notes required' }
+
+export type DesignApprovalDecision = { decision: 'approve' } | { decision: 'request-changes'; notes: string }
+
+// POST /design-approval/:slug — the designer's decision at the gate. The 409
+// (task no longer at the gate) and 400 (blank notes) are told apart from a
+// plain failure so the button can say what actually went wrong.
+export async function postDesignApproval(slug: string, body: DesignApprovalDecision, { fetchImpl, log }: PostActionOptions): Promise<ActionOutcome> {
+  try {
+    const res = await fetchImpl(actionUrl('design-approval', slug), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (res.ok) return { ok: true, label: body.decision === 'approve' ? '✓ approved' : '✓ changes requested' }
+    log(`[action] POST /design-approval/${slug} failed`, new Error(`HTTP ${res.status}`))
+    return { ok: false, label: DESIGN_APPROVAL_FAILURE_LABEL[res.status] ?? 'failed' }
+  } catch (err) {
+    log(`[action] POST /design-approval/${slug} failed`, err)
+    return { ok: false, label: 'no server' }
+  }
+}
+
 // FocusButton's own dispatch — the one action whose status codes each mean
 // something distinct (a live reattach vs. an orchestrator-mediated resume
-// vs. an already-reattached race vs. no orchestrator vs. a read-only
+// vs. a pane that is not ready vs. no orchestrator vs. a read-only
 // instance). postAction's generic 404/"failed"
 // split would flatten all of that into one useless label.
 export async function postFocus(slug: string, { fetchImpl, log }: PostActionOptions): Promise<ActionOutcome> {
@@ -159,7 +198,7 @@ export async function postFocus(slug: string, { fetchImpl, log }: PostActionOpti
     if (res.status === 200) return { ok: true, label: '✓' }
     if (res.status === 202) return { ok: true, label: '↻ resuming via orchestrator' }
     const label =
-      res.status === 409 ? 'reattached — click again'
+      res.status === 409 ? await paneNotReadyLabel(res)
       : res.status === 503 ? 'no orchestrator'
       : res.status === 403 ? 'read-only instance'
       : res.status === 404 ? 'not found'
@@ -180,8 +219,8 @@ export interface StagingRequest extends PostActionOptions {
 // The staging POSTs (handover, help feedback) share one outcome mapping,
 // "✓ sent" only when the server
 // really submitted (it has the last word — a non-remote request stages
-// anyway), a 409 means the session was just reattached, and anything else
-// surfaces the server's own message. `body` is only sent (with its
+// anyway), and a failure surfaces the server's own message (a 409 is the
+// pane not being ready, which the message explains). `body` is only sent (with its
 // Content-Type) when given, since stageHandover's route takes none.
 async function postStaging({ url, body, fetchImpl, log }: StagingRequest): Promise<ActionOutcome> {
   try {
@@ -193,12 +232,9 @@ async function postStaging({ url, body, fetchImpl, log }: StagingRequest): Promi
       const data = (await res.json().catch(() => null)) as { submitted?: boolean } | null
       return { ok: true, label: data?.submitted ? '✓ sent' : '✓ staged' }
     }
-    if (res.status === 409) {
-      log(`[action] POST ${url} failed`, new Error('HTTP 409'))
-      return { ok: false, label: 'reattached — click again' }
-    }
-    const data = (await res.json().catch(() => null)) as { error?: string } | null
-    const label = data?.error || (res.status === 404 ? 'not found' : 'failed')
+    const serverError = await serverErrorOf(res)
+    const label = serverError
+      || (res.status === 409 ? PANE_NOT_READY_LABEL : res.status === 404 ? 'not found' : 'failed')
     log(`[action] POST ${url} failed`, new Error(label))
     return { ok: false, label }
   } catch (err) {
@@ -289,15 +325,16 @@ export async function postOrchestratorTab({ fetchImpl, log }: PostActionOptions)
   }
 }
 
-// POST /settings — the Settings page's auto mode switch, the only control
-// that writes this global setting. Returns whether the write took, so the
-// caller can revert its optimistic state; the reason is logged here.
-export async function postAutoMode(autoMode: boolean, { fetchImpl, log }: PostActionOptions): Promise<boolean> {
+// POST /settings — the Settings page's switches, the only controls that write
+// these global settings. The server merges whichever fields the patch carries.
+// Returns whether the write took, so the caller can revert its optimistic
+// state; the reason is logged here.
+async function postSettingsPatch(patch: Partial<Settings>, { fetchImpl, log }: PostActionOptions): Promise<boolean> {
   try {
     const res = await fetchImpl('/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ autoMode }),
+      body: JSON.stringify(patch),
     })
     if (res.ok) return true
     log('[settings] POST /settings failed', new Error(`HTTP ${res.status}`))
@@ -306,6 +343,22 @@ export async function postAutoMode(autoMode: boolean, { fetchImpl, log }: PostAc
     log('[settings] POST /settings failed', err)
     return false
   }
+}
+
+export function postAutoMode(autoMode: boolean, options: PostActionOptions): Promise<boolean> {
+  return postSettingsPatch({ autoMode }, options)
+}
+
+export function postCreaturePlacement(creaturePlacement: CreaturePlacement, options: PostActionOptions): Promise<boolean> {
+  return postSettingsPatch({ creaturePlacement }, options)
+}
+
+export function postWeeklyFocusEnabled(weeklyFocusEnabled: boolean, options: PostActionOptions): Promise<boolean> {
+  return postSettingsPatch({ weeklyFocusEnabled }, options)
+}
+
+export function postQaStartPolicy(qaStartPolicy: QaStartPolicy, options: PostActionOptions): Promise<boolean> {
+  return postSettingsPatch({ qaStartPolicy }, options)
 }
 
 // POST /task-auto-mode/:slug — one task's own auto-mode override ('auto',
@@ -411,5 +464,23 @@ export async function postAnswerDialog(slug: string, request: AnswerDialogReques
   } catch (err) {
     log(`${route} failed`, err)
     return { outcome: 'no-server', message: NO_SERVER_MESSAGE }
+  }
+}
+
+// DELETE /api/bookmarks/:id — removes the bookmark's file. A bookmark that is
+// already gone (404) is what the caller wanted, so it counts as done. The log
+// carries the id only, never the bookmark's content. `keepalive` lets the
+// request outlive a page that is closing, which is when a pending delete is
+// flushed.
+export async function requestBookmarkDelete(id: string, { fetchImpl, log }: PostActionOptions): Promise<ActionOutcome> {
+  const url = `/api/bookmarks/${encodeURIComponent(id)}`
+  try {
+    const res = await fetchImpl(url, { method: 'DELETE', keepalive: true })
+    if (res.ok || res.status === 404) return { ok: true, label: '✓' }
+    log(`[action] DELETE ${url} failed`, new Error(`HTTP ${res.status}`))
+    return { ok: false, label: 'failed' }
+  } catch (err) {
+    log(`[action] DELETE ${url} failed`, err)
+    return { ok: false, label: 'no server' }
   }
 }

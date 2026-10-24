@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execa } from 'execa'
+import type { Stage } from './types.js'
 import {
   parseMilestoneSlug,
   countPlanMilestones,
@@ -40,6 +41,7 @@ import {
   parseQaCaseTitles,
   parseAllTasks,
   shouldShowOnBoard,
+  isParentComplete,
   computeAttentionStatus,
   applyBacklogShelveEntry,
   findResumableBacklogSlug,
@@ -57,13 +59,14 @@ import {
   parseSettingsContent,
   readSettings,
   parseAutoModeOverride,
+  parseKind,
+  parseAffectedApps,
   computeEffectiveAutoMode,
   computeAutoDispatch,
   resolveQaSkipReason,
   recordQaSkipped,
   appendTimelineLine,
   DEFAULT_SETTINGS,
-  MANUAL_ONLY_STAGES,
   parseOrchestratorMetrics,
   isBacklogProject,
   formatBacklogItemLine,
@@ -72,6 +75,7 @@ import {
   stripSummarySection,
 } from './taskParser.js'
 import type { Finding, MilestoneDecl, MilestoneStatus, StageEvent, Task } from './types.js'
+import type { NextStageInput } from './nextStageCta.js'
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -89,8 +93,9 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     itermSessionId: null,
     tmuxSession: null,
     plan: null,
-    autoModeOverride: 'inherit',
+    autoModeOverride: 'inherit', kind: 'dev', designQaReport: null, affectedApps: [],
     autoMode: false,
+    creature: null,
     status: 'working',
     updatedAt: new Date(),
     completedAt: null,
@@ -190,6 +195,63 @@ describe('parseTaskMdContent', () => {
 
   it('returns empty fields when TASK.md declares none of them', () => {
     expect(parseTaskMdContent('# Just a title\n')).toEqual({ title: 'Just a title', mode: '', repo: '', branch: '' })
+  })
+
+  describe('branch', () => {
+    it('prefers the explicit Branch: line over an earlier line naming the parent branch first', () => {
+      const milestone = [
+        '# Milestone 0',
+        '',
+        '## Workspace',
+        '- Repo: cockpit-ai',
+        '- Branch: claude/ds-pipeline-kind-m0',
+        '- Branch status: new',
+        '- Mode: implement',
+        '',
+        'Builds on claude/ds-pipeline-kind; this milestone lands as claude/ds-pipeline-kind-m0.',
+      ].join('\n')
+      expect(parseTaskMdContent(milestone).branch).toBe('claude/ds-pipeline-kind-m0')
+    })
+
+    it('ignores prose after the Branch: line that mentions other branches', () => {
+      const brief = [
+        '# T',
+        '- Branch: claude/own-task',
+        '',
+        'Other in-flight work: claude/other-task (PR #171) touches the same file.',
+        'Do not touch fix/unrelated.',
+      ].join('\n')
+      expect(parseTaskMdContent(brief).branch).toBe('claude/own-task')
+    })
+
+    it('takes the token right after Branch: when the same line also names the parent branch', () => {
+      const brief = '# T\n- Branch: claude/ds-pipeline-kind-m0 (parent: claude/ds-pipeline-kind)\n'
+      expect(parseTaskMdContent(brief).branch).toBe('claude/ds-pipeline-kind-m0')
+    })
+
+    it('takes the last Branch: line when the Reuse rule appended a new request', () => {
+      const reused = '# T\n- Branch: fix/first\n\n## NEW REQUEST\n- Branch: fix/second\nsee also fix/first\n'
+      expect(parseTaskMdContent(reused).branch).toBe('fix/second')
+    })
+
+    it('does not mistake a "Branch status:" line for a Branch: line', () => {
+      const brief = '# T\n- Branch status: new, off claude/base-thing\n- Mode: implement\n'
+      // No real Branch: line, so it falls back to the branch-like token scan.
+      expect(parseTaskMdContent(brief).branch).toBe('claude/base-thing')
+    })
+
+    it('falls back to the last line with a branch-like token when there is no Branch: line', () => {
+      const brief = '# T\nStarted from feat/old-idea.\nNow on claude/new-idea, then merge.\n'
+      expect(parseTaskMdContent(brief).branch).toBe('claude/new-idea')
+    })
+
+    it('strips trailing punctuation from the Branch: token', () => {
+      expect(parseTaskMdContent('# T\n- Branch: `claude/x-y`.\n').branch).toBe('claude/x-y')
+    })
+
+    it('falls back when the Branch: line holds no recognizable branch', () => {
+      expect(parseTaskMdContent('# T\n- Branch: TBD\nUse feat/fallback.\n').branch).toBe('feat/fallback')
+    })
   })
 })
 
@@ -880,11 +942,59 @@ describe('computeStage', () => {
     })).toBe('merge')
   })
 
+  describe('for a ds task', () => {
+    const qaLine = (note: string | null) => [{ stage: 'qa' as const, at: '2026-08-03T10:00:00Z', note }]
+
+    it('a passed QA puts the task at design QA, not merge', () => {
+      expect(computeStage({ ...base, kind: 'ds', stageHistory: qaLine('all 3 cases passed'), qaResult: { failed: 0 } })).toBe('design-qa')
+      expect(computeStage({ ...base, kind: 'dev', stageHistory: qaLine('all 3 cases passed'), qaResult: { failed: 0 } })).toBe('merge')
+    })
+
+    it('a skipped QA puts the task at design QA, not merge', () => {
+      expect(computeStage({ ...base, kind: 'ds', stageHistory: qaLine('skipped — no e2e') })).toBe('design-qa')
+    })
+
+    it('a failed QA still goes to qa-fixes', () => {
+      expect(computeStage({ ...base, kind: 'ds', stageHistory: qaLine('1 failed'), qaResult: { failed: 1 } })).toBe('qa-fixes')
+    })
+
+    it('with no stage history, a passed QA result alone reads as design QA', () => {
+      expect(computeStage({ ...base, kind: 'ds', qaResult: { failed: 0 } })).toBe('design-qa')
+    })
+
+    it('a task with no kind takes the dev branches', () => {
+      expect(computeStage({ ...base, stageHistory: qaLine('skipped — no e2e') })).toBe('merge')
+    })
+  })
+
   it('an auto-dispatched qa line is still stage qa', () => {
     expect(computeStage({
       ...base,
       stageHistory: [{ stage: 'qa', at: '2026-08-03T10:00:00Z', note: 'auto-dispatched — auto mode' }],
     })).toBe('qa')
+  })
+
+  // merge-conflicts is off the main line: its TIMELINE line records that a
+  // conflict fix ran, not that the task moved to Merge.
+  describe('a conflict-fix TIMELINE line does not move the stage', () => {
+    const at = (stage: StageEvent['stage'], note: string | null = null) => ({ stage, at: '2026-10-04T10:00:00Z', note })
+
+    it('stays at the last on-chain stage — qa-fixes, not merge', () => {
+      expect(computeStage({
+        ...base,
+        stageHistory: [at('dev'), at('code-review'), at('qa'), at('qa-fixes'), at('merge-conflicts', 'resolved PR #149 against origin/master')],
+      })).toBe('qa-fixes')
+    })
+
+    it('keeps the QA-result refinement of a qa line that precedes it', () => {
+      const history = [at('dev'), at('qa'), at('merge-conflicts', 'resolved PR #149')]
+      expect(computeStage({ ...base, stageHistory: history, qaResult: { failed: 2 } })).toBe('qa-fixes')
+      expect(computeStage({ ...base, stageHistory: history, qaResult: { failed: 0 } })).toBe('merge')
+    })
+
+    it('falls back to the file-based inference when the only lines are conflict fixes', () => {
+      expect(computeStage({ ...base, stageHistory: [at('merge-conflicts')], reviewVerdict: 'changes-required' })).toBe('comment-fix')
+    })
   })
 
   it('has no stage for a done task — those cards live on the Done tab', () => {
@@ -1829,6 +1939,39 @@ describe('groupDoneTasksByDate', () => {
     expect(groups[0].tasks.map(t => t.slug)).toEqual(['a'])
   })
 
+  describe('a fan-out parent whose every milestone has merged', () => {
+    const merged = (id: string, completedAt: string | null): MilestoneStatus => ({
+      id, name: id, needs: [], estimate: null, specFile: null, wave: 1, state: 'done',
+      task: makeTask({ slug: `parent-${id.toLowerCase()}`, status: 'done', completedAt }),
+    })
+
+    it('is listed under Done on the day its last milestone merged, though its own STATUS is not done', () => {
+      const parent = makeTask({ slug: 'parent', status: 'working', milestones: [merged('M0', '2026-07-20T10:00:00'), merged('M1', '2026-07-21T09:00:00')] })
+      const groups = groupDoneTasksByDate([parent], now)
+      expect(groups).toHaveLength(1)
+      expect(groups[0]).toMatchObject({ dateKey: '2026-07-21', label: 'Today' })
+      expect(groups[0].tasks.map(t => t.slug)).toEqual(['parent'])
+    })
+
+    it('lands in the unknown bucket when no merged milestone carries a date', () => {
+      const parent = makeTask({ slug: 'parent', status: 'working', milestones: [merged('M0', null)] })
+      expect(groupDoneTasksByDate([parent], now)[0]).toMatchObject({ dateKey: 'unknown' })
+    })
+
+    it('is not listed while one milestone is still unmerged', () => {
+      const unmerged: MilestoneStatus = { ...merged('M1', null), state: 'dispatched' }
+      const parent = makeTask({ slug: 'parent', status: 'working', milestones: [merged('M0', '2026-07-21T09:00:00'), unmerged] })
+      expect(groupDoneTasksByDate([parent], now)).toEqual([])
+    })
+
+    it('is listed once even when its own STATUS is done too', () => {
+      const parent = makeTask({ slug: 'parent', status: 'done', completedAt: '2026-07-21T11:00:00', milestones: [merged('M0', '2026-07-21T09:00:00')] })
+      const groups = groupDoneTasksByDate([parent], now)
+      expect(groups.flatMap(g => g.tasks)).toHaveLength(1)
+      expect(groups[0].tasks[0].completedAt).toBe('2026-07-21T11:00:00')
+    })
+  })
+
   it('puts tasks with no reliable completion date in a trailing "unknown" bucket', () => {
     const tasks = [
       makeTask({ slug: 'today-task', status: 'done', completedAt: '2026-07-21T09:00:00' }),
@@ -1920,6 +2063,47 @@ describe('isOrphaned', () => {
 // must read as null rather than '' — a task dir predating the tmux work has no
 // TMUX_SESSION at all, and an empty-string session name would match nothing
 // while still looking "set" to callers.
+describe('parseTask CREATURE', () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pipelinely-creature-parse-test-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+    vi.restoreAllMocks()
+  })
+
+  async function makeTaskDir(creatureContent: string | null): Promise<string> {
+    const dir = path.join(tmpDir, 'some-task')
+    await fs.mkdir(dir, { recursive: true })
+    await fs.writeFile(path.join(dir, 'STATUS'), 'working')
+    if (creatureContent !== null) await fs.writeFile(path.join(dir, 'CREATURE'), creatureContent)
+    return dir
+  }
+
+  const stored = { name: 'Pip', color: '#a8d8c9', shape: '50% 50% 50% 50% / 50% 50% 50% 50%' }
+
+  it('reads the stored creature', async () => {
+    expect((await parseTask(await makeTaskDir(JSON.stringify(stored))))!.creature).toEqual(stored)
+  })
+
+  it('is null when there is no CREATURE file, and parsing writes nothing', async () => {
+    const dir = await makeTaskDir(null)
+    expect((await parseTask(dir))!.creature).toBeNull()
+    await expect(fs.access(path.join(dir, 'CREATURE'))).rejects.toThrow()
+  })
+
+  it('is null and logged when the file is invalid, and the file is left as it was', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const dir = await makeTaskDir('{"name": "Pip"}')
+    expect((await parseTask(dir))!.creature).toBeNull()
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('[creature] invalid CREATURE for some-task'))
+    expect(await fs.readFile(path.join(dir, 'CREATURE'), 'utf-8')).toBe('{"name": "Pip"}')
+  })
+})
+
 describe('parseTask session files', () => {
   let tmpDir: string
 
@@ -2659,7 +2843,7 @@ describe('computeMilestones', () => {
     status, updatedAt: new Date(0), completedAt: null, completedAtSource: null,
     totalInputTokens: 0, totalOutputTokens: 0, sessions: [],
     showsOnBoard: true, attentionStatus: 'idle',
-    autoModeOverride: 'inherit', autoMode: false,
+    autoModeOverride: 'inherit', kind: 'dev', designQaReport: null, affectedApps: [], autoMode: false, creature: null,
   })
 
   it('puts every root milestone in wave 1', () => {
@@ -2892,6 +3076,17 @@ describe('parseTask milestones', () => {
   })
 })
 
+describe('isParentComplete', () => {
+  const ms = (state: MilestoneStatus['state']): MilestoneStatus => ({ id: 'M0', name: 'm', needs: [], estimate: null, specFile: null, wave: 1, state, task: null })
+
+  it('is true only for a task with milestones that have all merged', () => {
+    expect(isParentComplete({ milestones: [ms('done'), ms('done')] } as Task)).toBe(true)
+    expect(isParentComplete({ milestones: [ms('done'), ms('queued')] } as Task)).toBe(false)
+    expect(isParentComplete({ milestones: [] } as unknown as Task)).toBe(false)
+    expect(isParentComplete({ milestones: undefined } as Task)).toBe(false)
+  })
+})
+
 describe('shouldShowOnBoard', () => {
   function ms(id: string, state: MilestoneStatus['state'], needs: string[] = []): MilestoneStatus {
     return { id, name: id, needs, estimate: null, specFile: null, wave: 1, state, task: null }
@@ -2906,8 +3101,20 @@ describe('shouldShowOnBoard', () => {
     expect(shouldShowOnBoard(task)).toBe(true)
   })
 
-  it('hides a milestone-declaring parent once nothing remains queued', () => {
+  // The Parent tasks section is the parent's whole card: it tracks the
+  // milestones until the last one merges, not until the last one is dispatched.
+  it('keeps a parent on the board while any milestone is dispatched but not yet merged', () => {
     const task = { slug: 'overlap', milestones: [ms('M0', 'done'), ms('M1', 'dispatched')] } as Task
+    expect(shouldShowOnBoard(task)).toBe(true)
+  })
+
+  it('hides a milestone-declaring parent once every milestone has merged', () => {
+    const task = { slug: 'overlap', milestones: [ms('M0', 'done'), ms('M1', 'done')] } as Task
+    expect(shouldShowOnBoard(task)).toBe(false)
+  })
+
+  it('hides a shelved parent whatever its milestones say', () => {
+    const task = { slug: 'overlap', status: 'shelved', milestones: [ms('M0', 'queued')] } as Task
     expect(shouldShowOnBoard(task)).toBe(false)
   })
 
@@ -3094,8 +3301,12 @@ describe('computeNextStageCta', () => {
 
 describe('parseSettingsContent', () => {
   it('parses a valid settings file', () => {
-    expect(parseSettingsContent('{"autoMode": true}')).toEqual({ autoMode: true })
-    expect(parseSettingsContent('{"autoMode": false}')).toEqual({ autoMode: false })
+    expect(parseSettingsContent('{"autoMode": true}')).toEqual({ autoMode: true, creaturePlacement: 'header', weeklyFocusEnabled: true, qaStartPolicy: 'ask-every-time' })
+    expect(parseSettingsContent('{"autoMode": false, "creaturePlacement": "off"}')).toEqual({ autoMode: false, creaturePlacement: 'off', weeklyFocusEnabled: true, qaStartPolicy: 'ask-every-time' })
+  })
+
+  it('defaults creature placement to the header', () => {
+    expect(DEFAULT_SETTINGS.creaturePlacement).toBe('header')
   })
 
   it('falls back to DEFAULT_SETTINGS (auto off) for null (absent file)', () => {
@@ -3118,6 +3329,83 @@ describe('parseSettingsContent', () => {
     expect(parseSettingsContent('{"autoMode": 1}')).toEqual(DEFAULT_SETTINGS)
     expect(parseSettingsContent('{}')).toEqual(DEFAULT_SETTINGS)
   })
+
+  it('falls back per field: a bad creaturePlacement keeps autoMode, and a bad autoMode keeps creaturePlacement', () => {
+    expect(parseSettingsContent('{"autoMode": true, "creaturePlacement": "rail"}')).toEqual({ autoMode: true, creaturePlacement: 'header', weeklyFocusEnabled: true, qaStartPolicy: 'ask-every-time' })
+    expect(parseSettingsContent('{"autoMode": true, "creaturePlacement": 3}')).toEqual({ autoMode: true, creaturePlacement: 'header', weeklyFocusEnabled: true, qaStartPolicy: 'ask-every-time' })
+    expect(parseSettingsContent('{"autoMode": "yes", "creaturePlacement": "off"}')).toEqual({ autoMode: false, creaturePlacement: 'off', weeklyFocusEnabled: true, qaStartPolicy: 'ask-every-time' })
+  })
+})
+
+describe('parseSettingsContent: weeklyFocusEnabled', () => {
+  it('defaults to on', () => {
+    expect(DEFAULT_SETTINGS.weeklyFocusEnabled).toBe(true)
+    expect(parseSettingsContent('{"autoMode": true}').weeklyFocusEnabled).toBe(true)
+  })
+
+  it('reads a real boolean either way', () => {
+    expect(parseSettingsContent('{"weeklyFocusEnabled": false}').weeklyFocusEnabled).toBe(false)
+    expect(parseSettingsContent('{"weeklyFocusEnabled": true}').weeklyFocusEnabled).toBe(true)
+  })
+
+  it.each(['"false"', '0', 'null', '[]'])('treats %s as on, and keeps the other fields', (raw) => {
+    expect(parseSettingsContent(`{"autoMode": true, "weeklyFocusEnabled": ${raw}}`)).toEqual({
+      autoMode: true, creaturePlacement: 'header', weeklyFocusEnabled: true, qaStartPolicy: 'ask-every-time',
+    })
+  })
+})
+
+describe('parseSettingsContent — qaStartPolicy', () => {
+  it('asks every time by default: the consent is never assumed', () => {
+    expect(DEFAULT_SETTINGS.qaStartPolicy).toBe('ask-every-time')
+    expect(parseSettingsContent('{"autoMode": true}').qaStartPolicy).toBe('ask-every-time')
+    expect(parseSettingsContent(null).qaStartPolicy).toBe('ask-every-time')
+  })
+
+  it('reads both recorded values', () => {
+    expect(parseSettingsContent('{"qaStartPolicy": "cockpit-ai-ui-preapproved"}').qaStartPolicy).toBe('cockpit-ai-ui-preapproved')
+    expect(parseSettingsContent('{"qaStartPolicy": "ask-every-time"}').qaStartPolicy).toBe('ask-every-time')
+  })
+
+  it.each([['a typo', '"preapproved"'], ['a boolean', 'true'], ['a number', '1'], ['null', 'null']])(
+    'an invalid value (%s) means ask-every-time and leaves the other keys alone',
+    (_label, value) => {
+      expect(parseSettingsContent(`{"autoMode": true, "creaturePlacement": "off", "qaStartPolicy": ${value}}`)).toEqual({
+        autoMode: true,
+        creaturePlacement: 'off',
+        weeklyFocusEnabled: true,
+        qaStartPolicy: 'ask-every-time',
+      })
+    },
+  )
+
+  it('a bad autoMode never resets a recorded qaStartPolicy', () => {
+    expect(parseSettingsContent('{"autoMode": "yes", "qaStartPolicy": "cockpit-ai-ui-preapproved"}')).toEqual({
+      autoMode: false,
+      creaturePlacement: 'header',
+      weeklyFocusEnabled: true,
+      qaStartPolicy: 'cockpit-ai-ui-preapproved',
+    })
+  })
+
+  it('an unparseable file asks every time', () => {
+    expect(parseSettingsContent('{not json').qaStartPolicy).toBe('ask-every-time')
+  })
+
+  it('logs a rejected value, so a hand-edited typo is not silently ignored', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    parseSettingsContent('{"qaStartPolicy": "preapproved"}')
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('[taskParser]'), 'preapproved')
+    errorSpy.mockRestore()
+  })
+
+  it('logs nothing for an absent or valid value', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    parseSettingsContent('{"autoMode": true}')
+    parseSettingsContent('{"qaStartPolicy": "cockpit-ai-ui-preapproved"}')
+    expect(errorSpy).not.toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
 })
 
 describe('readSettings', () => {
@@ -3133,7 +3421,7 @@ describe('readSettings', () => {
 
   it('reads and parses SETTINGS.json from the tasks dir', async () => {
     await fs.writeFile(path.join(tmpDir, 'SETTINGS.json'), '{"autoMode": true}')
-    expect(await readSettings(tmpDir)).toEqual({ autoMode: true })
+    expect(await readSettings(tmpDir)).toEqual({ autoMode: true, creaturePlacement: 'header', weeklyFocusEnabled: true, qaStartPolicy: 'ask-every-time' })
   })
 
   it('returns DEFAULT_SETTINGS when SETTINGS.json is absent', async () => {
@@ -3160,6 +3448,64 @@ describe('parseAutoModeOverride', () => {
   })
 })
 
+describe('parseKind', () => {
+  it('is "dev" when there is no KIND file', () => {
+    expect(parseKind(null)).toBe('dev')
+  })
+
+  it('parses "ds" and "dev", case- and whitespace-insensitive', () => {
+    expect(parseKind('ds')).toBe('ds')
+    expect(parseKind('  DS\n')).toBe('ds')
+    expect(parseKind('dev\n')).toBe('dev')
+  })
+
+  it('falls back to "dev" for an unrecognised value and logs it, so a typo never loads as ds or breaks the task', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(parseKind('design-system')).toBe('dev')
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('[taskParser] ignoring invalid KIND'), 'design-system')
+    errorSpy.mockRestore()
+  })
+
+  it('treats an empty file as "dev" without logging', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(parseKind('  \n')).toBe('dev')
+    expect(errorSpy).not.toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
+})
+
+describe('parseAffectedApps', () => {
+  it('lists the bullets of the plan\'s "## Affected apps" section, in order', () => {
+    const plan = ['# Button', '', '## Summary', 'text', '', '## Affected apps', '- web-app', '* admin-portal', '', '## Verifier', '- not-an-app'].join('\n')
+    expect(parseAffectedApps(plan)).toEqual(['web-app', 'admin-portal'])
+  })
+
+  it('strips backticks and bold from a bullet, and skips bullets with no name', () => {
+    expect(parseAffectedApps('## Affected apps\n- `web-app`\n- **admin-portal**\n- \n-\n')).toEqual(['web-app', 'admin-portal'])
+  })
+
+  it('is empty when the plan has no such section', () => {
+    expect(parseAffectedApps('# Button\n\n## Summary\ntext\n')).toEqual([])
+  })
+
+  it('is empty when the section has no bullets', () => {
+    expect(parseAffectedApps('## Affected apps\nNone — nothing consumes it yet.\n\n## Verifier\n- x')).toEqual([])
+  })
+
+  it('ignores a heading inside a code fence', () => {
+    expect(parseAffectedApps('```markdown\n## Affected apps\n- fenced\n```\n')).toEqual([])
+  })
+})
+
+describe('the ds stages in TIMELINE', () => {
+  it('parses every ds-only stage name instead of silently dropping the line', () => {
+    const raw = ['design-intake', 'design-qa', 'design-approval', 'design-fixes', 'adopt']
+      .map((stage, i) => `2026-10-10T10:0${i}:00Z ${stage} note ${i}`)
+      .join('\n')
+    expect(parseTimelineContent(raw).map((e) => e.stage)).toEqual(['design-intake', 'design-qa', 'design-approval', 'design-fixes', 'adopt'])
+  })
+})
+
 describe('computeEffectiveAutoMode', () => {
   it('override "auto" always wins', () => {
     expect(computeEffectiveAutoMode('auto', true)).toBe(true)
@@ -3177,13 +3523,12 @@ describe('computeEffectiveAutoMode', () => {
   })
 })
 
-describe('MANUAL_ONLY_STAGES', () => {
-  it('is exactly comment-fix and qa-fixes — the two triage stops', () => {
-    expect([...MANUAL_ONLY_STAGES].sort()).toEqual(['comment-fix', 'qa-fixes'])
-  })
-})
-
 describe('computeAutoDispatch', () => {
+  // The decision wants a full NextActionInput; these cases only vary STATUS fields.
+  function autoDispatch(task: NextStageInput) {
+    return computeAutoDispatch({ repo: 'cockpit-ai', verifier: null, stageHistory: [], ...task })
+  }
+
   function waitingTask(waitingReason: string): Pick<Task, 'status' | 'waitingReason'> {
     return { status: 'waiting', waitingReason }
   }
@@ -3198,15 +3543,16 @@ describe('computeAutoDispatch', () => {
       { marker: 'plan reviewed, ready for dev', eligible: true },
       { marker: 'PR open, ready for CR', eligible: true },
       { marker: 'triage and dispatch cr-fixes', eligible: false },
-      { marker: 'CR approved, ready for QA', eligible: true },
-      { marker: 'comments addressed, ready for QA', eligible: true },
+      // QA needs the recorded consent and a QA intent brief: neither holds by default.
+      { marker: 'CR approved, ready for QA', eligible: false },
+      { marker: 'comments addressed, ready for QA', eligible: false },
       { marker: 'triage and dispatch qa-fixes', eligible: false },
-      { marker: 'fixes pushed, ready to re-run QA', eligible: true },
+      { marker: 'fixes pushed, ready to re-run QA', eligible: false },
     ]
     expect(cases.length).toBe(NEXT_STAGE_BY_WAITING_REASON.length)
 
     for (const { marker, eligible } of cases) {
-      const result = computeAutoDispatch(waitingTask(marker))
+      const result = autoDispatch(waitingTask(marker))
       if (eligible) {
         const expectedStage = NEXT_STAGE_BY_WAITING_REASON.find((m) => m.marker === marker)!.stage
         expect(result, `expected ${marker} to be auto-eligible`).toEqual({ stage: expectedStage, key: `${expectedStage}:${marker}` })
@@ -3217,46 +3563,58 @@ describe('computeAutoDispatch', () => {
   })
 
   it('records a skip instead of dispatching QA when QA is not applicable', () => {
-    const result = computeAutoDispatch({ ...waitingTask('CR approved, ready for QA'), qaSkipReason: 'no e2e in VERIFY or diff' })
+    const result = autoDispatch({ ...waitingTask('CR approved, ready for QA'), qaSkipReason: 'no e2e in VERIFY or diff' })
     expect(result).toEqual({ stage: 'qa', key: 'qa-skipped:CR approved, ready for QA', skipReason: 'no e2e in VERIFY or diff' })
   })
 
-  it('still dispatches QA when the task needs it', () => {
-    expect(computeAutoDispatch({ ...waitingTask('CR approved, ready for QA'), qaSkipReason: null })).toEqual({ stage: 'qa', key: 'qa:CR approved, ready for QA' })
+  it('no longer dispatches QA when the task needs it: QA waits for the recorded consent', () => {
+    expect(autoDispatch({ ...waitingTask('CR approved, ready for QA'), qaSkipReason: null })).toBeNull()
+  })
+
+  it('never auto-dispatches anything for a task whose PR conflicts — not QA, CR, a QA skip toward merge, nor the conflict fix itself', () => {
+    for (const { marker } of NEXT_STAGE_BY_WAITING_REASON) {
+      expect(autoDispatch({ ...waitingTask(marker), prMergeState: 'conflicting' }), marker).toBeNull()
+    }
+    expect(autoDispatch({ ...waitingTask('CR approved, ready for QA'), qaSkipReason: 'no e2e', prMergeState: 'conflicting' })).toBeNull()
+    expect(autoDispatch({ ...waitingTask('QA passed, ready to merge'), prMergeState: 'conflicting' })).toBeNull()
+  })
+
+  it.each(['mergeable', 'unknown'] as const)('auto-dispatches code review exactly as before when the merge state is %s', (prMergeState) => {
+    expect(autoDispatch({ ...waitingTask('fixes pushed, ready to re-run QA'), prMergeState })).toBeNull()
+    expect(autoDispatch({ ...waitingTask('PR open, ready for CR'), prMergeState })).toEqual({ stage: 'code-review', key: 'code-review:PR open, ready for CR' })
   })
 
   it('is null for the merge phrase, which has no NEXT_STAGE_BY_WAITING_REASON entry', () => {
-    expect(computeAutoDispatch(waitingTask('QA passed, ready to merge'))).toBeNull()
+    expect(autoDispatch(waitingTask('QA passed, ready to merge'))).toBeNull()
   })
 
   it('never auto-dispatches QA for an approved review that still lists comments', () => {
-    expect(computeAutoDispatch({ ...waitingTask('CR approved, ready for QA'), findings: [reviewComment('suggestion')] })).toBeNull()
+    expect(autoDispatch({ ...waitingTask('CR approved, ready for QA'), findings: [reviewComment('suggestion')] })).toBeNull()
   })
 
   it('never auto-dispatches QA for an unparseable review — the gate fails closed', () => {
-    expect(computeAutoDispatch({
+    expect(autoDispatch({
       ...waitingTask('CR approved, ready for QA'),
       findings: [],
       findingsParseMismatch: ['Should Fix: header says 4, parsed 0'],
     })).toBeNull()
   })
 
-  it('still auto-dispatches QA for an approved review with no comments', () => {
-    expect(computeAutoDispatch({ ...waitingTask('CR approved, ready for QA'), findings: [] }))
-      .toEqual({ stage: 'qa', key: 'qa:CR approved, ready for QA' })
+  it('no longer auto-dispatches QA for an approved review with no comments: QA waits for the recorded consent', () => {
+    expect(autoDispatch({ ...waitingTask('CR approved, ready for QA'), findings: [] })).toBeNull()
   })
 
   it('is null when status is not waiting', () => {
-    expect(computeAutoDispatch({ status: 'working', waitingReason: 'plan ready for review' })).toBeNull()
+    expect(autoDispatch({ status: 'working', waitingReason: 'plan ready for review' })).toBeNull()
   })
 
   it('is null when waitingReason is empty', () => {
-    expect(computeAutoDispatch({ status: 'waiting', waitingReason: '' })).toBeNull()
+    expect(autoDispatch({ status: 'waiting', waitingReason: '' })).toBeNull()
   })
 
   it('keys on the matched marker, not the raw status line — a decorated line keys the same as the bare marker', () => {
-    const bare = computeAutoDispatch(waitingTask('PR open, ready for CR'))
-    const decorated = computeAutoDispatch(waitingTask('round 2 — PR open, ready for CR (#41)'))
+    const bare = autoDispatch(waitingTask('PR open, ready for CR'))
+    const decorated = autoDispatch(waitingTask('round 2 — PR open, ready for CR (#41)'))
     expect(bare).not.toBeNull()
     expect(decorated).not.toBeNull()
     expect(decorated!.key).toBe(bare!.key)
@@ -3323,13 +3681,45 @@ describe('STAGE_SKILL', () => {
   // deliberately no staged CTA/entry here — the Merge button already does
   // the merge in-process, one click, and a staged CTA would be a third path
   // to the same action (decision 2). This assertion stays unchanged.
-  it('routes every stage except planning and merge, so a future stage cannot silently fall through unrouted', () => {
-    const routed = STAGES.filter((s) => s !== 'planning' && s !== 'merge')
+  it('routes every stage except the ones deliberately never dispatched, so a future stage cannot silently fall through unrouted', () => {
+    // Permanent: planning and design-intake run inside the planning worker,
+    // merge is the in-process button, design-approval is the designer's gate.
+    const NEVER_DISPATCHED: Stage[] = ['planning', 'merge', 'design-intake', 'design-approval']
+    const routed = STAGES.filter((s) => !NEVER_DISPATCHED.includes(s))
     for (const stage of routed) {
       expect(STAGE_SKILL[stage], `expected STAGE_SKILL to route ${stage}`).toBeDefined()
     }
-    expect(STAGE_SKILL.planning).toBeUndefined()
-    expect(STAGE_SKILL.merge).toBeUndefined()
+    for (const stage of NEVER_DISPATCHED) {
+      expect(STAGE_SKILL[stage], `${stage} must never be dispatched`).toBeUndefined()
+    }
+  })
+})
+
+describe('the ds design stages', () => {
+  it('route design QA through a fresh orchestrator session and design fixes through the working tab', () => {
+    expect(STAGE_SKILL['design-qa']).toEqual({ skillName: 'design-qa', target: 'orchestrator' })
+    expect(STAGE_SKILL['design-fixes']).toEqual({ skillName: 'design-fixes', target: 'own-session' })
+    expect(composeStageCommand('design-qa', 'my-task')).toBe('/pipelinely-design-qa my-task')
+    expect(composeStageCommand('design-fixes', null)).toBe('/pipelinely-design-fixes')
+  })
+
+  it('route adopt through a fresh orchestrator session', () => {
+    expect(STAGE_SKILL.adopt).toEqual({ skillName: 'adopt', target: 'orchestrator' })
+    expect(composeStageCommand('adopt', 'my-task')).toBe('/pipelinely-adopt my-task')
+  })
+})
+
+describe('the merge-conflicts stage', () => {
+  it('is a TIMELINE stage, so a conflict fix\'s own line parses', () => {
+    expect(STAGES).toContain('merge-conflicts')
+    expect(parseTimelineContent('2026-10-04T10:00:00Z merge-conflicts resolved PR #149 against origin/master\n')).toEqual([
+      { stage: 'merge-conflicts', at: '2026-10-04T10:00:00Z', note: 'resolved PR #149 against origin/master' },
+    ])
+  })
+
+  it('routes like code review: through the orchestrator, which opens an ephemeral tab', () => {
+    expect(STAGE_SKILL['merge-conflicts']).toEqual({ skillName: 'merge-conflicts', target: 'orchestrator' })
+    expect(composeStageCommand('merge-conflicts', 'my-task')).toBe('/pipelinely-merge-conflicts my-task')
   })
 })
 
@@ -3780,12 +4170,12 @@ describe('parseTask — approved review with comments, on disk', () => {
     expect(computeNextStageCta(task)).toEqual({ stage: 'comment-fix' })
   })
 
-  it('with no comments at all: stage and CTA are qa, and auto mode may dispatch it', async () => {
+  it('with no comments at all: stage and CTA are qa, but auto mode no longer dispatches it without the recorded consent', async () => {
     const task = await taskOnDisk({ 'task-pr-review.md': REVIEW_WITHOUT_COMMENTS })
     expect(task.stage).toBe('qa')
     expect(task.findings).toEqual([])
     expect(computeNextStageCta(task)).toEqual({ stage: 'qa' })
-    expect(computeAutoDispatch(task)).toEqual({ stage: 'qa', key: 'qa:CR approved, ready for QA' })
+    expect(computeAutoDispatch(task)).toBeNull()
   })
 
   it('with an unparseable review: fails closed on comment-fix and reports the mismatch', async () => {

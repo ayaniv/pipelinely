@@ -7,20 +7,21 @@ import {
   openScratchSession,
   closeScratchSession,
   readSessionContents,
+  readTmuxPaneContents,
+  countWindows,
+  countSessions,
   createOrchestratorTmuxSession,
   killTmuxSession,
   tmuxSessionIsLive,
   attachSessionToTmux,
 } from '../fixtures/itermSessions.js'
 
-// M0 coverage for FINDINGS.md's Mechanism A — the orchestrator pointer
+// Coverage for FINDINGS.md's Mechanism A — the orchestrator pointer
 // (ORCHESTRATOR_SESSION/ORCHESTRATOR_TMUX) being a single global pair of
-// files that four HTTP endpoints read, decide on, and rewrite with no mutual
-// exclusion whatsoever. Two of them in flight within one osascript round
-// trip of each other could each resolve a session id, then race their real
-// `write text` keystrokes against a pointer the other had already repointed
-// — which is how a message addressed to one destination lands in a
-// different, live conversation.
+// files that several HTTP endpoints read, decide on, and rewrite. Two
+// requests in flight at once must not interleave their writes, and a message
+// addressed to the orchestrator must never land in a different, live
+// conversation.
 //
 // Two distinct defects are covered here, and they are not the same defect:
 //
@@ -29,36 +30,25 @@ import {
 //     than proceed unserialized. A lock file abandoned by a crashed holder
 //     must be reaped rather than wedging every future dispatch.
 //
-//  2. IDENTITY (which tab is really the orchestrator). Serializing the
-//     requests does nothing about a pointer that was ALREADY wrong before
-//     the critical section opened. When ORCHESTRATOR_TMUX names a live
-//     session, the recorded iTerm tab must actually be a client of it before
-//     the fast-path write is allowed — otherwise the existing adopt/reattach
-//     heal has to run instead. Today the fast path trusts the recorded id on
-//     sight, so a live-but-unrelated tab receives the keystrokes.
+//  2. IDENTITY (which conversation is really the orchestrator). The
+//     recorded tmux session in ORCHESTRATOR_TMUX is the orchestrator's
+//     identity: every dispatch is pasted into that session's pane and
+//     nowhere else, whatever iTerm tab ORCHESTRATOR_SESSION happens to name.
+//     There is no keystroke fallback, so a missing or dead tmux session is a
+//     503, never a write into some other tab.
 //
-// Real osascript/tmux automation throughout, no route mocking — see
-// fixtures/itermSessions.ts for why this suite refuses to fake the one thing
-// it exists to verify. The tmux session name is suffixed with the worker's
-// pid so two Playwright workers can never collide on it.
+// The scratch orchestrator is a uniquely named tmux session whose pane runs
+// the fake claude (see fixtures/itermSessions.ts), and delivery is asserted
+// by reading that pane with `tmux capture-pane`. iTerm scratch tabs appear
+// only as bystanders (to prove nothing was typed into them) and as the tab a
+// session is attached through. Real tmux/osascript automation throughout, no
+// route mocking. The tmux session name is suffixed with the worker's pid so
+// two Playwright workers can never collide on it.
 //
-// @pending: five of these six tests are verified — routing/lock logic
-// confirmed correct three independent ways (server-side debug logging,
-// full-sequence in-process reproduction, and this suite itself passing
-// reliably). Two keep their own per-test `@pending` tag, each blocked by a
-// real, pre-existing issue in src/focusTab.ts — not this milestone's own
-// code, and not fixed by removing the tag:
-//   - "a live-but-unattached recorded tab does not receive the write":
-//     pasteIntoSession misdelivers keystrokes when the writer is a
-//     different OS process from whatever opened the target windows.
-//     Reproduced outside any test framework (see memory:
-//     project_pasteintosession_cross_process_targeting_bug.md).
-//   - "recorded tab is dead and ORCHESTRATOR_TMUX is live: still
-//     reattaches": openNewTabRunning's reliance on iTerm2's
-//     application-global "current window" — exactly M1's (a separate,
-//     in-progress milestone) declared scope. Reproduces identically on the
-//     pre-existing orchestrator-session-self-heal.spec.ts; passes reliably
-//     in isolation.
+// @pending: two of these tests keep their own per-test `@pending` tag until
+// the developer has run this suite against the tmux writer; they were
+// previously blocked by the AppleScript writer's cross-process window
+// targeting and by openNewTabRunning's "current window" use.
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const TASKS_DIR = path.join(__dirname, '..', 'fixtures', 'tasks')
@@ -104,34 +94,39 @@ async function holdPointerLock(ageMs: number): Promise<void> {
 
 // One dispatch, addressed by a marker string unique to the test that sent
 // it — /backlog/dispatch pastes "Let's do this backlog item: <description>",
-// so the marker is exactly what a test looks for in a real pane's buffer.
+// so the marker is exactly what a test looks for in the tmux pane.
 //
 // Every test below asks for Playwright's bare `request` fixture, never
 // `page` — this suite makes HTTP calls only, and `page` would launch a real
-// (headless) Chromium process per test for no reason. That extra GUI-capable
-// process launching mid-flight, right as pasteIntoSession's own real
-// AppleScript focus-transition polls between two simultaneously-open scratch
-// iTerm2 windows (see the "identity" describe block below), was enough to
-// misdirect its synthetic keystrokes into the wrong window — reproduced
-// consistently through the real webServer, never once through an in-process
-// repro of the same calls with no Chromium involved.
+// (headless) Chromium process per test for no reason.
 async function dispatchBacklogItem(request: APIRequestContext, description: string): Promise<APIResponse> {
   return request.post('/backlog/dispatch', { data: { description } })
 }
 
+// Stands up the scratch orchestrator: a tmux session running the fake claude,
+// recorded as ORCHESTRATOR_TMUX. ORCHESTRATOR_SESSION is deliberately left
+// unset — a send must not need an iTerm tab at all.
+async function startTmuxOrchestrator(): Promise<void> {
+  await createOrchestratorTmuxSession(TMUX_SESSION_NAME)
+  expect(await tmuxSessionIsLive(TMUX_SESSION_NAME)).toBe(true)
+  await clearPointers()
+  await fs.writeFile(ORCHESTRATOR_TMUX_PATH, TMUX_SESSION_NAME + '\n')
+}
+
+async function stopTmuxOrchestrator(): Promise<void> {
+  await clearPointers()
+  await killTmuxSession(TMUX_SESSION_NAME)
+}
+
 test.describe('orchestrator pointer — concurrent writers are serialized', () => {
   test('two dispatches fired at once both land intact, neither lost nor interleaved', async ({ request }) => {
-    // The core Mechanism A regression. Unserialized, these two requests read
-    // the pointer, resolve a session, and fire their own real `write text`
-    // AppleScript concurrently against the same pane — the failure mode is
-    // one message clobbering the other's keystrokes mid-flight, or one of
-    // them writing to a session the other had already repointed away from.
-    // Serialized, both texts must be present and each must be whole.
+    // The core Mechanism A regression. Unserialized, these two requests would
+    // paste into the same pane concurrently — the failure mode is one
+    // message clobbering the other mid-paste. Serialized, both texts must be
+    // present and each must be whole.
     await withOrchestratorSessionLock(async () => {
-      const sessionId = await openScratchSession()
       try {
-        await clearPointers()
-        await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
+        await startTmuxOrchestrator()
 
         const [first, second] = await Promise.all([
           dispatchBacklogItem(request, 'cockpit-race-marker-alpha'),
@@ -141,19 +136,15 @@ test.describe('orchestrator pointer — concurrent writers are serialized', () =
         expect(second.status()).toBe(200)
 
         // Whole, not merely present: the full sentence for each dispatch has
-        // to survive, which is what rules out two `write text` calls having
-        // interleaved their keystrokes into one another.
+        // to survive, which is what rules out two pastes having interleaved.
         await expect
-          .poll(() => readSessionContents(sessionId))
+          .poll(() => readTmuxPaneContents(TMUX_SESSION_NAME))
           .toContain("Let's do this backlog item: cockpit-race-marker-alpha")
         await expect
-          .poll(() => readSessionContents(sessionId))
+          .poll(() => readTmuxPaneContents(TMUX_SESSION_NAME))
           .toContain("Let's do this backlog item: cockpit-race-marker-bravo")
-
-        expect(await readPointer()).toBe(sessionId)
       } finally {
-        await clearPointers()
-        await closeScratchSession(sessionId)
+        await stopTmuxOrchestrator()
       }
     })
   })
@@ -164,18 +155,16 @@ test.describe('orchestrator pointer — concurrent writers are serialized', () =
     // a short COCKPIT_ORCH_LOCK_TIMEOUT_MS (set in playwright.config.ts) so
     // this test costs seconds, not the 15s production default.
     await withOrchestratorSessionLock(async () => {
-      const sessionId = await openScratchSession()
       try {
-        await clearPointers()
-        await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
+        await startTmuxOrchestrator()
         await holdPointerLock(0)
 
         const blocked = await dispatchBacklogItem(request, 'cockpit-race-marker-blocked')
         expect(blocked.status()).toBe(503)
         expect((await blocked.json()).error).toMatch(/already in progress/i)
 
-        // Nothing was typed while the lock was held.
-        expect(await readSessionContents(sessionId)).not.toContain('cockpit-race-marker-blocked')
+        // Nothing was pasted while the lock was held.
+        expect(await readTmuxPaneContents(TMUX_SESSION_NAME)).not.toContain('cockpit-race-marker-blocked')
 
         // ...and the very same dispatch succeeds once the lock is released,
         // proving the 503 was the lock and not some unrelated failure.
@@ -183,11 +172,10 @@ test.describe('orchestrator pointer — concurrent writers are serialized', () =
         const allowed = await dispatchBacklogItem(request, 'cockpit-race-marker-allowed')
         expect(allowed.status()).toBe(200)
         await expect
-          .poll(() => readSessionContents(sessionId))
+          .poll(() => readTmuxPaneContents(TMUX_SESSION_NAME))
           .toContain("Let's do this backlog item: cockpit-race-marker-allowed")
       } finally {
-        await clearPointers()
-        await closeScratchSession(sessionId)
+        await stopTmuxOrchestrator()
       }
     })
   })
@@ -197,16 +185,14 @@ test.describe('orchestrator pointer — concurrent writers are serialized', () =
     // reaping, that one leftover file would 503 every orchestrator dispatch
     // on the machine until someone found and deleted it by hand.
     await withOrchestratorSessionLock(async () => {
-      const sessionId = await openScratchSession()
       try {
-        await clearPointers()
-        await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
+        await startTmuxOrchestrator()
         await holdPointerLock(120_000)
 
         const res = await dispatchBacklogItem(request, 'cockpit-race-marker-reaped')
         expect(res.status()).toBe(200)
         await expect
-          .poll(() => readSessionContents(sessionId))
+          .poll(() => readTmuxPaneContents(TMUX_SESSION_NAME))
           .toContain("Let's do this backlog item: cockpit-race-marker-reaped")
 
         // Released on the way out, so the next dispatch is not blocked either.
@@ -214,42 +200,26 @@ test.describe('orchestrator pointer — concurrent writers are serialized', () =
           .poll(() => fs.access(POINTER_LOCK_PATH).then(() => true).catch(() => false))
           .toBe(false)
       } finally {
-        await clearPointers()
-        await closeScratchSession(sessionId)
+        await stopTmuxOrchestrator()
       }
     })
   })
 })
 
-test.describe('orchestrator pointer — the recorded tab must really be the orchestrator', () => {
-  test('a live-but-unattached recorded tab does not receive the write; the tab actually attached to ORCHESTRATOR_TMUX does @pending', async ({ request }) => {
+test.describe('orchestrator pointer — ORCHESTRATOR_TMUX is the orchestrator, not the recorded tab', () => {
+  test('a live-but-unattached recorded tab does not receive the write; the tmux pane does @pending', async ({ request }) => {
     // The identity gap the lock alone does NOT close. Both tabs here are
     // live, healthy iTerm2 sessions — the difference is that only one of
     // them is a client of the tmux session ORCHESTRATOR_TMUX names, i.e.
     // only one of them is where the orchestrator's conversation actually is.
-    //
-    // Today the fast path writes into the recorded id the moment
-    // `pasteIntoSession` succeeds against it, and pasting into a perfectly
-    // healthy unrelated tab succeeds — so the stale tab wins and a real
-    // dispatch lands in somebody else's conversation. That is Mechanism A's
-    // observable symptom. After M0 the fast path is gated on the recorded
-    // tab genuinely being a client of the recorded tmux session, so this
-    // falls through to the existing adopt heal instead.
-    //
-    // @pending: the routing logic here is verified correct (see this file's
-    // top comment and memory: project_pasteintosession_cross_process_
-    // targeting_bug.md) — this specific assertion is blocked by a real,
-    // pre-existing pasteIntoSession defect outside M0's scope, not by this
-    // milestone's own change.
+    // The write goes into the tmux pane itself, so the stale tab can never
+    // receive it, and the pointer is re-recorded onto the attached tab.
     await withOrchestratorSessionLock(async () => {
-      await createOrchestratorTmuxSession(TMUX_SESSION_NAME)
-      expect(await tmuxSessionIsLive(TMUX_SESSION_NAME)).toBe(true)
       const staleSessionId = await openScratchSession()
       const attachedSessionId = await openScratchSession()
       try {
+        await startTmuxOrchestrator()
         await attachSessionToTmux(attachedSessionId, TMUX_SESSION_NAME)
-        await clearPointers()
-        await fs.writeFile(ORCHESTRATOR_TMUX_PATH, TMUX_SESSION_NAME + '\n')
         await fs.writeFile(ORCHESTRATOR_SESSION_PATH, staleSessionId + '\n')
 
         const res = await dispatchBacklogItem(request, 'cockpit-identity-marker')
@@ -257,30 +227,26 @@ test.describe('orchestrator pointer — the recorded tab must really be the orch
 
         // Landed where the orchestrator actually is...
         await expect
-          .poll(() => readSessionContents(attachedSessionId))
+          .poll(() => readTmuxPaneContents(TMUX_SESSION_NAME))
           .toContain("Let's do this backlog item: cockpit-identity-marker")
-        // ...and the pointer was healed onto it.
+        // ...the pointer was healed onto the tab attached to it...
         await expect.poll(readPointer).toBe(attachedSessionId)
-        // ...and nothing at all was typed into the stale tab. This is the
-        // assertion that fails against HEAD.
+        // ...and nothing at all was typed into the stale tab.
         expect(await readSessionContents(staleSessionId)).not.toContain('cockpit-identity-marker')
       } finally {
-        await clearPointers()
+        await stopTmuxOrchestrator()
         await closeScratchSession(attachedSessionId)
         await closeScratchSession(staleSessionId)
-        await killTmuxSession(TMUX_SESSION_NAME)
       }
     })
   })
 
-  test('a stale ORCHESTRATOR_TMUX naming a dead session does not block a healthy recorded tab', async ({ request }) => {
-    // The other direction, and the reason the identity check cannot simply
-    // demand client-ship unconditionally. /pipelinely writes
+  test('a stale ORCHESTRATOR_TMUX naming a dead session is a 503, even with a healthy recorded tab', async ({ request }) => {
+    // There is no keystroke fallback: /pipelinely writes
     // ORCHESTRATOR_TMUX only when $TMUX is set and never clears it, so a
-    // leftover name pointing at a long-dead session is a normal state — and
-    // an orchestrator running outside tmux has no client-ship to prove.
-    // Failing closed there would brick every dispatch button for a perfectly
-    // healthy orchestrator, which is strictly worse than the bug.
+    // leftover name pointing at a long-dead session is a normal state, and
+    // the only safe answer to it is a loud refusal. Writing into the healthy
+    // recorded tab instead is the misdelivery this plan exists to remove.
     await withOrchestratorSessionLock(async () => {
       const sessionId = await openScratchSession()
       try {
@@ -289,10 +255,11 @@ test.describe('orchestrator pointer — the recorded tab must really be the orch
         await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
 
         const res = await dispatchBacklogItem(request, 'cockpit-stale-tmux-marker')
-        expect(res.status()).toBe(200)
-        await expect
-          .poll(() => readSessionContents(sessionId))
-          .toContain("Let's do this backlog item: cockpit-stale-tmux-marker")
+        expect(res.status()).toBe(503)
+        expect((await res.json()).error).toMatch(/tmux/i)
+
+        expect(await readSessionContents(sessionId)).not.toContain('cockpit-stale-tmux-marker')
+        expect(await readPointer()).toBe(sessionId)
       } finally {
         await clearPointers()
         await closeScratchSession(sessionId)
@@ -300,44 +267,52 @@ test.describe('orchestrator pointer — the recorded tab must really be the orch
     })
   })
 
-  test('recorded tab is dead and ORCHESTRATOR_TMUX is live: still reattaches, exactly as before @pending', async ({ request }) => {
-    // Guards the identity check against over-reach: adding it must not turn
-    // the existing reattach heal (covered end-to-end by
-    // orchestrator-session-self-heal.spec.ts) into a refusal. A dead
-    // recorded id has no client-ship to verify — the heal is the answer, not
-    // a 503.
-    //
-    // @pending: the reattach path itself is unchanged baseline code (not
-    // M0's own work) and its identity-check gating above it is verified
-    // correct. This assertion is blocked by openNewTabRunning's reliance on
-    // iTerm2's application-global "current window" (src/focusTab.ts) — the
-    // exact fragility M1 (a separate milestone, already in progress) is
-    // scoped to fix. Reproduces identically on the pre-existing, unrelated
-    // orchestrator-session-self-heal.spec.ts when other tests in the same
-    // file have recently closed scratch windows without reselecting one —
-    // confirmed this test passes reliably in isolation.
+  test('recorded tab is dead and ORCHESTRATOR_TMUX is live: the send lands in the pane without opening a window @pending', async ({ request }) => {
+    // A send never reattaches a tab: the pane is written directly, so a dead
+    // recorded id costs nothing. Opening a window here would be the old
+    // reattach-before-write heal creeping back in.
     await withOrchestratorSessionLock(async () => {
-      await createOrchestratorTmuxSession(TMUX_SESSION_NAME)
-      expect(await tmuxSessionIsLive(TMUX_SESSION_NAME)).toBe(true)
-      let reattachedSessionId = ''
       try {
-        await clearPointers()
-        await fs.writeFile(ORCHESTRATOR_TMUX_PATH, TMUX_SESSION_NAME + '\n')
+        await startTmuxOrchestrator()
         await fs.writeFile(ORCHESTRATOR_SESSION_PATH, DEAD_SESSION_ID + '\n')
+
+        const windowsBefore = await countWindows()
+        const sessionsBefore = await countSessions()
 
         const res = await dispatchBacklogItem(request, 'cockpit-reattach-marker')
         expect(res.status()).toBe(200)
 
-        await expect.poll(readPointer).not.toBe(DEAD_SESSION_ID)
-        reattachedSessionId = await readPointer()
-        expect(reattachedSessionId).not.toBe('')
         await expect
-          .poll(() => readSessionContents(reattachedSessionId))
+          .poll(() => readTmuxPaneContents(TMUX_SESSION_NAME))
           .toContain("Let's do this backlog item: cockpit-reattach-marker")
+
+        expect(await countWindows()).toBe(windowsBefore)
+        expect(await countSessions()).toBe(sessionsBefore)
+        // No tab is attached to the tmux session, so there is nothing to
+        // re-record: the dead id stays as it was.
+        expect(await readPointer()).toBe(DEAD_SESSION_ID)
+      } finally {
+        await stopTmuxOrchestrator()
+      }
+    })
+  })
+
+  test('no ORCHESTRATOR_TMUX recorded is a 503 and types nothing into the recorded tab', async ({ request }) => {
+    // An orchestrator outside tmux can no longer receive dispatches; the
+    // failure has to be loud and must not leak into the recorded tab.
+    await withOrchestratorSessionLock(async () => {
+      const sessionId = await openScratchSession()
+      try {
+        await clearPointers()
+        await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
+
+        const res = await dispatchBacklogItem(request, 'cockpit-no-tmux-marker')
+        expect(res.status()).toBe(503)
+
+        expect(await readSessionContents(sessionId)).not.toContain('cockpit-no-tmux-marker')
       } finally {
         await clearPointers()
-        if (reattachedSessionId) await closeScratchSession(reattachedSessionId)
-        await killTmuxSession(TMUX_SESSION_NAME)
+        await closeScratchSession(sessionId)
       }
     })
   })

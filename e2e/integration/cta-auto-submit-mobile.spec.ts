@@ -1,8 +1,18 @@
 import { test, expect } from '@playwright/test'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { openScratchSession, closeScratchSession, readSessionContents, frontmostAppName } from '../fixtures/itermSessions.js'
+import {
+  openScratchSession,
+  closeScratchSession,
+  attachSessionToTmux,
+  createOrchestratorTmuxSession,
+  readTmuxPaneContents,
+  killTmuxSession,
+  frontmostAppName,
+  tmuxEnterWasPressed,
+} from '../fixtures/itermSessions.js'
 import { withOrchestratorSessionLock } from '../fixtures/orchestratorSessionLock.js'
 import { firstNonLoopbackIPv4 } from '../../src/testNetwork.js'
 
@@ -21,59 +31,63 @@ import { firstNonLoopbackIPv4 } from '../../src/testNetwork.js'
 // run any e2e command at all without asking the developer first, every time.
 //
 // What only a real terminal can settle: whether the command was SUBMITTED or
-// left STAGED. The scratch session is an ordinary shell, so a submitted
-// `/pipelinely-dev dev-ready` is executed and the shell answers "command not
-// found"; a staged one sits at the prompt as inert text and the shell says
-// nothing. That difference is the entire assertion here, in both directions:
+// left STAGED. The scratch orchestrator is a tmux session whose pane runs a
+// fake claude (named in the fixture ORCHESTRATOR_TMUX) that never reads its
+// tty, so the tty just echoes what the server writes. A pasted command shows
+// up as text with the cursor sitting right after it; a pressed Enter moves
+// the cursor to column 0 of the next line. That difference is the entire
+// assertion here, in both directions:
 //
-//   remote peer  + autoSubmit:true  -> executed   (the feature)
-//   loopback peer + autoSubmit:true -> still inert (the regression constraint)
+//   remote peer  + autoSubmit:true  -> Enter pressed (the feature)
+//   loopback peer + autoSubmit:true -> still unsent (the regression constraint)
 //
 // The remote case additionally asserts that iTerm2 was never raised to the OS
-// foreground. That is the whole reason /stage-skill reaches for
-// pasteIntoSessionQuiet rather than pasteIntoSession: this write fires
-// unattended, triggered from a phone while the developer may be working in a
-// completely unrelated app, and must not jump their windows. Asserting only
-// that the text arrived would pass just as happily for the focus-stealing
-// variant.
+// foreground. A 'send' write pastes into the tmux pane and never activates
+// iTerm2 (it only reads which tab is attached, to re-record the pointer), and
+// this write fires unattended, triggered from a phone
+// while the developer may be working in a completely unrelated app, so it
+// must not jump their windows. Asserting only that the text arrived would
+// pass just as happily for a focus-stealing variant.
 //
-// The second case is the one that matters most. It is asserted here against
-// real iTerm2, and again — deterministically, in the everyday verifier, with
+// The second case is the one that matters most. It is asserted here against a
+// real tmux pane, and again — deterministically, in the everyday verifier, with
 // no terminal involved — by src/server.autoSubmit.test.ts.
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const TASKS_DIR = path.join(__dirname, '..', 'fixtures', 'tasks')
 const ORCHESTRATOR_SESSION_PATH = path.join(TASKS_DIR, 'ORCHESTRATOR_SESSION')
+const ORCHESTRATOR_TMUX_PATH = path.join(TASKS_DIR, 'ORCHESTRATOR_TMUX')
 
 const CTA_SLUG = 'dev-ready'
 const STAGED_COMMAND = `/pipelinely-dev ${CTA_SLUG}`
-// What an ordinary shell says when it is actually handed `/pipelinely-dev …` as a
-// command — i.e. the observable proof that a Return was really sent.
-// STAGED_COMMAND contains a `/`, so both zsh and bash treat it as a path
-// lookup rather than a PATH search and reject it as "no such file or
-// directory" (zsh's own wording, lowercase) rather than "command not found"
-// (which only fires for a bare, slash-free word) — confirmed against a real
-// captured session where the command really was submitted and executed.
-// Matched case-insensitively since wording/casing can still vary by shell.
-const SHELL_REJECTION = /command not found|no such file or directory/i
-
 function portOf(baseURL: string): string {
   return new URL(baseURL).port
 }
 
-// Points the fixture ORCHESTRATOR_SESSION at a real scratch iTerm2 window for
-// the duration of `fn`, then removes it. Held under withOrchestratorSessionLock
-// because parallel Playwright workers share this one fixture file — see that
-// fixture's own comment.
-async function withScratchOrchestrator(fn: (sessionId: string) => Promise<void>): Promise<void> {
+// Points the fixture ORCHESTRATOR_TMUX at a scratch tmux session running a
+// fake claude for the duration of `fn`, then removes it. Held under
+// withOrchestratorSessionLock because parallel Playwright workers share this
+// one fixture file — see that fixture's own comment. `hasAttachedTab` attaches
+// a scratch iTerm2 tab to the session for the stage writes, which focus the
+// attached tab and would otherwise open a window this test cannot clean up.
+async function withTmuxOrchestrator(
+  { hasAttachedTab }: { hasAttachedTab: boolean },
+  fn: (tmuxName: string) => Promise<void>,
+): Promise<void> {
   await withOrchestratorSessionLock(async () => {
-    const sessionId = await openScratchSession()
-    await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId)
+    const tmuxName = `cockpit-e2e-cta-${randomUUID().slice(0, 8)}`
+    await createOrchestratorTmuxSession(tmuxName)
+    const attachedTabId = hasAttachedTab ? await openScratchSession() : null
     try {
-      await fn(sessionId)
+      if (attachedTabId) await attachSessionToTmux(attachedTabId, tmuxName)
+      await fs.writeFile(ORCHESTRATOR_TMUX_PATH, tmuxName + '\n')
+      await fn(tmuxName)
     } finally {
+      await fs.rm(ORCHESTRATOR_TMUX_PATH, { force: true })
+      // The server re-records the attached tab here after a write.
       await fs.rm(ORCHESTRATOR_SESSION_PATH, { force: true })
-      await closeScratchSession(sessionId)
+      if (attachedTabId) await closeScratchSession(attachedTabId)
+      await killTmuxSession(tmuxName)
     }
   })
 }
@@ -87,7 +101,7 @@ async function postStageSkill(origin: string, body: Record<string, unknown>): Pr
 }
 
 // Serial for the same reason as resume-dead-session-fallback.spec.ts and
-// orchestrator-session-self-heal.spec.ts: withScratchOrchestrator's lock
+// orchestrator-session-self-heal.spec.ts: withTmuxOrchestrator's lock
 // already keeps two tests' real-window open/write/close bodies from
 // overlapping, but 'remote request carrying autoSubmit:true' also samples
 // frontmostAppName() *before* it acquires that lock — a genuinely
@@ -98,7 +112,7 @@ test.describe.configure({ mode: 'serial' })
 
 test.describe('auto-submit is gated on a genuinely remote peer', () => {
   test('loopback request carrying autoSubmit:true is STILL only staged', async ({ baseURL }) => {
-    await withScratchOrchestrator(async (sessionId) => {
+    await withTmuxOrchestrator({ hasAttachedTab: true }, async (tmuxName) => {
       const res = await postStageSkill(`http://127.0.0.1:${portOf(baseURL!)}`, {
         stage: 'dev',
         autoSubmit: true,
@@ -108,8 +122,8 @@ test.describe('auto-submit is gated on a genuinely remote peer', () => {
 
       // The text must land — this is not a "nothing happened" assertion, it is
       // "the right thing happened and the Return was withheld".
-      await expect.poll(() => readSessionContents(sessionId)).toContain(STAGED_COMMAND)
-      expect(await readSessionContents(sessionId)).not.toMatch(SHELL_REJECTION)
+      await expect.poll(() => readTmuxPaneContents(tmuxName)).toContain(STAGED_COMMAND)
+      expect(await tmuxEnterWasPressed(tmuxName)).toBe(false)
     })
   })
 
@@ -125,7 +139,7 @@ test.describe('auto-submit is gated on a genuinely remote peer', () => {
     // what the developer (or the harness) happened to have in front.
     const frontmostBefore = await frontmostAppName()
 
-    await withScratchOrchestrator(async (sessionId) => {
+    await withTmuxOrchestrator({ hasAttachedTab: false }, async (tmuxName) => {
       const res = await postStageSkill(`http://${lanAddress}:${portOf(baseURL!)}`, {
         stage: 'dev',
         autoSubmit: true,
@@ -133,8 +147,8 @@ test.describe('auto-submit is gated on a genuinely remote peer', () => {
       expect(res.status).toBe(200)
       expect(await res.json()).toEqual({ submitted: true })
 
-      await expect.poll(() => readSessionContents(sessionId)).toMatch(SHELL_REJECTION)
-      expect(await readSessionContents(sessionId)).toContain(STAGED_COMMAND)
+      await expect.poll(() => tmuxEnterWasPressed(tmuxName)).toBe(true)
+      expect(await readTmuxPaneContents(tmuxName)).toContain(STAGED_COMMAND)
 
       // Read after the write has demonstrably landed, so this cannot pass by
       // merely being quicker than an activate that was going to happen. Given
@@ -144,11 +158,11 @@ test.describe('auto-submit is gated on a genuinely remote peer', () => {
       // also nudge — confirmed by an isolated repro of this exact
       // select+write-no-activate script independently catching a transient,
       // self-correcting focus change with nothing to do with this code path.
-      // pasteIntoSessionQuiet has no restore-frontmost step of its own (unlike
-      // openScratchSession/openNewTabRunning), so a real `activate` regression
-      // leaves iTerm2 frontmost with nothing to put it back — it will not
-      // settle back to frontmostBefore within the grace window the way
-      // incidental noise does.
+      // Nothing on the send path has a restore-frontmost step of its own
+      // (unlike openScratchSession/openNewTabRunning), so a real `activate`
+      // regression leaves iTerm2 frontmost with nothing to put it back — it
+      // will not settle back to frontmostBefore within the grace window the
+      // way incidental noise does.
       await expect
         .poll(() => frontmostAppName(), { timeout: 1000 })
         .toBe(frontmostBefore)
@@ -162,13 +176,13 @@ test.describe('auto-submit is gated on a genuinely remote peer', () => {
       'no non-internal IPv4 interface on this machine — cannot produce a non-loopback peer for the server to see',
     )
 
-    await withScratchOrchestrator(async (sessionId) => {
+    await withTmuxOrchestrator({ hasAttachedTab: true }, async (tmuxName) => {
       const res = await postStageSkill(`http://${lanAddress}:${portOf(baseURL!)}`, { stage: 'dev' })
       expect(res.status).toBe(200)
       expect(await res.json()).toEqual({ submitted: false })
 
-      await expect.poll(() => readSessionContents(sessionId)).toContain(STAGED_COMMAND)
-      expect(await readSessionContents(sessionId)).not.toMatch(SHELL_REJECTION)
+      await expect.poll(() => readTmuxPaneContents(tmuxName)).toContain(STAGED_COMMAND)
+      expect(await tmuxEnterWasPressed(tmuxName)).toBe(false)
     })
   })
 })

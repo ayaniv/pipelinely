@@ -10,6 +10,6 @@ export function makeTask(overrides: Partial<Task> = {}): Task {
     stageHistory: [], stage: 'dev', findings: [], findingsParseMismatch: [], qaFailures: [], qaCases: [],
     qaCasesParseMismatch: [], showsOnBoard: true, attentionStatus: 'working', autoModeOverride: 'inherit',
     autoMode: false, status: 'working', updatedAt: new Date().toISOString(), completedAt: null, completedAtSource: null,
-    totalInputTokens: 0, totalOutputTokens: 0, sessions: [], ...overrides,
+    totalInputTokens: 0, totalOutputTokens: 0, sessions: [], creature: null, ...overrides,
   } as Task
 }

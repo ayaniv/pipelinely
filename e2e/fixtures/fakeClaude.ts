@@ -40,7 +40,14 @@ async function buildFakeClaude(): Promise<string> {
   const claudeSymlink = path.join(dir, 'claude')
   // Sleeps forever rather than exiting — needs to still be the pane's
   // foreground process by the time the test's HTTP round trip reaches it.
-  await fs.writeFile(src, '#include <unistd.h>\nint main(void) { for (;;) sleep(60); }\n')
+  // Turns bracketed paste on first, like the real CLI: the tmux dispatch
+  // writer refuses a pane that has not (#{bracket_paste_flag}). The tty
+  // stays in its default cooked/echo mode, so whatever is pasted shows up
+  // in capture-pane without this process reading it.
+  await fs.writeFile(
+    src,
+    '#include <unistd.h>\nint main(void) { write(1, "\\033[?2004h", 8); for (;;) sleep(60); }\n',
+  )
   await execa('cc', ['-o', versionedBin, src])
   await fs.symlink(versionedBin, claudeSymlink)
   return claudeSymlink

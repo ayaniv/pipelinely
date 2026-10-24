@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from 'vitest'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
-import { fetchDocsGuide, fetchQaSpec, fetchResultDoc, fetchStageScopes, fetchTechDesign, useDocsGuide, useQaSpec, useResultDoc, useStageScopes, useTechDesign, type TechDesign } from './taskResources'
+import { BookmarksForbiddenError, fetchBookmarks, useBookmarks, fetchDocsGuide, fetchQaSpec, fetchResultDoc, fetchStageScopes, fetchTechDesign, useDocsGuide, useQaSpec, useResultDoc, useStageScopes, useTechDesign, type TechDesign } from './taskResources'
 import type { ResultDoc } from '../../../src/types'
 import { SNAPSHOT_QUERY_KEY } from './snapshot'
 
@@ -470,5 +470,57 @@ describe('useDocsGuide', () => {
     const second = renderHook(() => useDocsGuide({ fetchImpl, log: vi.fn() }), { wrapper: wrapperFor(client) })
     await waitFor(() => expect(second.result.current).toEqual({ status: 'ready', data: '<h1>Guide</h1>' }))
     expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('fetchBookmarks', () => {
+  const RESPONSE = { bookmarks: [], unreadable: ['20261005T000000Z-eeeeee.json'] }
+
+  test('resolves the bookmarks and the unreadable file names', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(200, RESPONSE))
+    await expect(fetchBookmarks({ fetchImpl, log: vi.fn() })).resolves.toEqual(RESPONSE)
+    expect(fetchImpl.mock.calls[0][0]).toBe('/api/bookmarks')
+  })
+
+  test('a 403 (a signed-in phone) is expected: a typed error, not logged', async () => {
+    const log = vi.fn()
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 403 }))
+    await expect(fetchBookmarks({ fetchImpl, log })).rejects.toBeInstanceOf(BookmarksForbiddenError)
+    expect(log).not.toHaveBeenCalled()
+  })
+
+  test('a server error rejects and logs a [bookmarks] error', async () => {
+    const log = vi.fn()
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 500 }))
+    await expect(fetchBookmarks({ fetchImpl, log })).rejects.toThrow()
+    expect(log).toHaveBeenCalledWith('[bookmarks] load failed', expect.any(Error))
+  })
+})
+
+describe('useBookmarks', () => {
+  function wrapper(client: QueryClient) {
+    return ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  }
+
+  test('goes from loading to ready with the data', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(200, { bookmarks: [], unreadable: [] }))
+    const { result } = renderHook(() => useBookmarks({ fetchImpl, log: vi.fn() }), { wrapper: wrapper(new QueryClient()) })
+    expect(result.current.status).toBe('loading')
+    await waitFor(() => expect(result.current.status).toBe('ready'))
+    expect(result.current.data).toEqual({ bookmarks: [], unreadable: [] })
+  })
+
+  test('says a refusal is a refusal, so the page can explain it', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 403 }))
+    const { result } = renderHook(() => useBookmarks({ fetchImpl, log: vi.fn() }), { wrapper: wrapper(new QueryClient()) })
+    await waitFor(() => expect(result.current.status).toBe('failed'))
+    expect(result.current.isForbidden).toBe(true)
+  })
+
+  test('a plain failure is not a refusal', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(null, { status: 500 }))
+    const { result } = renderHook(() => useBookmarks({ fetchImpl, log: vi.fn() }), { wrapper: wrapper(new QueryClient()) })
+    await waitFor(() => expect(result.current.status).toBe('failed'))
+    expect(result.current.isForbidden).toBe(false)
   })
 })

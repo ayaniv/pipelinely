@@ -7,8 +7,8 @@ import { rawHttpRequest } from './testNetwork.js'
 
 // POST /answer-dialog/:slug proven at the production wiring level. No case can
 // reach a real terminal multiplexer: execa is mocked wholesale (the poll's
-// capture-pane goes through it), and the two focusTab functions that write or
-// pin a pane are mocks that record their calls.
+// capture-pane goes through it), and the two focusTab functions that send keys to
+// or pin a pane are mocks that record their calls.
 
 const SESSION = 'worker-answer-demo'
 const SLUG = 'answer-demo'
@@ -77,15 +77,10 @@ vi.mock('./focusTab.js', async (importOriginal) => ({
   getLiveSessionIds: vi.fn(async () => null),
   getSessionTty: vi.fn(async () => null),
   tmuxSessionExists: vi.fn(async () => false),
-  tmuxPaneIsStrayShell: vi.fn(async () => false),
-  sessionIsClientOf: vi.fn(async () => false),
   findSessionAttachedToTmux: vi.fn(async () => null),
   reattachAndRecord: vi.fn(async () => null),
   reattachTmuxSession: vi.fn(async () => null),
   reattachOrFocus: vi.fn(async () => 'none' as const),
-  pasteIntoSession: vi.fn(async () => true),
-  pasteIntoSessionQuiet: vi.fn(async () => true),
-  stageInSession: vi.fn(async () => true),
   focusITermTab: vi.fn(async () => false),
 }))
 

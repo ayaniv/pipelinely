@@ -28,6 +28,18 @@ describe('CardStatusPill', () => {
     expect(container.querySelector('.card-status-dot-halo')).not.toBeInTheDocument()
   })
 
+  test('a Needs-you pill takes the stage tone and names the stage the card is at', () => {
+    render(<CardStatusPill task={makeTask({ status: 'waiting', attentionStatus: 'needs-you', stage: 'plan-review', waitingReason: 'plan reviewed, ready for dev' })} />)
+    const pill = screen.getByTestId('card-status-pill')
+    expect(pill).toHaveTextContent('Dev')
+    expect(pill.getAttribute('style')).toContain('var(--devSoft)')
+  })
+
+  test('a Working pill stays on the accent whatever the stage', () => {
+    render(<CardStatusPill task={makeTask({ status: 'working', attentionStatus: 'working', stage: 'qa' })} />)
+    expect(screen.getByTestId('card-status-pill').getAttribute('style')).toContain('var(--accentSoft)')
+  })
+
   test('an orphaned task reads as the amber "Orphaned?" state regardless of attention', () => {
     const { container } = render(<CardStatusPill task={makeTask({ stage: null, orphaned: true, attentionStatus: 'working' })} />)
     expect(screen.getByTestId('card-status-pill')).toHaveTextContent('Orphaned?')

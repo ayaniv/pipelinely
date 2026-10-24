@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { execa } from 'execa'
-import type { ActiveProjectProgress, AttentionStatus, AutoModeOverride, BacklogItem, DoneDateGroup, Finding, MilestoneDecl, MilestoneStatus, Plan, QaCase, QaFailure, Settings, SessionMetric, Stage, StageEvent, Task } from './types.js'
+import type { ActiveProjectProgress, AttentionStatus, AutoModeOverride, BacklogItem, CreaturePlacement, DoneDateGroup, Finding, MilestoneDecl, MilestoneStatus, PipelineKind, Plan, QaCase, QaFailure, Settings, SessionMetric, Stage, StageEvent, Task } from './types.js'
 import { getLiveSessionIds, getLiveTmuxSessions } from './focusTab.js'
 import { isApprovalPollable, type ApprovalPrompt } from './approvalPrompt.js'
 import { SAFE_TOKEN } from './batchDispatch.js'
@@ -11,7 +11,9 @@ import { listBranchChangedFiles } from './gitOps.js'
 import { parsePrNumberFromReviewRef } from './prNumber.js'
 import { localDateKey } from './dateKey.js'
 import { resolveReposDir } from './reposDir.js'
-import { assessQaNeed, isApprovedReviewAwaitingCommentDecision, isQaNotApplicable, matchTableEntry, matchWaitingReason, QA_SKIPPED_NOTE_PREFIX, QA_SKIPPED_STATUS_REASON, type NextStageInput } from './nextStageCta.js'
+import { parseCreatureContent } from './creature.js'
+import { decideNextAction, DEFAULT_QA_START_POLICY, isQaStartPolicy, type DecisionContext, type NextActionInput } from './nextAction.js'
+import { assessQaNeed, isApprovedReviewAwaitingCommentDecision, OFF_CHAIN_STAGES, matchTableEntry, QA_SKIPPED_NOTE_PREFIX, QA_SKIPPED_STATUS_REASON } from './nextStageCta.js'
 
 // Re-exported so the server routes and their tests keep importing these from
 // the parser; the implementations are shared pure modules the dashboard client
@@ -162,6 +164,37 @@ interface TaskMdFields {
   branch: string
 }
 
+const BRANCH_TOKEN = /(?:t2a|claude|feat|fix|chore|hotfix)\/[a-zA-Z0-9._/-]+/
+
+// Strip trailing punctuation that can't end a branch name (e.g. a sentence period).
+function trimBranchToken(token: string): string {
+  return token.replace(/[.\-_]+$/, '')
+}
+
+// An explicit "- Branch:" line wins over any other line that merely mentions a
+// branch: a milestone brief names its parent task's branch in prose, and the
+// first-token scan below would then pick the parent's. The anchored shape (same
+// as "Repo:") keeps "Branch status: new" lines from matching. Last, not first:
+// the Reuse rule appends a "## ⚠️ NEW REQUEST" section to an existing TASK.md,
+// and the newest section is the one that describes what the worker is doing now.
+// Without an explicit line, fall back to the last line with any branch-like
+// token (first token on it): nothing marks which token is the task's own, so
+// that long-standing behavior is kept.
+function parseBranch(lines: string[]): string {
+  let explicitBranch = ''
+  let scannedBranch = ''
+  for (const line of lines) {
+    const explicitMatch = line.match(/^\s*-?\s*Branch:\s*`?(\S+)/i)
+    if (explicitMatch) {
+      const token = explicitMatch[1].match(BRANCH_TOKEN)
+      if (token) explicitBranch = trimBranchToken(token[0])
+    }
+    const scannedMatch = line.match(BRANCH_TOKEN)
+    if (scannedMatch) scannedBranch = trimBranchToken(scannedMatch[0])
+  }
+  return explicitBranch || scannedBranch
+}
+
 export function parseTaskMdContent(content: string): TaskMdFields {
   const lines = content.split('\n')
 
@@ -203,18 +236,7 @@ export function parseTaskMdContent(content: string): TaskMdFields {
     }
   }
 
-  // Branch: LAST line with a known branch prefix — extract the full branch
-  // token. Last, not first: the Reuse rule appends a "## ⚠️ NEW REQUEST"
-  // section to an existing TASK.md, and the newest section is the one that
-  // describes what the worker is doing now.
-  // Stop at whitespace or punctuation that can't be part of a branch name.
-  let branch = ''
-  for (const line of lines) {
-    const match = line.match(/(?:t2a|claude|feat|fix|chore|hotfix)\/[a-zA-Z0-9._/-]+/)
-    if (match) {
-      branch = match[0].replace(/[.\-_]+$/, '') // strip trailing punctuation
-    }
-  }
+  const branch = parseBranch(lines)
 
   return { title, mode, repo, branch }
 }
@@ -630,7 +652,11 @@ export function applyBacklogProjectBackfill(
 // SETTINGS.json / AUTO_MODE parsing
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_SETTINGS: Settings = { autoMode: false }
+export function isCreaturePlacement(value: unknown): value is CreaturePlacement {
+  return value === 'header' || value === 'off'
+}
+
+export const DEFAULT_SETTINGS: Settings = { autoMode: false, creaturePlacement: 'header', weeklyFocusEnabled: true, qaStartPolicy: DEFAULT_QA_START_POLICY }
 
 // A hand-editable file that a human can and will break. Anything
 // unparseable falls back to DEFAULT_SETTINGS (auto OFF) and logs — the
@@ -641,9 +667,19 @@ export function parseSettingsContent(raw: string | null): Settings {
   try {
     const parsed = JSON.parse(raw) as unknown
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return DEFAULT_SETTINGS
-    const autoMode = (parsed as { autoMode?: unknown }).autoMode
-    if (typeof autoMode !== 'boolean') return DEFAULT_SETTINGS
-    return { autoMode }
+    const { autoMode, creaturePlacement, weeklyFocusEnabled, qaStartPolicy } = parsed as { autoMode?: unknown; creaturePlacement?: unknown; weeklyFocusEnabled?: unknown; qaStartPolicy?: unknown }
+    // A typo here silently withdraws a consent the developer meant to give, so
+    // say so; the fallback itself is the safe direction.
+    if (qaStartPolicy !== undefined && !isQaStartPolicy(qaStartPolicy)) {
+      console.error('[taskParser] ignoring invalid qaStartPolicy in SETTINGS.json, asking every time:', qaStartPolicy)
+    }
+    // Each field falls back on its own, so one bad key never resets the other.
+    return {
+      autoMode: typeof autoMode === 'boolean' ? autoMode : DEFAULT_SETTINGS.autoMode,
+      creaturePlacement: isCreaturePlacement(creaturePlacement) ? creaturePlacement : DEFAULT_SETTINGS.creaturePlacement,
+      weeklyFocusEnabled: typeof weeklyFocusEnabled === 'boolean' ? weeklyFocusEnabled : DEFAULT_SETTINGS.weeklyFocusEnabled,
+      qaStartPolicy: isQaStartPolicy(qaStartPolicy) ? qaStartPolicy : DEFAULT_SETTINGS.qaStartPolicy,
+    }
   } catch (err) {
     console.error('[taskParser] failed to parse SETTINGS.json:', err)
     return DEFAULT_SETTINGS
@@ -666,6 +702,17 @@ export function parseAutoModeOverride(raw: string | null): AutoModeOverride {
   return 'inherit'
 }
 
+// 'ds' / 'dev' (case- and whitespace-insensitive). Absent or empty is 'dev';
+// an unrecognised value is 'dev' too, and logged: a typo must never stop a
+// task loading, and must never silently become ds.
+export function parseKind(raw: string | null): PipelineKind {
+  const normalized = raw?.trim().toLowerCase()
+  if (!normalized || normalized === 'dev') return 'dev'
+  if (normalized === 'ds') return 'ds'
+  console.error('[taskParser] ignoring invalid KIND, treating the task as dev:', normalized)
+  return 'dev'
+}
+
 // The global switch is a plain boolean; only the per-task override is
 // tri-state, because "follow the global default" is a genuine third choice
 // rather than an absent answer.
@@ -683,7 +730,8 @@ export function computeEffectiveAutoMode(
 // ---------------------------------------------------------------------------
 
 export const STAGES: Stage[] = [
-  'planning', 'plan-review', 'dev', 'code-review', 'comment-fix', 'qa', 'qa-fixes', 'merge',
+  'planning', 'plan-review', 'dev', 'code-review', 'comment-fix', 'qa', 'qa-fixes', 'merge', 'merge-conflicts',
+  'design-intake', 'design-qa', 'design-approval', 'design-fixes', 'adopt',
 ]
 
 const STAGE_SET = new Set<string>(STAGES)
@@ -1037,6 +1085,8 @@ export interface StageInput {
   // without a review are unaffected.
   hasUnresolvedReviewComments?: boolean
   qaResult: { failed: number } | null
+  // Absent reads as a dev task.
+  kind?: PipelineKind
 }
 
 // Which of the eight stages a task is in, or null for tasks that have finished
@@ -1063,26 +1113,32 @@ export interface StageInput {
 // a QA result exists the last entry is always 'qa'. QA's recorded result is
 // a later fact about that same stage, not a contradiction of TIMELINE, so it
 // refines the `qa` entry (clean → merge, failed → qa-fixes) while every
-// other stage still wins from TIMELINE unconditionally.
-function stageFromQaResult(qaResult: { failed: number }): Stage {
-  return qaResult.failed > 0 ? 'qa-fixes' : 'merge'
+// other stage still wins from TIMELINE unconditionally. An off-chain line (a
+// conflict fix) is not "where the task is", so the last on-chain line wins.
+// A ds task owes design QA before it can merge, wherever a dev task would merge.
+function stageAfterQa(kind: PipelineKind | undefined): Stage {
+  return kind === 'ds' ? 'design-qa' : 'merge'
+}
+
+function stageFromQaResult(qaResult: { failed: number }, kind: PipelineKind | undefined): Stage {
+  return qaResult.failed > 0 ? 'qa-fixes' : stageAfterQa(kind)
 }
 
 export function computeStage(input: StageInput): Stage | null {
   if (input.status === 'done') return null
 
-  const last = input.stageHistory[input.stageHistory.length - 1]
+  const last = [...input.stageHistory].reverse().find((event) => !OFF_CHAIN_STAGES.includes(event.stage))
   if (last) {
-    if (last.stage === 'qa' && input.qaResult) return stageFromQaResult(input.qaResult)
+    if (last.stage === 'qa' && input.qaResult) return stageFromQaResult(input.qaResult, input.kind)
     // A skipped QA leaves a `qa` line too, but nothing ran — the task is ready to merge.
-    if (last.stage === 'qa' && last.note?.startsWith(QA_SKIPPED_NOTE_PREFIX)) return 'merge'
+    if (last.stage === 'qa' && last.note?.startsWith(QA_SKIPPED_NOTE_PREFIX)) return stageAfterQa(input.kind)
     return last.stage
   }
 
   if (input.reviewVerdict === 'changes-required') return 'comment-fix'
   if (input.reviewVerdict === 'approved') return input.hasUnresolvedReviewComments ? 'comment-fix' : 'qa'
 
-  if (input.qaResult) return stageFromQaResult(input.qaResult)
+  if (input.qaResult) return stageFromQaResult(input.qaResult, input.kind)
 
   if (input.status === 'review') return 'code-review'
 
@@ -1095,20 +1151,6 @@ export function computeStage(input: StageInput): Stage | null {
 // ---------------------------------------------------------------------------
 // Next-step pipeline CTA — which /cockpit-<stage> skill to stage next
 // ---------------------------------------------------------------------------
-
-// The stages auto mode must never dispatch into, whatever the setting says.
-// Both are triage: a checklist of findings where deciding what is worth
-// fixing IS the work, and applyTriageSelection/applyQaTriageSelection exist
-// precisely so a human ticks the boxes first. Merge needs no entry here —
-// it has no NEXT_STAGE_BY_WAITING_REASON marker and no STAGE_SKILL entry
-// ("the one stage with no skill, deliberately"), so computeNextStageCta
-// already returns null for it and it can never reach this list.
-//
-// A deny-list, not an allow-list of auto-eligible stages: a stage added to
-// the pipeline later is then manual until someone deliberately says
-// otherwise, which is the safe direction for a mechanism that spends money
-// and opens PRs unattended.
-export const MANUAL_ONLY_STAGES: Stage[] = ['comment-fix', 'qa-fixes']
 
 // What auto mode may do for this task right now, or null. ONE function
 // returning both halves rather than a stage-getter plus a key-getter: the pass
@@ -1123,13 +1165,11 @@ export interface AutoDispatch {
   skipReason?: string
 }
 
-export function computeAutoDispatch(task: NextStageInput): AutoDispatch | null {
-  if (isQaNotApplicable(task)) {
-    return { stage: 'qa', key: `qa-skipped:${matchTableEntry(task)!.marker}`, skipReason: task.qaSkipReason! }
-  }
-  const match = matchWaitingReason(task)
-  if (!match || MANUAL_ONLY_STAGES.includes(match.stage)) return null
-  return { stage: match.stage, key: `${match.stage}:${match.marker}` }
+export function computeAutoDispatch(task: NextActionInput, ctx: Partial<DecisionContext> = {}): AutoDispatch | null {
+  const action = decideNextAction(task, ctx)
+  if (action.kind === 'dispatch') return { stage: action.stage, key: `${action.stage}:${action.marker}` }
+  if (action.kind === 'skip-qa') return { stage: 'qa', key: `qa-skipped:${action.marker}`, skipReason: action.reason }
+  return null
 }
 
 export interface QaSkipInput {
@@ -1186,6 +1226,17 @@ export const STAGE_SKILL: Partial<Record<Stage, { skillName: string; target: 'or
   'comment-fix': { skillName: 'cr-fixes', target: 'own-session' },
   qa: { skillName: 'qa', target: 'orchestrator' },
   'qa-fixes': { skillName: 'qa-fixes', target: 'own-session' },
+  // Routed like code review: the orchestrator opens a fresh ephemeral tab
+  // (worker-<slug>-merge) that leaves the dev tab's pointers alone.
+  'merge-conflicts': { skillName: 'merge-conflicts', target: 'orchestrator' },
+  // ds pipeline: design QA is a fresh session like QA; design fixes continue
+  // in the working tab like qa-fixes. design-approval is the designer's gate
+  // (buttons, no skill), so it has no entry — see HUMAN_GATE_STAGES.
+  'design-qa': { skillName: 'design-qa', target: 'orchestrator' },
+  'design-fixes': { skillName: 'design-fixes', target: 'own-session' },
+  // A fresh session, like merge-conflicts: the dev tab's work is finished and
+  // adopt only reads the plan and queues backlog items.
+  adopt: { skillName: 'adopt', target: 'orchestrator' },
 }
 
 // The exact text staged into a session. No slug at all for qa-fixes/cr-fixes
@@ -1590,6 +1641,21 @@ export function parseQaSpecFile(raw: string): string | null {
   return match ? extractLocations(match[1]) : null
 }
 
+const AFFECTED_APPS_HEADING_RE = /^#{2,6}\s+Affected apps\s*$/i
+const MARKDOWN_EMPHASIS_RE = /[`*]/g
+
+// The apps a ds task's change reaches, from the plan's "## Affected apps"
+// bullet list: what pipelinely-adopt queues one follow-up per. A missing or
+// bullet-less section is [] (the adopt panel says so), never an error — same
+// tolerance rule as parseMilestonesContent.
+export function parseAffectedApps(raw: string): string[] {
+  const section = sectionLines(raw.split('\n'), AFFECTED_APPS_HEADING_RE)
+  if (!section) return []
+  return section.body
+    .map((line) => /^\s*[-*]\s*(.*)$/.exec(line)?.[1].replace(MARKDOWN_EMPHASIS_RE, '').trim())
+    .filter((app): app is string => !!app)
+}
+
 // Pulls every `test(...)` case title out of a Playwright spec file's raw
 // source, in file order — used to preview a task's planned QA cases before
 // QA_REPORT.md exists (see qaSpecFile on Task). Deliberately shallow: it
@@ -1858,7 +1924,7 @@ export async function parseTask(taskDir: string): Promise<Task | null> {
   const worktreePath = path.join(worktreesDir(), slug)
   const metricsPath = path.join(dir, 'METRICS')
 
-  const [statusStat, taskMdContent, worktreeAccess, devUrlRaw, itermSessionRaw, tmuxSessionRaw, verifyRaw, timelineRaw, metricsContent, plan, reviewRaw, qaRaw, techDesignRaw, triageRaw, qaTriageRaw, autoModeRaw] =
+  const [statusStat, taskMdContent, worktreeAccess, devUrlRaw, itermSessionRaw, tmuxSessionRaw, verifyRaw, timelineRaw, metricsContent, plan, reviewRaw, qaRaw, techDesignRaw, triageRaw, qaTriageRaw, autoModeRaw, creatureRaw, kindRaw, designQaRaw] =
     await Promise.all([
       statSafe(statusPath),
       readFileSafe(path.join(dir, 'TASK.md')),
@@ -1876,9 +1942,17 @@ export async function parseTask(taskDir: string): Promise<Task | null> {
       readFileSafe(path.join(dir, 'TRIAGE.json')),
       readFileSafe(path.join(dir, 'QA_TRIAGE.json')),
       readFileSafe(path.join(dir, 'AUTO_MODE')),
+      readFileSafe(path.join(dir, 'CREATURE')),
+      readFileSafe(path.join(dir, 'KIND')),
+      readFileSafe(path.join(dir, 'DESIGN_QA.md')),
     ])
 
   const autoModeOverride = parseAutoModeOverride(autoModeRaw)
+
+  // Read-only here: the server's refresh is what assigns a missing creature
+  // (see assignMissingCreatures), so parsing never writes into a task dir.
+  const creature = creatureRaw === null ? null : parseCreatureContent(creatureRaw)
+  if (creatureRaw !== null && creature === null) console.error(`[creature] invalid CREATURE for ${slug}`)
 
   // An empty tech-design.md still counts as present — this must stay
   // equivalent to the fs.access check it replaced, or every task holding an
@@ -1918,7 +1992,9 @@ export async function parseTask(taskDir: string): Promise<Task | null> {
   const parsedFindings = reviewRaw ? parseFindings(reviewRaw) : []
   const findingsParseMismatch = reviewRaw ? findFindingsParseMismatch(reviewRaw, parsedFindings) : []
 
+  const kind = parseKind(kindRaw)
   const stage = computeStage({
+    kind,
     status: statusFields.status,
     mode: taskMdFields.mode,
     stageHistory,
@@ -2182,7 +2258,11 @@ export async function parseTask(taskDir: string): Promise<Task | null> {
     showsOnBoard,
     attentionStatus,
     approvalPrompt: null,
+    creature,
     autoModeOverride,
+    kind,
+    designQaReport: designQaRaw,
+    affectedApps: techDesignRaw ? parseAffectedApps(techDesignRaw) : [],
     // The correct standalone answer for a lone parseTask call (global
     // default off) — parseAllTasks recomputes this in its second pass once
     // the real SETTINGS.json is known, same pattern as showsOnBoard/
@@ -2229,6 +2309,13 @@ export function dateGroupLabel(dateKey: string, now: Date = new Date()): string 
   return groupDate.getFullYear() === now.getFullYear() ? label : `${label}, ${groupDate.getFullYear()}`
 }
 
+// A completed parent has no completion date of its own: its last milestone to
+// merge is when it finished. Null when none of them carries a date.
+function lastMergedMilestoneAt(task: Task): string | null {
+  const dates = (task.milestones ?? []).flatMap((m) => (m.task?.completedAt ? [m.task.completedAt] : []))
+  return dates.sort((a, b) => new Date(a).getTime() - new Date(b).getTime()).at(-1) ?? null
+}
+
 // Groups done tasks by their resolved completedAt into one card per
 // calendar date, most recent first. Tasks with no resolvable date (null or
 // unparseable completedAt) land in a trailing "unknown" bucket instead of
@@ -2236,11 +2323,12 @@ export function dateGroupLabel(dateKey: string, now: Date = new Date()): string 
 // task is still continuing in a new session, not finished — so it stays out
 // of the Done tab.
 export function groupDoneTasksByDate(tasks: Task[], now: Date = new Date()): DoneDateGroup[] {
-  const doneTasks = tasks.filter((t) => t.status === 'done')
+  const doneTasks = tasks.filter((t) => t.status === 'done' || (t.status !== 'shelved' && isParentComplete(t)))
 
   const buckets = new Map<string, Task[]>()
   for (const task of doneTasks) {
-    const parsed = task.completedAt ? new Date(task.completedAt) : null
+    const completedAt = task.completedAt ?? lastMergedMilestoneAt(task)
+    const parsed = completedAt ? new Date(completedAt) : null
     const key = parsed && !isNaN(parsed.getTime()) ? localDateKey(parsed) : 'unknown'
     const bucket = buckets.get(key)
     if (bucket) bucket.push(task)
@@ -2249,7 +2337,7 @@ export function groupDoneTasksByDate(tasks: Task[], now: Date = new Date()): Don
 
   for (const [key, list] of buckets) {
     if (key === 'unknown') continue
-    list.sort((a, b) => new Date(b.completedAt!).getTime() - new Date(a.completedAt!).getTime())
+    list.sort((a, b) => new Date(b.completedAt ?? lastMergedMilestoneAt(b)!).getTime() - new Date(a.completedAt ?? lastMergedMilestoneAt(a)!).getTime())
   }
 
   const dateKeys = [...buckets.keys()].filter((k) => k !== 'unknown').sort().reverse()
@@ -2280,16 +2368,21 @@ export function isOrphaned(
   )
 }
 
+// Every declared milestone has merged: the fan-out parent's work is finished,
+// whatever its own STATUS file still says (nothing writes `done` to a parent
+// when its last milestone merges).
+export function isParentComplete(task: Task): boolean {
+  return !!task.milestones && task.milestones.length > 0 && task.milestones.every((m) => m.state === 'done')
+}
+
 // The main-grid filter. A plain task (no declared milestones) and a
 // milestone child (identified by slug shape, not by whether some parent's
 // stitched list currently claims it — a child must stay reachable even if
 // its own tech-design.md is edited out from under it) always render. A
-// milestone-declaring parent renders only while at least one of its own
-// declared milestones is still 'queued': once every one has been dispatched
-// or merged, the parent's whole reason for having a card — triggering
-// what's left — is gone, and each milestone's own progress already lives
-// on that milestone's own card. This reverses the read-layer plan's
-// original "keep children off the main grid" call.
+// milestone-declaring parent renders (in the Active tab's Parent tasks
+// section) until its last milestone has merged, then moves to Done: it is the
+// overview of how its milestones are allocated across waves, so it stays for
+// as long as any of them is still queued or in flight.
 export function shouldShowOnBoard(task: Task): boolean {
   // A shelved task is neither done nor active, so it belongs on neither
   // tab: groupDoneTasksByDate keys off `status === 'done'`, and this is the
@@ -2298,7 +2391,7 @@ export function shouldShowOnBoard(task: Task): boolean {
   if (task.status === 'shelved') return false
   if (parseMilestoneSlug(task.slug)) return true
   if (!task.milestones || task.milestones.length === 0) return true
-  return task.milestones.some((m) => m.state === 'queued')
+  return !isParentComplete(task)
 }
 
 // "Does this need me right now", replacing the raw STATUS value everywhere

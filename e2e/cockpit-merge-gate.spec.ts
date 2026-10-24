@@ -148,16 +148,23 @@ test.describe('Merge button — the preflight gate refuses', () => {
     })
   })
 
+  // A conflicting PR's Merge tab offers Fix conflicts instead of Merge
+  // (cta-fix-merge-conflicts), so the button can no longer reach the gate.
+  // The gate itself must still refuse anything that does (a stale tab, the
+  // CLI, a script) — proven here against the route the button calls.
   test('merge conflicts block the merge', async ({ page }) => {
     await withMergeFixture('merge-gate-conflicts', 902, async () => {
-      const btn = await openMergeTab(page, 'merge-gate-conflicts')
-      const { response } = await clickMergeAndConfirm(page, 'merge-gate-conflicts', btn)
+      await openTask(page, 'merge-gate-conflicts')
+      await page.getByTestId('stage-chain-merge').click()
+      await expect(page.getByTestId('task-detail').getByTestId('fix-conflicts-cta')).toBeVisible()
+      await expect(page.getByTestId('task-detail').getByTestId('merge-pr-btn')).toHaveCount(0)
+
+      const response = await page.request.post('/merge-pr/merge-gate-conflicts')
 
       expect(response.status()).toBe(409)
       const body = await response.json()
       expect((body.blockers as MergeBlocker[]).map((b) => b.kind)).toContain('conflicts')
-      await expect(mergeBanner(page)).toBeVisible()
-      await expect(mergeBanner(page)).toHaveAttribute('data-tone', 'error')
+      expect(body.error).toContain('PR has merge conflicts')
       expect(await readMergeCalls(902)).toBeNull()
       expect(await taskStatus(page, 'merge-gate-conflicts')).not.toBe('done')
     })

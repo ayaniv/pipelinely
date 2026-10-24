@@ -1,5 +1,8 @@
 import type { StageEvent, Task } from '../../../../../src/types'
 import type { ChainStage, ChainStageId } from '../../../pipelineStages'
+import { stageToneOf, type StageTone } from '../../../stageView'
+import { panelHeaderPill } from '../panel/panelHeader'
+import type { WaveCardStatus } from '../../../waveModel'
 
 // The node/selection model of the task-detail stage chain, so React Flow
 // renders from data. The stage *definitions* are pipelineStages.ts's; only the
@@ -14,9 +17,22 @@ export interface StageChainNode {
   tabId: ChainStageId
   label: string
   index: number
-  isCurrent: boolean
+  // The node of the selected tab (what the panel below shows).
+  isSelected: boolean
   isDone: boolean
   isUnrecorded: boolean
+  // The node of the stage the task itself is at, independent of which tab is
+  // selected (isSelected follows the selection).
+  isTaskStage: boolean
+  // What the chart draws: the task's own stage is current, a recorded one is
+  // done, the rest are not started — whichever tab is selected.
+  state: 'done' | 'current' | 'todo'
+  // The stage's own status pill text, so the chart's subtitle and the panel's
+  // pill come from one source.
+  sub: string
+  tone: StageTone
+  // A fan-out parent's Dev node: one dot per milestone, grouped by wave.
+  dotGroups?: WaveDot[][]
   stateClass: StageNodeState
   // The milestone rail's terse third line under a node — distinct from
   // `note`, which is the recorded outcome shown in the selected-stage row.
@@ -25,10 +41,16 @@ export interface StageChainNode {
   when: string | null
 }
 
+export interface WaveDot {
+  milestoneId: string
+  status: WaveCardStatus
+}
+
 export interface StageChainEdge {
   sourceId: ChainStageId
   targetId: ChainStageId
-  isTraversed: boolean
+  // The stage it enters has been reached; an unreached edge draws dashed.
+  isReached: boolean
 }
 
 export type NoDataNote =
@@ -51,6 +73,9 @@ export interface StageChainModelInput {
   stages: ChainStage[]
   groups: Record<string, ChainStageId[]>
   resolvedTab: ChainStageId | null
+  // The chain id of the stage the task is at (cardStageView's), null when it
+  // has none (a done task, an undispatched milestone).
+  taskStageId: ChainStageId | null
   formatWhen: (iso: string) => string
 }
 
@@ -58,14 +83,14 @@ function latestEventByStage(child: Task | null): Map<string, StageEvent> {
   return new Map((child ? child.stageHistory : []).map((event) => [event.stage, event]))
 }
 
-function stageNodeState(isCurrent: boolean, isDone: boolean, isUnrecorded: boolean): StageNodeState {
-  if (isCurrent) return 'is-current is-selected'
+export function stageNodeState(isSelected: boolean, isDone: boolean, isUnrecorded: boolean): StageNodeState {
+  if (isSelected) return 'is-current is-selected'
   if (isDone) return 'is-done'
   if (isUnrecorded) return 'is-unrecorded'
   return 'is-pending'
 }
 
-export function buildStageChainModel({ child, stages, groups, resolvedTab, formatWhen }: StageChainModelInput): StageChainModel {
+export function buildStageChainModel({ child, stages, groups, resolvedTab, taskStageId, formatWhen }: StageChainModelInput): StageChainModel {
   const reached = latestEventByStage(child)
   const foldedIds = new Set(Object.values(groups).flat())
   // A finished task has nothing left "pending", but an un-reached stage on it
@@ -78,30 +103,36 @@ export function buildStageChainModel({ child, stages, groups, resolvedTab, forma
     .filter((stage) => !foldedIds.has(stage.id))
     .map((stage, index) => {
       const members = [stage, ...(groups[stage.id] ?? []).map((id) => stages.find((s) => s.id === id)).filter((s): s is ChainStage => !!s)]
-      const isCurrent = members.some((member) => member.id === resolvedTab)
+      const isSelected = members.some((member) => member.id === resolvedTab)
       // The furthest-along member TIMELINE actually reached represents the
       // group, so a node already showing one of its own sub-tabs doesn't
       // jump to a different one on re-render.
       let representative = stage
       for (const member of members) if (reached.has(member.stage)) representative = member
-      const tabId = isCurrent && resolvedTab ? resolvedTab : representative.id
+      const isTaskStage = taskStageId !== null && members.some((member) => member.id === taskStageId)
+      const tabId = isSelected && resolvedTab ? resolvedTab : representative.id
       // Only a stage TIMELINE recorded counts as done: inferring it from
       // position alone drew a false history for a task whose worker never
       // wrote TIMELINE at all.
-      const isDone = !isCurrent && reached.has(representative.stage)
-      const isUnrecorded = !isCurrent && !isDone && isFinished
+      const isRecorded = reached.has(representative.stage)
+      const isDone = !isSelected && isRecorded
+      const isUnrecorded = !isSelected && !isDone && isFinished
       const event = reached.get(representative.stage)
-      const note = event ? (event.note || 'done') : isCurrent ? 'current' : isUnrecorded ? 'not recorded' : '—'
+      const note = event ? (event.note || 'done') : isSelected ? 'current' : isUnrecorded ? 'not recorded' : '—'
       return {
         id: stage.id,
         tabId,
         label: stage.label,
         index,
-        isCurrent,
+        isSelected,
         isDone,
         isUnrecorded,
-        stateClass: stageNodeState(isCurrent, isDone, isUnrecorded),
-        stateWord: isCurrent ? 'current' : isDone ? 'done' : '—',
+        isTaskStage,
+        state: isTaskStage ? 'current' : isRecorded ? 'done' : 'todo',
+        sub: panelHeaderPill(child, tabId).label,
+        tone: stageToneOf(stage.stage),
+        stateClass: stageNodeState(isSelected, isDone, isUnrecorded),
+        stateWord: isSelected ? 'current' : isDone ? 'done' : '—',
         note,
         when: event ? formatWhen(event.at) : null,
       }
@@ -110,14 +141,14 @@ export function buildStageChainModel({ child, stages, groups, resolvedTab, forma
   const edges: StageChainEdge[] = nodes.slice(1).map((node, i) => ({
     sourceId: nodes[i].id,
     targetId: node.id,
-    isTraversed: nodes[i].isDone || nodes[i].isCurrent,
+    isReached: node.state !== 'todo',
   }))
 
   // An empty stage list (a partially registered or malformed definitions
   // object) degrades to an empty model, which the graph renders as nothing.
   if (nodes.length === 0) return { nodes, edges: [], selectedIndex: 0, noDataNote: null, selectedNote: '' }
 
-  const currentIndex = nodes.findIndex((node) => node.isCurrent)
+  const currentIndex = nodes.findIndex((node) => node.isSelected)
   const selectedIndex = currentIndex >= 0 ? currentIndex : 0
   const selected = nodes[selectedIndex]
 

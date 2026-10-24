@@ -42,16 +42,15 @@ test.describe('stepper — desktop', () => {
     await expect(page.getByTestId('stepper-compact')).toBeHidden()
   })
 
-  // M4 (tech-design.md, D15) took the rail's own per-node state line off —
-  // a node now carries only its circle and label; the selected stage's own
-  // recorded outcome moved to the panel header's meta line instead.
-  test('every node carries a label and no state line', async ({ page }) => {
+  // The v4 pipeline chart gives each node a name and one status line (the
+  // stage's own panel pill text); the old state word is gone.
+  test('every node carries a name and one status line', async ({ page }) => {
     await page.goto(`/task/${SLUG}`)
 
     const wide = page.getByTestId('stepper-wide')
     await expect(wide.getByTestId('stage-node-data')).toHaveCount(0)
-    await expect(wide.locator('.stage-chain-data')).toHaveCount(0)
-    await expect(wide.getByTestId('stage-chain-dev').locator('.stage-chain-name')).toHaveText('Dev')
+    await expect(wide.getByTestId('stage-chain-dev').getByTestId('stage-node-name')).toHaveText('Dev')
+    await expect(wide.getByTestId('stage-chain-dev').getByTestId('stage-node-sub')).toHaveCount(1)
   })
 
   test('clicking a node still selects that stage and syncs the URL', async ({ page }) => {

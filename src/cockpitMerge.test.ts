@@ -5,6 +5,8 @@ import type { Task } from './types.js'
 const { mergeTaskMock } = vi.hoisted(() => ({ mergeTaskMock: vi.fn() }))
 vi.mock('./taskCompletion.js', () => ({ mergeTask: mergeTaskMock }))
 
+const NO_SESSIONS = { retired: [], wasAttached: [], failures: [], listError: null }
+
 const hijackedTask = {
   slug: 'react-migration-m4',
   repo: 'cockpit-ai',
@@ -17,7 +19,7 @@ describe('mergeResolvingPr', () => {
   beforeEach(() => mergeTaskMock.mockReset())
 
   it('resolves the PR from the task branch via GitHub before merging, so the CLI never merges a note-scraped PR', async () => {
-    mergeTaskMock.mockResolvedValueOnce({ outcome: 'merged', prNumber: '118', cleanupError: null })
+    mergeTaskMock.mockResolvedValueOnce({ outcome: 'merged', prNumber: '118', cleanupError: null, sessions: NO_SESSIONS })
     const lookup = vi.fn().mockResolvedValue({ prNumber: '118', isOpen: true })
     await mergeResolvingPr('/tasks', hijackedTask, lookup)
     expect(lookup).toHaveBeenCalledWith('cockpit-ai', 'claude/react-migration-m4')
@@ -56,11 +58,39 @@ describe('describeMergeOutcome', () => {
   })
 
   it('merged exits 0, and reports a cleanup error without failing', () => {
-    const { exitCode, lines } = describeMergeOutcome({ outcome: 'merged', prNumber: '7', cleanupError: 'worktree busy' })
+    const { exitCode, lines } = describeMergeOutcome({ outcome: 'merged', prNumber: '7', cleanupError: 'worktree busy', sessions: NO_SESSIONS })
     expect(exitCode).toBe(0)
     expect(lines).toEqual([
       { stream: 'log', text: 'PR #7 merged, task marked done' },
       { stream: 'error', text: 'cleanup: worktree busy' },
+      { stream: 'log', text: 'sessions: none' },
     ])
+  })
+
+  it('merged prints the session retirement summary line after the merge message, exit code still 0', () => {
+    const sessions = { retired: ['worker-a', 'worker-a-cr'], wasAttached: ['worker-a-cr'], failures: [], listError: null }
+    const { exitCode, lines } = describeMergeOutcome({ outcome: 'merged', prNumber: '7', cleanupError: null, sessions })
+    expect(exitCode).toBe(0)
+    expect(lines).toEqual([
+      { stream: 'log', text: 'PR #7 merged, task marked done' },
+      { stream: 'log', text: 'sessions: retired worker-a, worker-a-cr (was attached)' },
+    ])
+  })
+
+  it('a session that failed to retire is reported but never changes the exit code', () => {
+    const sessions = { retired: [], wasAttached: [], failures: [{ name: 'worker-a', error: 'tmux says no' }], listError: null }
+    const { exitCode, lines } = describeMergeOutcome({ outcome: 'merged', prNumber: '7', cleanupError: null, sessions })
+    expect(exitCode).toBe(0)
+    expect(lines[1]).toEqual({ stream: 'log', text: 'sessions: failed worker-a (tmux says no)' })
+  })
+
+  it.each([
+    [{ outcome: 'no-pr' as const }, 1],
+    [{ outcome: 'merge-failed' as const, prNumber: '7', error: 'x' }, 1],
+    [{ outcome: 'blocked' as const, prNumber: '7', blockers: [] }, 2],
+  ])('prints no sessions line for a merge that did not happen (%j)', (outcome, expectedExit) => {
+    const { exitCode, lines } = describeMergeOutcome(outcome)
+    expect(exitCode).toBe(expectedExit)
+    expect(lines.some((line) => line.text.startsWith('sessions:'))).toBe(false)
   })
 })

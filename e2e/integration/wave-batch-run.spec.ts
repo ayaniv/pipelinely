@@ -56,12 +56,12 @@ async function openWaves(page: Page, slug = PARENT) {
   await page.goto(`${canonicalUrl}/`)
   await page.locator(`.card[data-slug="${slug}"] .card-title`).click()
   await expect(page.getByTestId('task-detail')).toBeVisible()
-  await page.getByTestId('l1-tab-dev').click()
-  await expect(page.getByTestId('wave').first()).toBeVisible()
+  await page.getByTestId('stage-chain-dev').click()
+  await expect(page.getByTestId('wave-graph')).toBeVisible()
 }
 
-function waveBatchBtn(page: Page, wave: number) {
-  return page.locator(`[data-testid="wave"][data-wave="${wave}"] [data-testid="wave-batch-btn"]`)
+function runNextWaveBtn(page: Page) {
+  return page.getByTestId('run-next-wave-btn')
 }
 
 function batchDispatchRequests(page: Page): unknown[] {
@@ -76,51 +76,22 @@ test.describe('wave batch button — eligibility and visibility', () => {
   // The wave-batch-parent fixture's wave 2 holds M1 and M2, both `needs: M0`,
   // with M0 already merged — the exact "two queued, unblocked milestones in
   // one wave" shape this feature exists for.
-  test('a wave with two queued, unblocked milestones shows an enabled batch button counting both', async ({ page }) => {
+  test('the first wave not yet complete has an enabled Run next wave button', async ({ page }) => {
     await openWaves(page)
-    const btn = waveBatchBtn(page, 2)
+    const btn = runNextWaveBtn(page)
     await expect(btn).toBeVisible()
     await expect(btn).toBeEnabled()
-    await expect(
-      page.locator('[data-testid="wave"][data-wave="2"] [data-testid="wave-batch-count"]'),
-    ).toHaveText('2')
+    await expect(btn).toHaveAttribute('data-wave', '2')
   })
 
-  // Wave 1 holds only M0, already merged. Nothing queued means nothing to
-  // batch — the button stays visible (so the wave header's layout doesn't
-  // shift as milestones land) but disabled, matching stageCta's own
-  // established disabled-with-a-title convention rather than disappearing.
-  test('a fully merged wave shows the batch button disabled, counting zero', async ({ page }) => {
-    await openWaves(page)
-    const btn = waveBatchBtn(page, 1)
-    await expect(btn).toBeVisible()
-    await expect(btn).toBeDisabled()
-    await expect(
-      page.locator('[data-testid="wave"][data-wave="1"] [data-testid="wave-batch-count"]'),
-    ).toHaveText('0')
-  })
-
-  // Wave 3 holds M3, which is queued but `needs: M1, M2` — neither merged.
-  // Queued alone is not enough; the button must apply the same
-  // isMilestoneReadyForDev gate each milestone's own CTA applies.
-  test('a wave whose milestones are queued but still blocked shows the batch button disabled', async ({ page }) => {
-    await openWaves(page)
-    const btn = waveBatchBtn(page, 3)
-    await expect(btn).toBeVisible()
-    await expect(btn).toBeDisabled()
-    await expect(
-      page.locator('[data-testid="wave"][data-wave="3"] [data-testid="wave-batch-count"]'),
-    ).toHaveText('0')
-  })
-
-  // A flat task's detail view has no Dev-tab wave sections at all, so it
-  // must render no batch button — not a zero-count one.
-  test('a flat task renders no wave sections and no batch button', async ({ page }) => {
+  // A flat task's detail view has no Dev-tab wave graph at all, so it must
+  // render no Run next wave button.
+  test('a flat task renders no wave graph and no Run next wave button', async ({ page }) => {
     await page.goto('/')
     await page.locator('.card[data-slug="dev-ready"] .card-title').click()
     await expect(page.getByTestId('task-detail')).toBeVisible()
-    await expect(page.getByTestId('wave')).toHaveCount(0)
-    await expect(page.getByTestId('wave-batch-btn')).toHaveCount(0)
+    await expect(page.getByTestId('wave-graph')).toHaveCount(0)
+    await expect(runNextWaveBtn(page)).toHaveCount(0)
   })
 })
 
@@ -131,11 +102,11 @@ test.describe('wave batch button — eligibility and visibility', () => {
 // anti-double-dispatch: the button must disable for the duration of its one
 // in-flight request and a fast double-click must not fire it twice.
 test.describe('wave batch — anti-double-dispatch', () => {
-  test('the wave button disables for the duration of the in-flight batch request', async ({ page }) => {
+  test('the Run next wave button disables for the duration of the in-flight batch request', async ({ page }) => {
     await withOrchestratorSessionLock(async () => {
       await fs.rm(ORCHESTRATOR_SESSION_PATH, { force: true })
       await openWaves(page)
-      const btn = waveBatchBtn(page, 2)
+      const btn = runNextWaveBtn(page)
 
       let releaseRequest: () => void
       const gate = new Promise<void>((resolve) => { releaseRequest = resolve })
@@ -174,9 +145,7 @@ test.describe('wave batch — anti-double-dispatch', () => {
       // re-enable and defeat the point) — what a genuinely fast
       // double-click looks like from the button's own perspective.
       await page.evaluate(() => {
-        const btn = document.querySelector(
-          '[data-testid="wave"][data-wave="2"] [data-testid="wave-batch-btn"]',
-        ) as HTMLButtonElement
+        const btn = document.querySelector('[data-testid="run-next-wave-btn"]') as HTMLButtonElement
         btn.click()
         btn.click()
       })

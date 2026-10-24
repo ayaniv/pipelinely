@@ -28,6 +28,9 @@ export function makeTask(overrides: Partial<Task> = {}): Task {
     showsOnBoard: true,
     attentionStatus: 'working',
     autoModeOverride: 'inherit',
+    kind: 'dev',
+    designQaReport: null,
+    affectedApps: [],
     autoMode: true,
     status: 'working',
     updatedAt: new Date('2026-01-01'),
@@ -36,6 +39,7 @@ export function makeTask(overrides: Partial<Task> = {}): Task {
     totalInputTokens: 0,
     totalOutputTokens: 0,
     sessions: [],
+    creature: null,
     ...overrides,
   } as Task
 }

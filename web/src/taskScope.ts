@@ -13,6 +13,37 @@ export function isFanoutParent(task: Task): boolean {
   return Array.isArray(task.milestones) && task.milestones.length > 0
 }
 
+// A parent whose plan review has happened: only then do its milestones run, and
+// only then is the Parent tasks section its home. Until then it is a normal
+// card, because the plan-review step it is waiting on is the developer's.
+export function isPlanApprovedParent(task: Task): boolean {
+  return isFanoutParent(task) && task.stageHistory.some((event) => event.stage === 'plan-review')
+}
+
+// A plan-approved parent none of whose milestones has been dispatched: its
+// first wave has not started, so it waits in the Backlog tab rather than the
+// Parent tasks section (DESIGN_PROMPT §2). Anything dispatched or merged
+// means a wave is, or has been, under way.
+export function isUnstartedParent(task: Task): boolean {
+  return isPlanApprovedParent(task) && (task.milestones ?? []).every((milestone) => milestone.state === 'queued')
+}
+
+// A working LEAF is already doing the thing, so it is offered no next step. A
+// milestone-declaring PARENT is not one: its own session running says nothing
+// about whether its milestones need attention.
+export function isWorkingLeaf(task: Task): boolean {
+  return !isFanoutParent(task) && task.status === 'working'
+}
+
+// A parked, finished or shelved session has no terminal to open.
+const NO_LIVE_TERMINAL_STATUSES: ReadonlySet<Task['status']> = new Set(['paused', 'shelved', 'done'])
+
+// Whether the task's terminal button is worth showing. A dialog on screen
+// proves the session is alive whatever the lifecycle status says.
+export function hasLiveTerminal(task: Task): boolean {
+  return !!task.approvalPrompt || !NO_LIVE_TERMINAL_STATUSES.has(task.status)
+}
+
 // The PR number the client acts on: reviewRef (an explicit PR URL or number), then task.prNumber.
 // The server already folds the branch-derived PR and a strict TIMELINE-note
 // match into task.prNumber (attachResolvedPrNumbers), so this deliberately
@@ -179,6 +210,12 @@ export function pillStatusFor(task: Task): PillStatusKey {
   return task.attentionStatus
 }
 
+// The one definition of "working" a card shows: the status pill reads
+// Working (so the pill's live halo and the creature's bob always agree).
+export function isTaskWorking(task: Task): boolean {
+  return pillStatusFor(task) === 'working'
+}
+
 export interface DetailStatusTag {
   label: string
   bg: string
@@ -198,13 +235,8 @@ export function detailStatusInfo(task: Task, isOffFocus: boolean): DetailStatusI
   const key = pillStatusFor(task)
   const meta = CARD_STATUS_META[key] ?? CARD_STATUS_META.idle
   const isWorking = key === 'working'
-  const merged = task.status === 'done' && task.stageHistory.some((e) => e.stage === 'merge')
   const tag: DetailStatusTag | null =
-    isOffFocus && key !== 'done'
-      ? { label: 'off focus', bg: 'var(--driftSoft)', fg: 'var(--driftInk)' }
-      : merged
-        ? { label: 'merged', bg: 'var(--sageSoft)', fg: 'var(--sageInk)' }
-        : null
+    isOffFocus && key !== 'done' ? { label: 'off focus', bg: 'var(--driftSoft)', fg: 'var(--driftInk)' } : null
   return { key, meta, isWorking, tag }
 }
 
@@ -230,11 +262,13 @@ export interface MiniStageNode {
   bg: string
   fg: string
   glyph: string
+  // The reached nodes' colour — the stage tone, or the accent by default.
+  color: string
 }
 
 // Decorative-only mini stage rail (session/dev card's 16px-node row) — NOT
 // the interactive stage chain, which tracks its own click-selection state.
-export function miniStageNodes(task: Pick<Task, 'status' | 'stage' | 'stageHistory'>, stageIds: string[]): MiniStageNode[] {
+export function miniStageNodes(task: Pick<Task, 'status' | 'stage' | 'stageHistory'>, stageIds: string[], stageColor = 'var(--accent)'): MiniStageNode[] {
   const reachedIds = new Set((task.stageHistory || []).map((e) => miniStageId(e.stage)))
   const isFinished = task.status === 'done'
   const currentId = isFinished ? null : task.stage ? miniStageId(task.stage) : null
@@ -248,9 +282,10 @@ export function miniStageNodes(task: Pick<Task, 'status' | 'stage' | 'stageHisto
       isCurrent,
       flex: i === 0 ? '0 0 auto' : '1 1 auto',
       hasConnector: i > 0,
-      connector: isDone || isCurrent || (isFinished && i <= curIdx) ? 'var(--accent)' : 'var(--border2)',
-      ring: isDone || isCurrent ? '1.5px solid var(--accent)' : '1.5px solid var(--border2)',
-      bg: isDone ? 'var(--accent)' : 'transparent',
+      connector: isDone || isCurrent || (isFinished && i <= curIdx) ? stageColor : 'var(--border2)',
+      ring: isDone || isCurrent ? `1.5px solid ${stageColor}` : '1.5px solid var(--border2)',
+      bg: isDone ? stageColor : 'transparent',
+      color: stageColor,
       fg: isDone ? 'var(--surface)' : 'var(--text3)',
       glyph: isDone ? '✓' : '',
     }

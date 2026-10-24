@@ -1,6 +1,6 @@
 import type { Task } from '../../../../../src/types'
 import type { StagePanelTabId } from '../../../pipelineStages'
-import { CrFixesStage, CrStage, DevStage, MergeStage, QaFixesStage, QaStage, type StagePanelExtra } from './stageBodies'
+import { AdoptStage, CrFixesStage, CrStage, DesignApprovalStage, DesignQaStage, DevStage, DsStageBody, MergeStage, QaFixesStage, QaStage, type StagePanelExtra } from './stageBodies'
 
 export type { StagePanelExtra }
 
@@ -31,5 +31,14 @@ export function StagePanel({ tab, child, extra, openTaskSlug }: StagePanelProps)
       return <QaFixesStage {...props} />
     case 'merge':
       return <MergeStage {...props} />
+    case 'design-qa':
+      return <DesignQaStage {...props} />
+    case 'design-approval':
+      return <DesignApprovalStage {...props} />
+    case 'adopt':
+      return <AdoptStage {...props} />
+    case 'design-intake':
+    case 'design-fixes':
+      return <DsStageBody stageId={tab} child={child} />
   }
 }

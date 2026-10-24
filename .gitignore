@@ -14,3 +14,4 @@ blob-report/
 # task history — a fresh clone ships no tasks/ scaffold at all, so local
 # runs generate this directory (TASKS_DIR) and it should stay untracked.
 tasks/**
+e2e/fixtures/bookmarks/

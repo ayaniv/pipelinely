@@ -1,4 +1,5 @@
 import { test, expect, type Page, type Route } from '@playwright/test'
+import { openSidebarItem } from './fixtures/boardTabs.js'
 import { TOKEN, DESKTOP, cssOf } from './fixtures/designTokens.js'
 import { fetchRealSnapshot, openWithSnapshot, pushSnapshot } from './fixtures/snapshotStub.js'
 
@@ -315,7 +316,7 @@ test.describe('react settings page', () => {
     await page.goto('/')
     await expect(page.getByTestId('settings-page')).toHaveCount(0)
 
-    await page.getByTestId('sidebar-settings-btn').click()
+    await openSidebarItem(page, 'sidebar-settings-btn')
 
     await expect(shell(page)).toHaveAttribute('data-route', 'settings')
     expect(new URL(page.url()).pathname).toBe('/settings')
@@ -406,7 +407,7 @@ test.describe('react settings page', () => {
 
   test('browser Back from /settings returns to the board', async ({ page }) => {
     await page.goto('/')
-    await page.getByTestId('sidebar-settings-btn').click()
+    await openSidebarItem(page, 'sidebar-settings-btn')
     await expect(page.getByTestId('settings-page')).toBeVisible()
 
     await page.goBack()
@@ -422,7 +423,7 @@ test.describe('react help page', () => {
     await page.goto('/')
     await expect(page.getByTestId('help-page')).toHaveCount(0)
 
-    await page.getByTestId('sidebar-help-btn').click()
+    await openSidebarItem(page, 'sidebar-help-btn')
 
     await expect(shell(page)).toHaveAttribute('data-route', 'help')
     await expect(page.getByTestId('help-page')).toHaveCount(1)
@@ -477,11 +478,11 @@ test.describe('full pages are mutually exclusive', () => {
     await page.route('**/api/docs', (route) => route.fulfill({ json: { html: '<p>guide</p>' } }))
     await page.goto('/settings')
 
-    await page.getByTestId('sidebar-docs-btn').click()
+    await openSidebarItem(page, 'sidebar-docs-btn')
     await expect(page.getByTestId('docs-page')).toBeVisible()
     await expect(page.getByTestId('settings-page')).toHaveCount(0)
 
-    await page.getByTestId('sidebar-settings-btn').click()
+    await openSidebarItem(page, 'sidebar-settings-btn')
     await expect(page.getByTestId('settings-page')).toBeVisible()
     await expect(page.getByTestId('docs-page')).toBeHidden()
     await expect(page.locator('body')).toHaveClass(/full-page-open/)

@@ -81,7 +81,7 @@ test.describe('header meta row', () => {
     await page.goto(`/task/${'merge-ready'}`)
 
     await page.getByTestId('task-detail').getByTestId('card-menu-btn').click()
-    const menu = page.getByTestId('task-detail').getByTestId('card-menu')
+    const menu = page.getByTestId('card-menu')
     await expect(menu).toBeVisible()
     await expect(menu.getByTestId('open-pr-btn')).toBeVisible()
   })
@@ -97,114 +97,24 @@ test.describe('header meta row', () => {
   })
 })
 
+// The rail's look (circles, rings, edges, selection) is the pipeline chart's
+// now, and is pinned by dashboard-v4-pipeline-chart.spec.ts.
 test.describe('stage rail', () => {
-  test('the rail is its own card at the design\'s margin and padding', async ({ page }) => {
+  test('the rail keeps the design\'s 26px top margin', async ({ page }) => {
     await page.goto(`/task/${FLAT_SLUG}`)
 
     const rail = page.getByTestId('stepper-wide')
     await expect(rail).toBeVisible()
     expect(await cssOf(rail, 'margin-top')).toBe('26px')
-    expect(await cssOf(rail, 'padding-top')).toBe('26px')
-    expect(await cssOf(rail, 'padding-left')).toBe(PANEL_GUTTER)
-    expect(await cssOf(rail, 'border-radius')).toBe('16px')
   })
 
-  test('a node column is 82px wide with a 28px circle', async ({ page }) => {
-    await page.goto(`/task/${FLAT_SLUG}`)
-
-    const node = page.getByTestId('stage-chain-dev')
-    expect(await cssOf(node, 'width')).toBe('82px')
-    expect(await cssOf(node, 'row-gap')).toBe('9px')
-
-    const circle = node.locator('.stage-chain-check')
-    expect(await cssOf(circle, 'width')).toBe('28px')
-    expect(await cssOf(circle, 'height')).toBe('28px')
-  })
-
-  // The Pipeline rail's rings are 2px (its own `n.ring`), unlike the 1.5px
-  // rings on the dashboard card's 16px mini-rail — the two are genuinely
-  // different sizes in the design, not one value applied twice.
-  test('a completed node is an accent disc with a 2px accent ring', async ({ page }) => {
-    await page.goto(`/task/${FLAT_SLUG}`)
-
-    const done = page.getByTestId('stage-chain-planning').locator('.stage-chain-check')
-    expect(await cssOf(done, 'border-top-width')).toBe('2px')
-    expect(await cssOf(done, 'border-top-color')).toBe(TOKEN.accent)
-    expect(await cssOf(done, 'background-color')).toBe(TOKEN.accent)
-    expect(await cssOf(done, 'color')).toBe(TOKEN.surface)
-  })
-
-  test('an upcoming node is a 2px border2 ring on nothing', async ({ page }) => {
-    await page.goto(`/task/${FLAT_SLUG}`)
-
-    const upcoming = page.getByTestId('stage-chain-merge').locator('.stage-chain-check')
-    expect(await cssOf(upcoming, 'border-top-width')).toBe('2px')
-    expect(await cssOf(upcoming, 'border-top-color')).toBe(TOKEN.border2)
-    expect(await cssOf(upcoming, 'background-color')).toBe('rgba(0, 0, 0, 0)')
-  })
-
-  test('the selected node is tinted accentSoft and its label goes ink', async ({ page }) => {
-    await page.goto(`/task/${FLAT_SLUG}`)
-
-    await page.getByTestId('stage-chain-qa').click()
-    const selected = page.getByTestId('stage-chain-qa')
-    // Retrying assertion: the node is React-owned now, so it survives the click
-    // and its 0.12s background transition is observable mid-flight.
-    await expect(selected.locator('.stage-chain-check')).toHaveCSS('background-color', TOKEN.accentSoft)
-    expect(await cssOf(selected.locator('.stage-chain-name'), 'color')).toBe(TOKEN.ink)
-    expect(await cssOf(selected.locator('.stage-chain-name'), 'font-weight')).toBe('700')
-  })
-
-  // M3: connectors are React Flow edges (SVG paths) between the node columns,
-  // not flex spans, so the box-model geometry this used to assert (height,
-  // min-width, margin-top) no longer exists. What carries over is the 2px
-  // stroke, the node-edge-to-node-edge span, the circles'-centre line, and the
-  // 12px minimum length.
-  test('connectors are 2px strokes, at least 12px long, and sit at the circles\' centres', async ({ page }) => {
-    await page.goto(`/task/${FLAT_SLUG}`)
-
-    const edge = page.locator('.react-flow__edge .stage-chain-edge').first()
-    // A horizontal stroke has a zero-height box, which Playwright calls hidden.
-    await expect(edge).toBeAttached()
-    expect(await cssOf(edge, 'stroke-width')).toBe('2px')
-
-    const edgeBox = await edge.boundingBox()
-    const circleBox = await page.getByTestId('stage-chain-planning').locator('.stage-chain-check').boundingBox()
-    if (!edgeBox || !circleBox) throw new Error('edge or circle has no bounding box')
-    expect(edgeBox.width).toBeGreaterThanOrEqual(12)
-    expect(Math.abs(edgeBox.y + edgeBox.height / 2 - (circleBox.y + circleBox.height / 2))).toBeLessThanOrEqual(1)
-  })
-
-  // The design's rail node is a circle and a label — nothing else. This repo
-  // put the stage's recorded outcome on a third line under every node
-  // (`stage-node-data`); the developer's call was to align with the design
-  // and take it off. It is not lost: it moves to the panel header's meta
-  // line, which is where the design puts exactly that content — see the
-  // "stage panel header" cases below.
-  test('a rail node carries a label and no summary line', async ({ page }) => {
+  test('a rail node carries a name and one status line, and no state word', async ({ page }) => {
     await page.goto(`/task/${FLAT_SLUG}`)
 
     const rail = page.getByTestId('stepper-wide')
     await expect(rail.getByTestId('stage-node-data')).toHaveCount(0)
-    await expect(rail.locator('.stage-chain-data')).toHaveCount(0)
-    // The label itself must survive the removal — a node stripped of both
-    // lines would pass the two assertions above and render an unlabelled dot.
-    await expect(page.getByTestId('stage-chain-dev').locator('.stage-chain-name')).toHaveText('Dev')
-  })
-
-  // The design's `padding:8px 8px 2px; margin:-8px -8px -2px` on the
-  // scrolling row. Without it the current node's `inset:-5px` breathing halo
-  // is clipped by the row's own overflow-x, which is only visible as a
-  // half-drawn ring on the first and last nodes.
-  test('the scroll row bleeds so the current node\'s halo is not clipped', async ({ page }) => {
-    await page.goto(`/task/${FLAT_SLUG}`)
-
-    const chain = page.getByTestId('stage-chain')
-    expect(await cssOf(chain, 'overflow-x')).toBe('auto')
-    expect(await cssOf(chain, 'padding-top')).toBe('8px')
-    expect(await cssOf(chain, 'padding-left')).toBe('8px')
-    expect(await cssOf(chain, 'margin-top')).toBe('-8px')
-    expect(await cssOf(chain, 'margin-left')).toBe('-8px')
+    await expect(page.getByTestId('stage-chain-dev').getByTestId('stage-node-name')).toHaveText('Dev')
+    await expect(page.getByTestId('stage-chain-dev').getByTestId('stage-node-sub')).toHaveCount(1)
   })
 })
 
@@ -315,43 +225,6 @@ test.describe('stage panel header', () => {
 
     await page.getByTestId('stage-chain-planning').click()
     await expect(page.locator('.l2-panel-subtitle')).not.toHaveText(/^\d+ sessions?$/)
-  })
-})
-
-test.describe('dev waves', () => {
-  // M3: the CSS grid is a React Flow canvas now; its 280px minimum track lives
-  // in milestoneGraphLayout.ts (the 12px gap is asserted at unit level there),
-  // so this checks the observable result — no card narrower than 280px.
-  test('no dev card is narrower than the design\'s 280px track', async ({ page }) => {
-    await page.goto('/task/fanout-parent')
-
-    const milestoneCards = page.getByTestId('milestone-flow').getByTestId('milestone-card')
-    // The graph is a lazy chunk, so wait for it before snapshotting the list.
-    await expect(milestoneCards.first()).toBeVisible()
-    const cards = await milestoneCards.all()
-    expect(cards.length).toBeGreaterThan(0)
-    for (const card of cards) {
-      const box = await card.boundingBox()
-      expect(box?.width ?? 0).toBeGreaterThanOrEqual(280)
-    }
-  })
-
-  test('the wave header is the design\'s mono name, mode and run button', async ({ page }) => {
-    await page.goto('/task/fanout-parent')
-
-    const header = page.getByTestId('wave-header').first()
-    expect(await cssOf(header, 'align-items')).toBe('center')
-    expect(await cssOf(header, 'padding-bottom')).toBe('10px')
-
-    const name = header.locator('.wave-name')
-    expect(await cssOf(name, 'font-family')).toContain('JetBrains Mono')
-    expect(await cssOf(name, 'font-size')).toBe('11.5px')
-    expect(await cssOf(name, 'letter-spacing')).toBe('0.69px') // .06em at 11.5px
-
-    const run = header.getByTestId('wave-batch-btn')
-    expect(await cssOf(run, 'border-radius')).toBe('8px')
-    expect(await cssOf(run, 'font-size')).toBe('12px')
-    expect(await cssOf(run, 'font-weight')).toBe('700')
   })
 })
 

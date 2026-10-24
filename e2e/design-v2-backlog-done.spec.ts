@@ -204,13 +204,13 @@ test.describe('backlog batch bar', () => {
   })
 })
 
-// The heatmap moved to the You tab (see e2e/you-tab.spec.ts) — it was never a
+// The heatmap moved to the Usage tab (see e2e/usage-tab.spec.ts) — it was never a
 // Done-tab concern. These three cases still own the design's own visual
 // constants for the card, so they stay here and only change which tab they
 // open.
 test.describe('work density heatmap', () => {
   test('the card uses the design\'s radius, padding and top margin', async ({ page }) => {
-    await gotoBoardTab(page, 'you')
+    await gotoBoardTab(page, 'usage')
 
     const wrap = page.locator('.work-density')
     expect(await cssOf(wrap, 'margin-top')).toBe('44px')
@@ -225,14 +225,14 @@ test.describe('work density heatmap', () => {
   // the body gap (28px + 6px) so a month label sits over its own weeks. Off
   // by that much and every label points at the wrong column.
   test('the month strip clears the day-label column', async ({ page }) => {
-    await gotoBoardTab(page, 'you')
+    await gotoBoardTab(page, 'usage')
 
     expect(await cssOf(page.locator('.work-density-months'), 'margin-left')).toBe('34px')
     expect(await cssOf(page.locator('.work-density-daylabels'), 'width')).toBe('28px')
   })
 
   test('the legend shows five 11px swatches between less and more', async ({ page }) => {
-    await gotoBoardTab(page, 'you')
+    await gotoBoardTab(page, 'usage')
 
     const legend = page.locator('.work-density-legend')
     const swatches = legend.locator('.work-density-swatch')

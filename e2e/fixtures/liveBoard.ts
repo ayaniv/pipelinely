@@ -36,6 +36,15 @@ export interface SnapshotPatch {
   backlog?: unknown[]
   doneGroups?: unknown[]
   isCanonical?: boolean
+  // Merged over the server's real settings, so a spec can flip one setting
+  // (e.g. creaturePlacement) without writing the fixture SETTINGS.json.
+  settings?: Record<string, unknown>
+  // Synthetic tasks appended after the onlySlugs/dropRepo filters: each is a
+  // copy of a real fixture task (`from`, looked up before filtering) under a
+  // new slug, with `fields` merged over it. They exist only in the pushed
+  // snapshot, never on disk, so a spec can build a board far larger than the
+  // fixture tree (e.g. a 200-row table) without touching e2e/fixtures/tasks.
+  cloneTasks?: { from: string; slug: string; fields?: Record<string, unknown> }[]
 }
 
 // Detaches the page's live SSE handler and keeps it aside. The `ui` project
@@ -58,17 +67,24 @@ export async function pushSnapshot(page: Page, patch: SnapshotPatch = {}): Promi
   await page.evaluate(async (p) => {
     const w = window as unknown as { __liveOnMessage: (e: MessageEvent) => void }
     const snapshot = await fetch('/api/tasks').then((r) => r.json())
+    const realTasks: { slug: string }[] = [...snapshot.tasks]
     if (p.onlySlugs) snapshot.tasks = snapshot.tasks.filter((t: { slug: string }) => p.onlySlugs!.includes(t.slug))
     if (p.dropRepo) snapshot.tasks = snapshot.tasks.filter((t: { repo: string }) => t.repo !== p.dropRepo)
     for (const [slug, fields] of Object.entries(p.taskPatches ?? {})) {
       const task = snapshot.tasks.find((t: { slug: string }) => t.slug === slug)
       if (task) Object.assign(task, fields)
     }
+    for (const clone of p.cloneTasks ?? []) {
+      const source = realTasks.find((t) => t.slug === clone.from)
+      if (!source) throw new Error(`pushSnapshot: no fixture task '${clone.from}' to clone as '${clone.slug}'`)
+      snapshot.tasks.push({ ...structuredClone(source), ...clone.fields, slug: clone.slug })
+    }
     if (p.weeklyFocus !== undefined) snapshot.weeklyFocus = p.weeklyFocus
     if (p.activeProject !== undefined) snapshot.activeProject = p.activeProject
     if (p.backlog !== undefined) snapshot.backlog = p.backlog
     if (p.doneGroups !== undefined) snapshot.doneGroups = p.doneGroups
     if (p.isCanonical !== undefined) snapshot.isCanonical = p.isCanonical
+    if (p.settings !== undefined) snapshot.settings = { ...snapshot.settings, ...p.settings }
     w.__liveOnMessage(new MessageEvent('message', { data: JSON.stringify(snapshot) }))
   }, patch)
 }

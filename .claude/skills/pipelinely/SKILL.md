@@ -1,7 +1,7 @@
 ---
 name: pipelinely
 description: Idempotent entry point — turns this tab into the orchestrator on every run. Onboarding a repo is offered lazily, the first time a task targets it. Invoke as `/pipelinely`.
-allowed-tools: ["Bash", "Read", "Write"]
+allowed-tools: ["Bash", "Read", "Write", "AskUserQuestion"]
 ---
 
 # Pipelinely
@@ -82,15 +82,18 @@ done
 
 echo "$CURRENT_SID" > "$TASKS_DIR_RESOLVED/ORCHESTRATOR_SESSION"
 [ -n "$TMUX" ] && tmux display-message -p '#S' > "$TASKS_DIR_RESOLVED/ORCHESTRATOR_TMUX"
+[ -z "$TMUX" ] && echo "WARNING: this orchestrator is not inside tmux — the dashboard's dispatch buttons type through tmux only and will refuse to write here. Restart it with the \`orch\` alias."
 
 rm -f "$LOCK_PATH"
 ```
 
 The `ORCHESTRATOR_TMUX` line records the tmux session name (normally
 `orchestrator`, from the `orch` alias) so the dashboard can reattach a
-detached orchestrator instead of reporting it dead. It's guarded on `$TMUX`:
-an orchestrator started outside tmux writes nothing and keeps today's
-iTerm-id-only behavior.
+detached orchestrator instead of reporting it dead, and is where every
+dashboard dispatch button types (through tmux, never through iTerm2
+keystrokes). It's guarded on `$TMUX`: an orchestrator started outside tmux
+writes nothing, prints the warning above, and the dispatch buttons refuse
+(503) until it is restarted inside tmux.
 
 ## Step 4 — Start the Cockpit dashboard dev server
 
@@ -100,15 +103,45 @@ The dashboard (task board UI) lives at `http://localhost:3030/`. Start it if it 
 if lsof -i :3030 -sTCP:LISTEN >/dev/null 2>&1; then
   echo "dashboard already running on :3030"
 else
-  cd ~/Dev/pipelinely && nohup npm run dev > /tmp/cockpit-dashboard.log 2>&1 &
+  cd ~/Dev/pipelinely && env -u COCKPIT_AUTO_OPEN_BROWSER nohup npm run dev > /tmp/cockpit-dashboard.log 2>&1 &
   disown
   echo "dashboard starting on :3030 (log: /tmp/cockpit-dashboard.log)"
 fi
 ```
 
-Don't wait or poll for it to come up — just fire it and move on. Mention the URL when confirming ready.
+Fire it and move on to the next step, which waits for it to answer. `env -u COCKPIT_AUTO_OPEN_BROWSER` is deliberate: if that variable leaked into this shell, the server would open a browser at boot, before the user has been asked anything.
 
-## Step 5 — Confirm ready
+## Step 5 — Introduce the dashboard
+
+Never open a browser without the user's consent: the server only auto-opens one when `COCKPIT_AUTO_OPEN_BROWSER` is set, and Step 4 launches it with that variable unset. The only `open` command in this skill is the one below, run on an explicit answer.
+
+Resolve the marker path once: `INTRO_MARKER="${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/DASHBOARD_INTRO_SEEN"`.
+
+1. **Wait until the dashboard answers**, a bounded poll of about 30 seconds (each try capped at 2 seconds by `--max-time`, one per second, never a longer foreground sleep):
+
+   ```bash
+   for _ in $(seq 1 30); do
+     curl -sf --max-time 2 -o /dev/null http://localhost:3030/ && break
+     sleep 1
+   done
+   curl -sf --max-time 2 -o /dev/null http://localhost:3030/ && echo "dashboard is up" || echo "dashboard did not come up"
+   ```
+
+   If it never came up, say so, print the log path (`/tmp/cockpit-dashboard.log`), skip the rest of this step and go to Step 6: never open a browser at a dead URL, and do not write the marker.
+
+2. **Already introduced?** If `$INTRO_MARKER` exists, skip the explanation and the question but still print the URL (`Dashboard: http://localhost:3030`), then go to Step 6.
+
+3. **Explain what the dashboard is**, in two or three plain sentences: it is the board of their tasks and agent tabs at http://localhost:3030, where they see what each task is doing, what needs them, and press the next-stage buttons; it runs only on their machine. Add that pressing Enter opens it in their browser, and the other option leaves the browser closed.
+
+4. **Ask for consent** with the `AskUserQuestion` tool: one question, two options, in this order so that pressing Enter picks the first:
+   - `Open the dashboard in my browser (Recommended)`
+   - `Not now, I'll open it myself`
+
+   Run `open http://localhost:3030` (macOS) only on the first option. On "Not now" or any other answer, open nothing. Print the URL either way. If `AskUserQuestion` is unavailable here, print the URL and the sentence "open it when you are ready" and open nothing.
+
+5. **Remember it** (the `DASHBOARD_INTRO_SEEN` file) only after the question was answered: `touch "$INTRO_MARKER" 2>/dev/null || echo "could not write $INTRO_MARKER, the introduction will be shown again"`. A missing or unwritable marker only means the introduction is shown again next time, never an error. Do not write it when the question was never asked, or when it was dismissed or rejected (Esc, tool denied): a dismissed question counts as unanswered, so open nothing and write no marker.
+
+## Step 6 — Confirm ready
 
 Display the status board with all currently tracked tasks (read their STATUS files):
 

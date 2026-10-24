@@ -1,27 +1,32 @@
+import { useLocation } from 'react-router'
 import { useConnectionStatus } from '../../data/connectionStatus'
+import { useBookmarks } from '../../data/taskResources'
 import { FrameSlot } from '../../components/FrameSlot'
 import { navigateToTask } from '../../shell/appNavigation'
+import { matchShellRoute, stripTrailingSlash } from '../../shell/routes'
 import { useNow } from '../../useNow'
 import { BacklogView } from './BacklogView'
+import { BookmarksNavItem } from './BookmarksNavItem'
 import { countDoneTasks, standupText, visibleBacklogRows, visibleDoneGroups } from './boardModel'
 import { projectFilterStore, type ProjectFilterStore } from './boardFilter'
 import type { BoardTab } from './boardTabRoutes'
 import { DoneView } from './DoneView'
 import { SnapshotPlaceholder } from './SnapshotPlaceholder'
 import { StandupButton } from './StandupButton'
-import { SidebarAccount, TabBar, type CountedTab } from './TabBar'
-import { useSelectBoardTab } from './useBoardTabNavigation'
+import { SidebarAccount } from './SidebarAccount'
+import { TabBar, type CountedTab } from './TabBar'
+import { useOpenBookmarksPage, useSelectBoardTab } from './useBoardTabNavigation'
 import { useBoardFilterView } from './useBoardFilterView'
-import { YouView } from './YouView'
+import { UsageView } from './UsageView'
 
 // The sidebar tab bar and its counts, and the Backlog,
-// Done and You panels. Like the active board it renders by portal into
+// Done and Usage panels. Like the active board it renders by portal into
 // containers the app frame owns (shell/AppFrame.tsx), driven by
 // the snapshot cache, the router's location and the ONE project filter (the
 // shared store, read through useBoardFilterView — never a second copy). It mounts
 // once for every route: the panels stay in the frame, shown by class.
 
-// Keeps the Done/You relative dates current across midnight and idle tabs —
+// Keeps the Done/Usage relative dates current across midnight and idle tabs —
 // the 30-second tick that advances `now`.
 const CLOCK_TICK_MS = 30_000
 
@@ -35,15 +40,21 @@ export interface BoardTabsProps {
 }
 
 export function BoardTabs({ activeTab, filterStore = projectFilterStore }: BoardTabsProps) {
-  const { snapshot, options, selected, visibleTasks } = useBoardFilterView(filterStore)
+  const { snapshot, options, selected, visibleTasks, visibleUnstartedParents } = useBoardFilterView(filterStore)
   const selectTab = useSelectBoardTab()
+  const openBookmarksPage = useOpenBookmarksPage()
+  // The page showing, from the URL: useActiveBoardTab keeps the last board tab
+  // "active" behind a full page, so on /bookmarks it would leave two items lit.
+  const isBookmarksPage = matchShellRoute(stripTrailingSlash(useLocation().pathname)) === 'bookmarks'
+  const bookmarks = useBookmarks()
+  const bookmarksCount = bookmarks.status === 'ready' && bookmarks.data !== null ? bookmarks.data.bookmarks.length : null
   const connection = useConnectionStatus()
   const nowMs = useNow(CLOCK_TICK_MS)
 
   const visibleBacklog = snapshot ? visibleBacklogRows(snapshot.backlog, selected) : []
   const visibleDone = snapshot ? visibleDoneGroups(snapshot.doneGroups, selected) : []
   const counts: Record<CountedTab, number | null> = snapshot
-    ? { inprogress: visibleTasks.length, backlog: visibleBacklog.length, done: countDoneTasks(visibleDone) }
+    ? { inprogress: visibleTasks.length, backlog: visibleBacklog.length + visibleUnstartedParents.length, done: countDoneTasks(visibleDone) }
     : { inprogress: null, backlog: null, done: null }
 
   return (
@@ -52,10 +63,13 @@ export function BoardTabs({ activeTab, filterStore = projectFilterStore }: Board
           out while data loads. Its counts read as unloaded and the panels
           show a loading/error placeholder until then. */}
       <FrameSlot containerId="tab-bar">
-        <TabBar activeTab={activeTab} counts={counts} onSelectTab={selectTab} />
+        <TabBar activeTab={isBookmarksPage ? null : activeTab} counts={counts} onSelectTab={selectTab} />
+      </FrameSlot>
+      <FrameSlot containerId="sidebar-bookmarks-slot">
+        <BookmarksNavItem isCurrent={isBookmarksPage} count={bookmarksCount} onOpen={openBookmarksPage} />
       </FrameSlot>
       <FrameSlot containerId="sidebar-account-slot">
-        <SidebarAccount activeTab={activeTab} onSelectTab={selectTab} />
+        <SidebarAccount onSelectTab={selectTab} />
       </FrameSlot>
       {snapshot ? (
         <>
@@ -63,6 +77,7 @@ export function BoardTabs({ activeTab, filterStore = projectFilterStore }: Board
             <BacklogView
               rows={visibleBacklog}
               backlog={snapshot.backlog}
+              plannedParents={visibleUnstartedParents}
               isCanonical={snapshot.isCanonical}
               projectOptions={options}
               onOpenTask={navigateToTask}
@@ -74,7 +89,7 @@ export function BoardTabs({ activeTab, filterStore = projectFilterStore }: Board
           </FrameSlot>
           {/* Whole-history view: gets the UNFILTERED done groups. */}
           <FrameSlot containerId="work-density">
-            <YouView doneGroups={snapshot.doneGroups} now={new Date(nowMs)} />
+            <UsageView doneGroups={snapshot.doneGroups} now={new Date(nowMs)} />
           </FrameSlot>
           {activeTab === 'done' ? (
             <FrameSlot containerId="standup-slot">

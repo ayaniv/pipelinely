@@ -80,21 +80,19 @@ test.describe('react task detail: fanout graph/panel split', () => {
     await expect(panelSlot).toBeVisible()
 
     // Content proof, not just presence.
-    await expect(graphSlot.getByTestId('stage-chain')).toBeVisible()
+    await expect(graphSlot.getByTestId('pipeline-chart')).toBeVisible()
     await expect(panelSlot.getByTestId('l2-panel')).toBeVisible()
   })
 
-  // The fan-out PARENT case draws a wave graph with no separate l2-panel —
-  // the split still has to hold a fan-out parent's whole graph without
-  // erroring on the (deliberately empty) panel slot.
-  test('a fan-out parent (wave grid, not a stage chain) still renders inside the graph slot with an empty panel slot', async ({ page }) => {
+  // The fan-out PARENT draws the same pipeline chart in the graph slot; its
+  // Dev body (the wave grid) is the panel's, with no bordered l2-panel.
+  test('a fan-out parent draws the pipeline chart in the graph slot and the wave grid in the panel slot', async ({ page }) => {
     await openTask(page, FANOUT_SLUG)
 
     const fanout = page.getByTestId('detail-fanout')
-    const graphSlot = fanout.getByTestId('detail-graph-slot')
-    // M3: the wave grid is a React Flow canvas now.
-    await expect(graphSlot.getByTestId('milestone-flow')).toBeVisible()
-    await expect(fanout.getByTestId('detail-panel-slot')).toBeEmpty()
+    await expect(fanout.getByTestId('detail-graph-slot').getByTestId('pipeline-chart')).toBeVisible()
+    await expect(fanout.getByTestId('detail-panel-slot').getByTestId('wave-graph')).toBeVisible()
+    await expect(fanout.getByTestId('l2-panel')).toHaveCount(0)
   })
 })
 
@@ -127,7 +125,8 @@ test.describe('react task detail: typed action API observability', () => {
 
     await openTask(page, FLAT_SLUG)
     await page.getByTestId('task-detail').getByTestId('card-menu-btn').click()
-    const btn = page.getByTestId('task-detail').getByTestId('mark-done-btn')
+    // The menu is portalled out of task-detail; PanelButtons renders a mark-done-btn of its own.
+    const btn = page.getByTestId('card-menu').getByTestId('mark-done-btn')
     await btn.click()
 
     await expect(btn).toHaveText('no server')

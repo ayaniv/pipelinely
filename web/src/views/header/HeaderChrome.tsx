@@ -17,10 +17,10 @@ export function HeaderChrome() {
   const { data } = useSnapshot()
   return (
     <FrameSlot containerId="header-chrome">
+      <SpendPill spend={sumScopeCost(activeTasksOf(data?.tasks ?? []))} />
       <div className="header-ctx-slot" id="header-ctx-slot">
         {data && <OrchestratorPill ctx={data.orchestratorContextPct ?? null} isCanonical={data.isCanonical} />}
       </div>
-      <SpendPill spend={sumScopeCost(activeTasksOf(data?.tasks ?? []))} />
       <LivePill />
       <AutoSubmitToggle />
       <ThemeToggle />

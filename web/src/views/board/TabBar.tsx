@@ -1,16 +1,16 @@
 import type { ReactNode } from 'react'
-import { AccountAvatarIcon, AccountChevronIcon, ActiveTabIcon, BacklogTabIcon, DoneTabIcon } from '../../components/icons'
+import { ActiveTabIcon, BacklogTabIcon, DoneTabIcon } from '../../components/icons'
 import type { BoardTab } from './boardTabRoutes'
 
-// The sidebar's tab bar: the three counted tabs, plus the account row that is
-// the You tab's trigger (it has no count, so it was never a .tab-btn). Each
-// count lives in its own pill and nowhere else, so it is never rendered
-// twice. Class names, data-tab and testids are exactly the design's —
-// the stylesheet, the panels' toggling and ~a dozen specs key off them.
+// The sidebar's tab bar: the three counted tabs. Each count lives in its own
+// pill and nowhere else, so it is never rendered twice. Class names, data-tab
+// and testids are exactly the design's — the stylesheet, the panels' toggling
+// and ~a dozen specs key off them. The Usage tab has no count, so it is not
+// here: its trigger lives in the account group (SidebarAccount.tsx).
 
 const UNLOADED_COUNT = '–'
 
-export type CountedTab = Exclude<BoardTab, 'you'>
+export type CountedTab = Exclude<BoardTab, 'usage'>
 
 interface CountedTabDefinition {
   tab: CountedTab
@@ -20,12 +20,13 @@ interface CountedTabDefinition {
 
 const COUNTED_TABS: CountedTabDefinition[] = [
   { tab: 'inprogress', label: 'Active', icon: <ActiveTabIcon /> },
-  { tab: 'backlog', label: 'Backlog', icon: <BacklogTabIcon /> },
   { tab: 'done', label: 'Done', icon: <DoneTabIcon /> },
+  { tab: 'backlog', label: 'Backlog', icon: <BacklogTabIcon /> },
 ]
 
 export interface TabBarProps {
-  activeTab: BoardTab
+  // null: the page showing is none of the tabs (the Bookmarks page), so none is current.
+  activeTab: BoardTab | null
   // null until the first snapshot: an unloaded count is not zero.
   counts: Record<CountedTab, number | null>
   onSelectTab: (tab: BoardTab) => void
@@ -51,28 +52,5 @@ export function TabBar({ activeTab, counts, onSelectTab }: TabBarProps) {
         </button>
       ))}
     </>
-  )
-}
-
-export interface SidebarAccountProps {
-  activeTab: BoardTab
-  onSelectTab: (tab: BoardTab) => void
-}
-
-export function SidebarAccount({ activeTab, onSelectTab }: SidebarAccountProps) {
-  return (
-    <button
-      type="button"
-      className={`sidebar-account${activeTab === 'you' ? ' is-active' : ''}`}
-      data-tab="you"
-      data-testid="sidebar-account"
-      aria-label="You"
-      aria-current={activeTab === 'you' ? 'page' : undefined}
-      onClick={() => onSelectTab('you')}
-    >
-      <div className="sidebar-avatar" aria-hidden="true"><AccountAvatarIcon /></div>
-      <span className="sidebar-account-name">You</span>
-      <AccountChevronIcon />
-    </button>
   )
 }

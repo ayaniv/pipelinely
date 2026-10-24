@@ -4,6 +4,7 @@ import type { Task } from '../../../../src/types'
 import { postHandover } from '../../api/actions'
 import { CardMenu } from '../../components/CardMenu'
 import { CopySlugButton } from '../../components/CopySlugButton'
+import { Creature } from '../../components/Creature'
 import { CtxMeter } from '../../components/CtxMeter'
 import { DetailMetaRow } from '../../components/DetailMetaRow'
 import { FocusButton } from '../../components/FocusButton'
@@ -11,13 +12,17 @@ import { FrameSlot } from '../../components/FrameSlot'
 import { HandoverPill } from '../../components/HandoverPill'
 import { BackArrowIcon, DesignBranchIcon } from '../../components/icons'
 import { ParentLinkChip } from '../../components/ParentLinkChip'
+import { StageSummaryCallout } from '../../components/StageSummaryCallout'
 import { clientState, useClientState } from '../../data/clientState'
+import { useCreaturePlacement } from '../../data/creaturePlacement'
 import { useSnapshot } from '../../data/snapshot'
 import { ctxIsHot } from '../../format'
 import { RESULT_TAB_ID } from '../../resultTab'
+import { cardStageView } from '../../stageView'
 import { closeTaskDetail, navigateToTask } from '../../shell/appNavigation'
-import { detailMetaPairs, detailStatusInfo, isFanoutParent } from '../../taskScope'
+import { detailMetaPairs, detailStatusInfo, isFanoutParent, isTaskWorking } from '../../taskScope'
 import { useBodyClass } from '../../useBodyClass'
+import { CardStatusPill } from '../board/CardStatusPill'
 import { TaskDetailNavProvider, useTaskDetailNavState } from './detailNav'
 import { GraphSlot, preloadGraphs } from './graph/GraphSlot'
 import { ParentStepper } from './ParentStepper'
@@ -27,6 +32,9 @@ import { TASK_VIEW_PANEL_ID, TaskViewTabs, taskViewTabId, type TaskView } from '
 import { SessionsSection } from './SessionsSection'
 import { TaskAutoModeSelect } from './TaskAutoModeSelect'
 import { useCloseWhenTaskGone } from './useCloseWhenTaskGone'
+
+const DETAIL_CREATURE_SIZE_PX = 30
+const DETAIL_PILL_TEST_IDS = { pill: 'detail-stage-pill', dot: 'detail-stage-dot' }
 
 // The task-detail page: the frame (title, status line, ctx row, meta row,
 // actions, card menu), the graph slot (stage chain, or a fan-out parent's
@@ -96,6 +104,9 @@ function TaskDetailView({ task }: { task: Task }) {
 
   const isOffFocus = clientState.isOffFocus(task.slug)
   const statusInfo = detailStatusInfo(task, isOffFocus)
+  const stageView = cardStageView(task)
+  const creature = useCreaturePlacement() === 'header' ? task.creature : null
+  const summary = stageView.attention === 'needs-you' ? stageView.summary : null
   const isShelved = task.status === 'shelved'
   const isFanout = isFanoutParent(task)
   const ctx = task.contextPct ?? null
@@ -129,8 +140,21 @@ function TaskDetailView({ task }: { task: Task }) {
             <div className="detail-head-text">
               <div className="detail-title-row">
                 <div className="detail-status-line" data-testid="detail-status-line">
-                  <span className={`detail-status-dot${statusInfo.isWorking ? ' is-live' : ''}`} style={{ background: statusInfo.meta.dot }} />
-                  <span className="detail-status-label" style={{ color: statusInfo.meta.fg }}>{statusInfo.meta.label.toLowerCase()}</span>
+                  {creature && (
+                    <span className="detail-creature" data-testid="detail-creature">
+                      <Creature creature={creature} size={DETAIL_CREATURE_SIZE_PX} isWorking={isTaskWorking(task)} />
+                      <span className="creature-name" data-testid="creature-name">{creature.name}</span>
+                    </span>
+                  )}
+                  <CardStatusPill task={task} testIds={DETAIL_PILL_TEST_IDS} />
+                  <span
+                    className="detail-attention"
+                    data-testid="detail-attention"
+                    data-attention={task.attentionStatus}
+                    style={{ color: statusInfo.meta.fg }}
+                  >
+                    {statusInfo.meta.label.toLowerCase()}
+                  </span>
                   {statusInfo.tag && (
                     <span className="detail-tag-pill" style={{ background: statusInfo.tag.bg, color: statusInfo.tag.fg }}>{statusInfo.tag.label}</span>
                   )}
@@ -142,6 +166,11 @@ function TaskDetailView({ task }: { task: Task }) {
                 <span className="detail-slug-value">{task.slug}</span>
                 <CopySlugButton slug={task.slug} />
               </div>
+              {summary && (
+                <div className="detail-summary-slot">
+                  <StageSummaryCallout summary={summary} tone={stageView.tone} icon={stageView.summaryIcon} testId="detail-summary" />
+                </div>
+              )}
               <div className="detail-parent-link-row" data-testid="detail-parent-link-row">
                 <ParentLinkChip projectTitle={task.projectTitle} projectBase={task.projectBase} testId="detail-parent-link" onNavigate={navigateToTask} />
               </div>

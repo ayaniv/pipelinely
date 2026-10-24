@@ -7,10 +7,9 @@ import { TOKEN, DESKTOP, MOBILE, cssOf } from './fixtures/designTokens'
 //
 // Three things change here.
 //
-// 1. SECTION HEADER ART. The design's Needs you / Working headers each open
-//    with a 36px PNG (`art/head-beige-v3.png` and `art/head-blue-v3.png`,
-//    Dashboard v2 line 217) at gap 6px and `margin-right:-2px`. This repo
-//    rendered the label and count with no art at all.
+// 1. SECTION HEADER ART. v2 opened each header with a 36px PNG. Pipelinely
+//    Dashboard v4 (like v3) drops it: the header is the label, the count and
+//    the rule (dashboard-v4-table-design-alignment).
 // 2. THE CTX ROW IS THE DESIGN'S, EXACTLY. The design's row is `ctx · meter ·
 //    NN%` plus either the inline terminal button (working cards) or the
 //    Handover pill (hot ctx) — nothing else. This repo also rendered inline
@@ -39,28 +38,22 @@ const card = (page: import('@playwright/test').Page, slug: string) =>
   page.locator(`[data-testid="task-card"][data-slug="${slug}"]`)
 
 test.describe('section headers', () => {
-  test('each group opens with its own 36px design art', async ({ page }) => {
+  test('neither group heading carries creature art any more (v4)', async ({ page }) => {
     await page.goto('/')
 
-    const needsArt = page.getByTestId('active-group-needs').locator('.active-group-art')
-    await expect(needsArt).toBeVisible()
-    expect(await cssOf(needsArt, 'background-image')).toContain('head-beige-v3.png')
-    expect(await cssOf(needsArt, 'width')).toBe('36px')
-    expect(await cssOf(needsArt, 'height')).toBe('36px')
-
-    const workingArt = page.getByTestId('active-group-working').locator('.active-group-art')
-    await expect(workingArt).toBeVisible()
-    expect(await cssOf(workingArt, 'background-image')).toContain('head-blue-v3.png')
+    for (const group of ['active-group-needs', 'active-group-working']) {
+      const heading = page.getByTestId(group).getByTestId('active-group-header')
+      await expect(heading).toBeVisible()
+      expect(await heading.evaluate((el) => el.querySelector('[style*="background-image"]'))).toBeNull()
+    }
   })
 
   // The design's own header row: `align-items:center; gap:6px; margin:0 4px
-  // 14px`. This repo drifted to baseline alignment and an 8px gap, which
-  // reads visibly differently once a 36px image is the tallest thing in the
-  // row.
+  // 14px`. This repo once drifted to baseline alignment and an 8px gap.
   test('the header row uses the design\'s alignment, gap and margins', async ({ page }) => {
     await page.goto('/')
 
-    const header = page.getByTestId('active-group-working').locator('.active-group-header')
+    const header = page.getByTestId('active-group-working').getByTestId('active-group-header')
     expect(await cssOf(header, 'align-items')).toBe('center')
     expect(await cssOf(header, 'column-gap')).toBe('6px')
     expect(await cssOf(header, 'margin-top')).toBe('0px')
@@ -85,12 +78,14 @@ test.describe('session card ctx row', () => {
   })
 
   // The cold half of the design's one hot-context rule (`ctx > 60`), on the
-  // same shared meter the header's hot case exercises.
-  test('a cold context renders the meter in accent, not amber', async ({ page }) => {
+  // same shared meter the header's hot case exercises. Since v3 the fill is
+  // the card's stage tone (`ctxColor: t.c`), so a cold dev card fills in
+  // --devC; v2's accent fill predates the stage palette.
+  test('a cold context fills the meter in its stage tone, not amber', async ({ page }) => {
     await page.goto('/')
 
     const row = card(page, WORKING_SLUG).locator('.card-ctx-row')
-    expect(await cssOf(row.getByTestId('ctx-meter-fill'), 'background-color')).toBe(TOKEN.accent)
+    expect(await cssOf(row.getByTestId('ctx-meter-fill'), 'background-color')).toBe(TOKEN.devC)
     expect(await cssOf(row.getByTestId('ctx-meter'), 'background-color')).toBe(TOKEN.surface2)
     expect(await cssOf(row.getByTestId('ctx-value'), 'color')).toBe(TOKEN.text2)
   })
@@ -116,10 +111,16 @@ test.describe('card menu', () => {
   test('the menu opens at the design\'s own offset', async ({ page }) => {
     await page.goto('/')
 
-    await card(page, WAITING_SLUG).getByTestId('card-menu-btn').click()
-    const menu = card(page, WAITING_SLUG).getByTestId('card-menu')
+    const trigger = card(page, WAITING_SLUG).getByTestId('card-menu-btn')
+    await trigger.click()
+    // The menu is portalled into document.body (fixed), so it is looked up from the page
+    // and its offset is measured from the trigger's own box.
+    const menu = page.getByTestId('card-menu')
     await expect(menu).toBeVisible()
-    expect(await cssOf(menu, 'top')).toBe('32px')
+    const [triggerBox, menuBox] = await Promise.all([trigger.boundingBox(), menu.boundingBox()])
+    const MENU_GAP_PX = 6
+    expect(Math.abs(menuBox!.y - (triggerBox!.y + triggerBox!.height) - MENU_GAP_PX)).toBeLessThanOrEqual(1)
+    expect(Math.abs(menuBox!.x + menuBox!.width - (triggerBox!.x + triggerBox!.width))).toBeLessThanOrEqual(1)
     expect(await cssOf(menu, 'min-width')).toBe('168px')
     expect(await cssOf(menu, 'border-radius')).toBe('12px')
     expect(await cssOf(menu, 'border-top-color')).toBe(TOKEN.border2)

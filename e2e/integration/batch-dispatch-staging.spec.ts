@@ -1,27 +1,38 @@
 import { test, expect } from '@playwright/test'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { withOrchestratorSessionLock } from '../fixtures/orchestratorSessionLock.js'
-import { openScratchSession, closeScratchSession, readSessionContents } from '../fixtures/itermSessions.js'
+import {
+  openScratchSession,
+  closeScratchSession,
+  attachSessionToTmux,
+  createOrchestratorTmuxSession,
+  readTmuxPaneContents,
+  killTmuxSession,
+  tmuxEnterWasPressed,
+} from '../fixtures/itermSessions.js'
 import { startCanonicalServer, stopCanonicalServer } from '../fixtures/canonicalServer.js'
 
 // The mechanism proof for "batch dispatch stages, never auto-submits" — the
 // half a route mock cannot give. e2e/batch-dispatch-staging.spec.ts (`ui`
 // project) proves the dashboard sends ONE /batch-dispatch; this proves what
-// that request actually does to a real iTerm2 session.
+// that request actually does to a real tmux pane.
 //
 // Incident this exists for (2026-09-06): "Run wave" on
 // pipelinely-dashboard-redesign's wave 2 auto-submitted two real
 // `/pipelinely-dev <slug>` commands into the developer's live, attended
-// orchestrator session — via writeToOrchestrator(text, pasteIntoSession),
-// which types the text and then writes a second, empty `newline yes` to press
-// Return. The fix routes both batch paths through stageInSession instead
-// (`newline no`), the posture /stage-skill/:slug already uses.
+// orchestrator session — via a write that pressed Return after typing. The
+// fix routes both batch paths through the 'stage' write mode (paste, no
+// Enter), the posture /stage-skill/:slug already uses.
 //
 // A route mock can distinguish neither "staged" from "submitted" nor "one
 // combined command" from "two concatenated ones" — only reading a real
-// session's contents can. Same precedent as backlog-batch-dispatch.spec.ts,
+// pane can. The scratch orchestrator is a uniquely named tmux session running
+// a fake claude that never reads its tty, so the tty just echoes what the
+// server pastes: staged text leaves the cursor right after it, a pressed
+// Enter returns the cursor to column 0. Same precedent as backlog-batch-dispatch.spec.ts,
 // wave-batch-run.spec.ts and qa-case-list.spec.ts.
 //
 // VM-only: importing ../fixtures/itermSessions.js runs
@@ -33,14 +44,28 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const TASKS_DIR = path.join(__dirname, '..', 'fixtures', 'tasks')
 const ORCHESTRATOR_SESSION_PATH = path.join(TASKS_DIR, 'ORCHESTRATOR_SESSION')
 
-// A shell prompt line ends with the shell's own marker; a submitted command
-// leaves the pane with the typed text followed by a NEW prompt (or the
-// command's own output) after it. Staged text is the last thing on the pane
-// with nothing after it — that difference is the entire assertion of this
-// file, so it is computed one way, here, rather than re-derived per test.
-function stagedTextIsUnsent(contents: string, stagedText: string): boolean {
-  const trimmed = contents.replace(/\s+$/, '')
-  return trimmed.endsWith(stagedText.replace(/\s+$/, ''))
+const ORCHESTRATOR_TMUX_PATH = path.join(TASKS_DIR, 'ORCHESTRATOR_TMUX')
+
+// Batch dispatch is a 'stage' write, which focuses the tab attached to the
+// orchestrator's tmux session. Attaching a scratch tab up front keeps the
+// server from opening a window this spec cannot clean up.
+async function withTmuxOrchestrator(fn: (tmuxName: string) => Promise<void>): Promise<void> {
+  await withOrchestratorSessionLock(async () => {
+    const tmuxName = `cockpit-e2e-batch-${randomUUID().slice(0, 8)}`
+    await createOrchestratorTmuxSession(tmuxName)
+    const attachedTabId = await openScratchSession()
+    try {
+      await attachSessionToTmux(attachedTabId, tmuxName)
+      await fs.writeFile(ORCHESTRATOR_TMUX_PATH, tmuxName + '\n')
+      await fn(tmuxName)
+    } finally {
+      await fs.rm(ORCHESTRATOR_TMUX_PATH, { force: true })
+      // The server re-records the attached tab here after a write.
+      await fs.rm(ORCHESTRATOR_SESSION_PATH, { force: true })
+      await closeScratchSession(attachedTabId)
+      await killTmuxSession(tmuxName)
+    }
+  })
 }
 
 async function postBatch(baseURL: string, body: unknown): Promise<number> {
@@ -69,18 +94,14 @@ test.afterAll(async () => {
 
 test.describe('batch dispatch stages one unsent command in a real session', () => {
   test('a two-milestone wave batch leaves ONE combined command sitting unsent at the prompt', async () => {
-    await withOrchestratorSessionLock(async () => {
-      const sessionId = await openScratchSession()
-      try {
-        await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
-
+    await withTmuxOrchestrator(async (tmuxName) => {
         const status = await postBatch(canonicalUrl, {
           kind: 'wave',
           slugs: ['wave-batch-parent-m1', 'wave-batch-parent-m2'],
         })
         expect(status).toBe(200)
 
-        const contents = await readSessionContents(sessionId)
+        const contents = await readTmuxPaneContents(tmuxName)
 
         // One command carrying both milestones — not two separate ones.
         expect(contents).toContain('/pipelinely-dev wave-batch-parent-m1')
@@ -90,25 +111,17 @@ test.describe('batch dispatch stages one unsent command in a real session', () =
         // The regression that matters: it is STILL AT THE PROMPT. Before the
         // fix this text would have been submitted and gone, replaced by two
         // real dispatches spawning two real worktrees.
-        expect(stagedTextIsUnsent(contents, '/pipelinely-dev wave-batch-parent-m2')).toBe(true)
-      } finally {
-        await closeScratchSession(sessionId)
-        await fs.rm(ORCHESTRATOR_SESSION_PATH, { force: true })
-      }
+        expect(await tmuxEnterWasPressed(tmuxName)).toBe(false)
     })
   })
 
   test('a backlog batch whose item context spans a line break still stages a single unbroken line', async () => {
-    await withOrchestratorSessionLock(async () => {
-      const sessionId = await openScratchSession()
-      try {
-        await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
-
-        // The safety invariant, exercised end to end: an embedded newline
-        // reaches iTerm2 as a real LF keystroke (escapeForAppleScriptString
-        // maps \n through to the AppleScript literal), which IS a submit. A
-        // BACKLOG.md entry's context legitimately sits on its own line, so
-        // composeBatchMessage must collapse it before it ever gets here.
+    await withTmuxOrchestrator(async (tmuxName) => {
+        // The safety invariant, exercised end to end: a BACKLOG.md entry's
+        // context legitimately sits on its own line, and an embedded newline
+        // would split the staged command in two (and show up in Claude Code
+        // as an opaque pasted-text block), so composeBatchMessage must
+        // collapse it before it ever gets here.
         const status = await postBatch(canonicalUrl, {
           kind: 'backlog',
           items: [
@@ -118,26 +131,21 @@ test.describe('batch dispatch stages one unsent command in a real session', () =
         })
         expect(status).toBe(200)
 
-        const contents = await readSessionContents(sessionId)
+        const contents = await readTmuxPaneContents(tmuxName)
         expect(contents).toContain('First integration item')
         expect(contents).toContain('Second integration item')
+        // capture-pane -J joins soft wraps only, so a surviving newline would
+        // break this one-line match.
+        expect(contents).toContain('context line one and line two')
         // The words the orchestrator's promote flow keys on
         // (orchestrator-prompt.md) must survive composition.
         expect(contents).toContain('backlog items')
-        expect(stagedTextIsUnsent(contents, 'Second integration item')).toBe(true)
-      } finally {
-        await closeScratchSession(sessionId)
-        await fs.rm(ORCHESTRATOR_SESSION_PATH, { force: true })
-      }
+        expect(await tmuxEnterWasPressed(tmuxName)).toBe(false)
     })
   })
 
   test('two batches staged back-to-back concatenate visibly but neither is ever submitted', async () => {
-    await withOrchestratorSessionLock(async () => {
-      const sessionId = await openScratchSession()
-      try {
-        await fs.writeFile(ORCHESTRATOR_SESSION_PATH, sessionId + '\n')
-
+    await withTmuxOrchestrator(async (tmuxName) => {
         // tech-design.md's "Requirement 3" decision, proved rather than
         // assumed: batch dispatch takes /stage-skill/:slug's posture, which
         // has no pending guard either — a second batch typed before the
@@ -147,17 +155,13 @@ test.describe('batch dispatch stages one unsent command in a real session', () =
         expect(await postBatch(canonicalUrl, { kind: 'wave', slugs: ['wave-batch-parent-m1'] })).toBe(200)
         expect(await postBatch(canonicalUrl, { kind: 'backlog', items: [{ description: 'Second batch item' }] })).toBe(200)
 
-        const contents = await readSessionContents(sessionId)
+        const contents = await readTmuxPaneContents(tmuxName)
         expect(contents).toContain('/pipelinely-dev wave-batch-parent-m1')
         expect(contents).toContain('Second batch item')
 
         // Neither batch ran. The second batch's text is the last thing on the
         // pane, so no Return was ever pressed for either.
-        expect(stagedTextIsUnsent(contents, 'Second batch item')).toBe(true)
-      } finally {
-        await closeScratchSession(sessionId)
-        await fs.rm(ORCHESTRATOR_SESSION_PATH, { force: true })
-      }
+        expect(await tmuxEnterWasPressed(tmuxName)).toBe(false)
     })
   })
 })

@@ -1,7 +1,7 @@
 import type { DoneDateGroup } from '../../../../src/types'
 import { localDateKey } from '../../../../src/dateKey'
 
-// The You tab's GitHub-style work-density calendar, as data.
+// The Usage tab's GitHub-style work-density calendar, as data.
 
 export const DENSITY_WEEKS = 53
 const DAYS_PER_WEEK = 7

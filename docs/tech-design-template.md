@@ -20,7 +20,7 @@ Explain the feature briefly
 
 ### Timetable
 
-Plan what you are going to do each day, including when it will be in qa, cr, plan an extra day for fixes for each milestone
+Plan what you are going to do each day, in the pipeline's order: dev → CR → CR fixes → QA → QA fixes → merge. Plan an extra day for fixes in each milestone.
 
 ### Resources
 

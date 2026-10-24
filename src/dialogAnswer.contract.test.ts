@@ -31,8 +31,10 @@ describe('who may type into a worker pane', () => {
     expect(filesMatching(/\banswerDialog\(/)).toEqual(['dialogAnswer.ts', 'server.ts'])
   })
 
-  it('references sendKeysToPane only in the answer module and its own definition', () => {
-    expect(filesMatching(/\bsendKeysToPane\b/)).toEqual(['dialogAnswer.ts', 'focusTab.ts'])
+  // tmuxPaneWrite.ts is the dispatch writer: its only keystroke is the Enter that submits a paste it just made, sent to
+  // a pane id it pinned and re-checked for a dialog first.
+  it('references sendKeysToPane only in the answer module, the dispatch writer and its own definition', () => {
+    expect(filesMatching(/\bsendKeysToPane\b/)).toEqual(['dialogAnswer.ts', 'focusTab.ts', 'tmuxPaneWrite.ts'])
   })
 
   it('spells the tmux write subcommand in focusTab.ts and nowhere else', () => {

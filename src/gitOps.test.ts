@@ -3,7 +3,7 @@ import { execa } from 'execa'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { findPrByBranch, readPrHeadBranch, mergePullRequest, deleteRemoteBranch, removeWorktreeAndBranch, commitAndRemoveWorktree, listBranchChangedFiles } from './gitOps.js'
+import { findPrByBranch, readPrHeadBranch, mergePullRequest, deleteRemoteBranch, removeWorktreeAndBranch, commitAndRemoveWorktree, listBranchChangedFiles, resolveBaseRef } from './gitOps.js'
 
 // Defaults to the REAL execa (every existing test above keeps shelling out
 // to real git, unaffected) — a test that needs a deterministic `gh` result
@@ -434,5 +434,46 @@ describe('listBranchChangedFiles', () => {
     expect(await listBranchChangedFiles(path.join(path.dirname(repoPath), 'missing'))).toBeNull()
     expect(errorSpy).toHaveBeenCalled()
     errorSpy.mockRestore()
+  })
+})
+
+describe('resolveBaseRef', () => {
+  let repoPath: string
+
+  async function git(...args: string[]) {
+    await execa('git', args, { cwd: repoPath })
+  }
+
+  beforeEach(async () => {
+    repoPath = await fs.mkdtemp(path.join(os.tmpdir(), 'gitops-base-'))
+    await git('init', '-q', '-b', 'work')
+    await git('config', 'user.email', 'test@example.com')
+    await git('config', 'user.name', 'Test')
+    await git('commit', '-q', '--allow-empty', '-m', 'init')
+  })
+
+  afterEach(async () => {
+    await fs.rm(repoPath, { recursive: true, force: true })
+  })
+
+  it('names the branch origin/HEAD points at, not origin/HEAD itself', async () => {
+    await git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+    await git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main')
+    expect(await resolveBaseRef(repoPath)).toBe('origin/main')
+  })
+
+  it('finds origin/main on a main-based repo with no origin/HEAD', async () => {
+    await git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+    expect(await resolveBaseRef(repoPath)).toBe('origin/main')
+  })
+
+  it('prefers origin/master over origin/main when both exist and nothing says which', async () => {
+    await git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+    await git('update-ref', 'refs/remotes/origin/master', 'HEAD')
+    expect(await resolveBaseRef(repoPath)).toBe('origin/master')
+  })
+
+  it('is null when no candidate exists', async () => {
+    expect(await resolveBaseRef(repoPath)).toBeNull()
   })
 })

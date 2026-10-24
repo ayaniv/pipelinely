@@ -2,17 +2,24 @@ import { describe, it, expect, beforeAll } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { SHELL_ROUTES, matchShellRoute, taskUrl } from './routes'
+import { SHELL_ROUTES, matchShellRoute, stripTrailingSlash, taskUrl } from './routes'
+
+describe('stripTrailingSlash', () => {
+  it.each([['/', '/'], ['/usage', '/usage'], ['/usage/', '/usage'], ['', '']])('%j becomes %j', (pathname, expected) => {
+    expect(stripTrailingSlash(pathname)).toBe(expected)
+  })
+})
 
 describe('matchShellRoute', () => {
   it.each([
     ['/', 'inprogress'],
     ['/backlog', 'backlog'],
     ['/done', 'done'],
-    ['/you', 'you'],
+    ['/usage', 'usage'],
     ['/settings', 'settings'],
     ['/help', 'help'],
     ['/docs', 'docs'],
+    ['/bookmarks', 'bookmarks'],
     ['/task/demo-task', 'task'],
     ['/task/with%20space', 'task'],
   ])('%s → %s', (pathname, id) => {
