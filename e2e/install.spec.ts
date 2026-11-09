@@ -10,7 +10,7 @@ import { commitAll, git, headSha, initGitRepo, makeTempDir, pathExists, porcelai
 // fake `git`/`npm` on PATH ahead of the real ones, so this suite never clones
 // a real remote or runs a real `npm install` — same reasoning as e2e/oss-dotfiles-install.spec.ts's real
 // tmux/plannotator binaries. Every other prerequisite install.sh preflights
-// (node's version, tmux, jq, gh + its auth, claude, uname, the iTerm2 app,
+// (node's version, tmux, jq, gh + its auth, claude, uname, the terminal app,
 // Homebrew's install prefixes) is stubbed the same way, present by default,
 // so each preflight case removes exactly the one thing it's about.
 
@@ -23,6 +23,8 @@ const BASE_PATH = '/usr/bin:/bin'
 const TMUX_BINARY = path.basename(path.join(REPO_ROOT, 'dotfiles', 'tmux'))
 const SUPPORTED_NODE_VERSION = '22.3.0'
 const UNSUPPORTED_NODE_VERSION = '18.19.0'
+const ITERM_APP = 'iTerm.app'
+const ORCA_APP = 'Orca.app'
 
 let home: string
 let dest: string
@@ -156,7 +158,7 @@ function runInstaller({ withStubBin, stubEnv = {} }: { withStubBin: boolean; stu
       HOME: home,
       PIPELINELY_DIR: dest,
       PATH: runtimePath,
-      // Where install.sh looks for iTerm.app and for a Homebrew install that
+      // Where install.sh looks for the terminal apps and for a Homebrew install that
       // isn't on PATH yet — pointed at throwaway dirs so the developer's own
       // /Applications and /opt/homebrew never decide a case's outcome.
       PIPELINELY_APP_DIRS: appsDir,
@@ -165,6 +167,17 @@ function runInstaller({ withStubBin, stubEnv = {} }: { withStubBin: boolean; stu
     },
     extendEnv: false,
   })
+}
+
+async function seedExistingCheckout() {
+  await git(home, ['clone', '-q', origin, dest])
+}
+
+// A new upstream commit, so the seeded checkout is one commit behind.
+async function advanceOrigin(): Promise<string> {
+  await writeFiles(origin, { 'src/server.ts': 'export const updated = true\n' })
+  await commitAll(origin, 'upstream change')
+  return headSha(origin)
 }
 
 test.beforeAll(async () => {
@@ -179,7 +192,7 @@ test.beforeEach(async () => {
   callLog = path.join(home, 'calls.log')
   appsDir = path.join(home, 'Applications')
   brewPrefix = path.join(home, 'homebrew')
-  await fs.mkdir(path.join(appsDir, 'iTerm.app'), { recursive: true })
+  await fs.mkdir(path.join(appsDir, ITERM_APP), { recursive: true })
   await createOrigin()
   await stubGit()
   await stubNpm()
@@ -251,21 +264,10 @@ test.describe('install.sh updating an existing checkout', () => {
     return (await git(dir, ['log', '-1', '--date=short', '--format=%cd'])).stdout.trim()
   }
 
-  async function seedExistingCheckout() {
-    await git(home, ['clone', '-q', origin, dest])
-  }
-
   // The state every existing user is in: only the lockfile an older installer's `npm install` rewrote.
   async function seedLockfileOnlyChange() {
     await seedExistingCheckout()
     await fs.appendFile(path.join(dest, 'package-lock.json'), 'rewritten by an old npm install\n')
-  }
-
-  // A new upstream commit, so the seeded checkout is one commit behind.
-  async function advanceOrigin(): Promise<string> {
-    await writeFiles(origin, { 'src/server.ts': 'export const updated = true\n' })
-    await commitAll(origin, 'upstream change')
-    return headSha(origin)
   }
 
   // The last stdout lines say which checkout, commit and version are installed.
@@ -632,13 +634,63 @@ test.describe('install.sh prerequisite preflight', () => {
     await expectNothingChanged()
   })
 
-  test('failure path: iTerm2 not installed — fix is the iterm2 cask', async () => {
-    await fs.rm(path.join(appsDir, 'iTerm.app'), { recursive: true })
+  test.describe('terminal app', () => {
+    const TERMINAL_OK_LINES = { [ITERM_APP]: '  ok  iTerm2', [ORCA_APP]: '  ok  Orca' }
+    const INSTALLED_APP_CASES = [
+      { name: 'only Orca', installedApps: [ORCA_APP] },
+      { name: 'only iTerm2', installedApps: [ITERM_APP] },
+      { name: 'both iTerm2 and Orca', installedApps: [ITERM_APP, ORCA_APP] },
+    ]
+    const INSTALLER_RUNS = [
+      { name: 'install', arrange: async () => {}, expectLeftAlone: expectNothingChanged },
+      {
+        name: 'update',
+        arrange: async () => {
+          await seedExistingCheckout()
+          await advanceOrigin()
+        },
+        expectLeftAlone: async () => {
+          expect(await headSha(dest)).not.toBe(await headSha(origin))
+          expect(await callsSoFar()).not.toContain('npm ')
+        },
+      },
+    ]
 
-    const result = await runInstaller({ withStubBin: true })
-    expect(result.exitCode).not.toBe(0)
-    expect(result.all).toContain('brew install --cask iterm2')
-    await expectNothingChanged()
+    async function setInstalledApps(installedApps: string[]) {
+      await fs.rm(path.join(appsDir, ITERM_APP), { recursive: true })
+      for (const app of installedApps) await fs.mkdir(path.join(appsDir, app), { recursive: true })
+    }
+
+    for (const run of INSTALLER_RUNS) {
+      for (const { name, installedApps } of INSTALLED_APP_CASES) {
+        test(`${name} — ${run.name} goes through and reports exactly what it found`, async () => {
+          await setInstalledApps(installedApps)
+          await run.arrange()
+
+          const result = await runInstaller({ withStubBin: true })
+
+          expect(result.exitCode, result.all).toBe(0)
+          expect(await headSha(dest)).toBe(await headSha(origin))
+          const outputLines = result.stdout.split('\n')
+          for (const [app, okLine] of Object.entries(TERMINAL_OK_LINES)) {
+            expect(outputLines.includes(okLine), okLine).toBe(installedApps.includes(app))
+          }
+        })
+      }
+
+      test(`failure path: neither terminal app — ${run.name} stops, naming both apps and the iterm2 cask`, async () => {
+        await setInstalledApps([])
+        await run.arrange()
+
+        const result = await runInstaller({ withStubBin: true })
+
+        expect(result.exitCode).not.toBe(0)
+        const missingLine = result.stderr.split('\n').find((line) => line.includes('brew install --cask iterm2'))
+        expect(missingLine, result.stderr).toContain('iTerm2')
+        expect(missingLine, result.stderr).toContain('Orca')
+        await run.expectLeftAlone()
+      })
+    }
   })
 
   test('failure path: not macOS — says macOS is required and stops', async () => {
@@ -718,8 +770,8 @@ test.describe('install.sh prerequisite preflight', () => {
 
   test('a home directory containing a space does not hide an installed iTerm2', async () => {
     const spacedHome = path.join(home, 'Jane Doe')
-    await fs.mkdir(path.join(spacedHome, 'Applications', 'iTerm.app'), { recursive: true })
-    await fs.rm(path.join(appsDir, 'iTerm.app'), { recursive: true })
+    await fs.mkdir(path.join(spacedHome, 'Applications', ITERM_APP), { recursive: true })
+    await fs.rm(path.join(appsDir, ITERM_APP), { recursive: true })
 
     // Explicit list shaped like the default (a system dir, then $HOME/Applications)
     // but never the real /Applications, so the developer's own iTerm2 can't satisfy it.
@@ -729,7 +781,7 @@ test.describe('install.sh prerequisite preflight', () => {
       withStubBin: true,
       stubEnv: { HOME: spacedHome, PIPELINELY_APP_DIRS: `${fakeSystemApps}:${spacedHome}/Applications` },
     })
-    expect(result.all).not.toContain('iTerm2 not found')
+    expect(result.stdout.split('\n')).toContain('  ok  iTerm2')
   })
 
   test('a successful run prints no watchdog job report', async () => {
