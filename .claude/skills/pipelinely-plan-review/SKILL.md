@@ -67,7 +67,7 @@ Periodically run `bash ~/Dev/pipelinely/scripts/write-metrics.sh` so the dashboa
 Follow `orchestrator-prompt.md` step 4's shared tab-opening procedure ("Reusable form" subsection) with:
 - `<tmux-name>`: `worker-<slug>-review` · `<launch-script>`: `launch-review.sh` (distinct from `launch.sh`, so planning's original dispatch record isn't overwritten)
 - Claim `ITERM_SESSION`/`TMUX_SESSION`: yes — there's no long-lived "home" tab to protect yet at this point in the pipeline (that starts at `pipelinely-dev`)
-- Worktree: **reuse existing** at `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>` — no new worktree/branch
+- Worktree: `<worktree-flags>` = `--worktree reuse --copy-task-md` — the existing worktree at `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>`; no new worktree or branch
 - `COCKPIT_STAGE`: `plan-review`
 - **`launch-review.sh`'s `claude` line must be `exec claude --model opus "<prompt>"`, not bare `exec claude`.** This stage requires Opus 5 (see this skill's own description — the entire point of the stage is a fresh, independent reviewer) — the shared form defaults to no model flag, so it does not get added unless stated here explicitly. Omitting it doesn't error, it just silently dispatches on the default model instead — confirm the flag is actually in `launch-review.sh` before opening the tab, don't just remember to add it.
 

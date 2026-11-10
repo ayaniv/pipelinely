@@ -50,7 +50,7 @@ Periodically run `bash ~/Dev/pipelinely/scripts/write-metrics.sh` so the dashboa
 Follow `orchestrator-prompt.md` step 4's shared tab-opening procedure ("Reusable form" subsection) with:
 - `<tmux-name>`: `worker-<slug>-adopt` · `<launch-script>`: `launch-adopt.sh`
 - Claim `ITERM_SESSION`/`TMUX_SESSION`: **no** (`--claim-pointers no`) — the merge already retired the dev tab, and this ephemeral session must not become what → Terminal points at.
-- Worktree: **none** — skip `git worktree add` and the `cp` of `TASK.md`; the embedded `claude` prompt reads `<resolved-tasks-dir>/<slug>/TASK.md` by absolute path.
+- Worktree: `<worktree-flags>` = `--worktree none` — the merge removed the worktree, so the session starts in the task dir and the prompt reads `<resolved-tasks-dir>/<slug>/TASK.md` by absolute path.
 - `COCKPIT_STAGE`: `adopt`
 
 ## Step 4 — Track

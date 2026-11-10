@@ -26,11 +26,20 @@ if [ "${COCKPIT_ROLE:-}" = "orchestrator" ]; then
   IS_ORCHESTRATOR=true
 fi
 
-PROJECT_SLUG=$(pwd | sed 's/\//-/g')
-TRANSCRIPT="$HOME/.claude/projects/${PROJECT_SLUG}/${CLAUDE_CODE_SESSION_ID:?CLAUDE_CODE_SESSION_ID not set}.jsonl"
+# Search by session id, not by `pwd`: the transcript folder is named after the
+# dir the session started in (with every non-alphanumeric character as '-'),
+# and the Bash tool's cwd can be a subdir of it. Session ids are UUIDs, so the
+# first match is the only one. An unmatched glob stays literal, so test -f.
+TRANSCRIPT=""
+for candidate in "$HOME"/.claude/projects/*/"${CLAUDE_CODE_SESSION_ID:?CLAUDE_CODE_SESSION_ID not set}.jsonl"; do
+  if [ -f "$candidate" ]; then
+    TRANSCRIPT="$candidate"
+    break
+  fi
+done
 
-if [ ! -f "$TRANSCRIPT" ]; then
-  echo "write-metrics.sh: transcript not found at $TRANSCRIPT" >&2
+if [ -z "$TRANSCRIPT" ]; then
+  echo "write-metrics.sh: transcript not found for session $CLAUDE_CODE_SESSION_ID in $HOME/.claude/projects/*/" >&2
   exit 1
 fi
 

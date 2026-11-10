@@ -38,7 +38,7 @@ Fresh, adversarial QA pass against an already-open PR. Test as an outsider, not 
 The e2e tests planning wrote already exist in this worktree; DEV_URL is already recorded.
 
 ## Steps
-1. `cd` into the **same existing worktree** at `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>` — do not create a new worktree or branch, this is the same code under fresh eyes, not a fork of it.
+1. Work in the **same existing worktree** at `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>` (this session starts there) — do not create a new worktree or branch, this is the same code under fresh eyes, not a fork of it.
 2. Test as an adversarial outsider — don't read the dev session's reasoning or assume the implementation is correct because it exists.
 3. Run the e2e tests against the `DEV_URL` recorded for this task.
 4. Write `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>/QA_REPORT.md` (the tasks dir, **not** the worktree — the dashboard only reads from the tasks dir) in this exact format: `<n> of <m> cases failed` / `all <m> cases passed`, then a `### Failing Cases (<n>)` section with `` - [Label] What broke — `path/to/file.ts:42` `` bullets (omit that section entirely when nothing failed), followed by a `### Passing Cases (<m-n>)` section listing every passing case in the same bullet shape — `` - [Label] What it verified — `path/to/file.ts:42` `` — always, even when everything passed, so the dashboard can show the full case list, not just failures (`QaCase` / `parseQaCases` in `src/taskParser.ts`). **The trailing `path:line` MUST be backtick-quoted, exactly as shown above** — the dashboard's parser tolerates a bare, unquoted path too, but only as a fallback of last resort; a bullet that's malformed in some other way still silently drops even with that leniency, so always write the backtick-quoted form and never rely on it.
@@ -66,7 +66,7 @@ Periodically run `bash ~/Dev/pipelinely/scripts/write-metrics.sh` so the dashboa
 Follow `orchestrator-prompt.md` step 4's shared tab-opening procedure ("Reusable form" subsection) with:
 - `<tmux-name>`: the line printed by `npm --prefix $HOME/Dev/pipelinely run --silent babysit -- tmux-name worker-<slug>-qa` (`worker-<slug>-qa`, or `-qa2`, `-qa3` when a finished QA session still holds the name — never kill it to reuse the name) · `<launch-script>`: `launch-qa.sh` (distinct filename, so the dev tab's own `launch.sh` isn't touched)
 - Claim `ITERM_SESSION`/`TMUX_SESSION`: **no** — deliberately skip that part of the procedure. Those must keep pointing at the dev tab, which is what `pipelinely-qa-fixes` returns to and what the dashboard's → Terminal button reaches.
-- Worktree: **reuse existing** at `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>` — no new worktree/branch
+- Worktree: `<worktree-flags>` = `--worktree reuse --copy-task-md` — the existing worktree at `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>`; no new worktree or branch
 - `COCKPIT_STAGE`: `qa`
 
 ## Step 4 — Track

@@ -11,6 +11,7 @@
     "babysit": "tsx src/babysitCli.ts",
     "worktree-sweep": "tsx src/worktreeSweepCli.ts",
     "stage-brief": "tsx src/stageBriefCli.ts",
+    "worker-start-dir": "tsx src/workerStartDirCli.ts",
     "dev-guard": "tsx src/devGuardCli.ts",
     "pipelinely-onboard": "tsx src/pipelinelyOnboardCli.ts",
     "repos-dir": "tsx src/reposDirCli.ts",

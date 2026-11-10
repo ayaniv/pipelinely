@@ -5,9 +5,11 @@
 
 ## Summary
 
-Each worker's `launch.sh` now prepares or finds the task's worktree before it starts `claude`, and starts `claude` in that worktree, not in the task dir. A new CLI, `npm run worker-start-dir`, does the git work in the worker's own tab. It prints the directory to start in. If the setup fails, it stops with a visible error and writes the cause to `STATUS` and `TIMELINE`. With this change, a plain `git commit`, `git push` and `gh pr create` run from the worktree: the Neo core hook sees a linked worktree, the user's allow rules match, and the target repo's `.claude/` loads.
+Each worker's `launch.sh` now prepares or finds the task's worktree before it starts `claude`, and starts `claude` in that worktree, not in the task dir. A new CLI, `npm run worker-start-dir`, does the git work in the worker's own tab. It prints the directory to start in. If the setup fails, it stops with a visible error and writes the cause to `STATUS` and `TIMELINE`. With this change, a plain `git commit`, `git push` and `gh pr create` run from the worktree: the Neo core hook sees a linked worktree, the user's allow rules match, and the target repo's `.claude/` loads. The change also finds the metrics transcript by session id, so the start dir no longer matters to `write-metrics.sh`. It goes to `ayaniv/pipelinely` as one PR, and the private `neo-setup-adaptation` milestones M0 and M1 rebase onto it.
 
-**QA Spec:** e2e/worker-start-dir.spec.ts
+## QA spec
+
+`e2e/worker-start-dir.spec.ts`
 
 ## Shape
 
@@ -47,6 +49,7 @@ npm --prefix "$HOME/Dev/pipelinely" run --silent worker-start-dir -- \
 ```
 
 - Slug = `basename(--task-dir)`. Repo checkout = `$REPOS_DIR/<repo>` (launch.sh exports `REPOS_DIR`). Worktree = `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>`. launch.sh unsets `WORKTREES_DIR`, so a worker uses the default, the same as today.
+- Compute the worktree path in one function, `worktreePathFor(repoDir, slug, branch)`, and do the `create` git steps in one function, `createWorktree(...)`. M0 of `neo-setup-adaptation` replaces these two with its `resolveWorktree` (`path` and `create` from `.pipelinely/pipeline.yml`). See "Overlap with neo-setup-adaptation".
 - stdout: one line, the absolute directory to start in. Nothing else goes to stdout.
 - `none`: prints the task dir. It runs no git. (adopt: the merge removed the worktree. The task dir is the start dir, as today. We do not start in the primary checkout, because a session there could commit to the default branch.)
 - `reuse`: the worktree must exist and be a worktree of the repo on `<branch>`. Else, fail. It never creates a worktree, because a missing worktree at qa/cr time is a problem that a person must look at.
@@ -95,6 +98,10 @@ exec claude "Read <resolved-tasks-dir>/<task-slug>/TASK.md. This session starts 
 | `pipelinely-adopt`, ad-hoc research task with no repo | `--worktree none` |
 
   For `--worktree none` with no repo, the template still passes `--repo`/`--branch`. The CLI ignores them in `none` mode. Replace the "Reuse-worktree `TASK.md` refresh" note with one sentence: `--copy-task-md` does that refresh on every dispatch.
+- Update the other `orchestrator-prompt.md` text that says the worker makes the worktree or `cd`s into it:
+  - the Status-reporting note "step 4 already `cd`'d you into the worktree" → "the session starts in the worktree";
+  - the `shelved:` backlog note: Resume re-dispatches with `--worktree create`, which checks out the existing branch (step 3 of `create`), not "the existing branch recipe above";
+  - the tab rule "the **worker** handles branch creation, worktree creation, and tab rename" → `launch.sh` makes the branch and the worktree with `worker-start-dir` in the worker's tab; the worker renames the tab. The orchestrator still runs no git.
 - `pipelinely-dev` no longer needs the "new vs reuse" fork from its Step 1 filesystem check. `create` finds an existing worktree. Keep the Step 1 check only if it gates something else.
 
 ### 3. Stage skills
@@ -110,13 +117,14 @@ Each skill keeps only its values (the existing rule in step 4). Change:
 
 ### 4. `write-metrics.sh`
 
-Find the transcript by session id in any project folder: `~/.claude/projects/*/<session>.jsonl`, the first match. Session ids are UUIDs, so a match is unique. Keep the "transcript not found" error and exit 1 when nothing matches. This removes the `pwd`-based folder name, which fails for a subdir and for paths with `.`. Do not change `write-metrics.py`.
+Find the transcript by session id in any project folder: `~/.claude/projects/*/<session>.jsonl`, the first match. Session ids are UUIDs, so a match is unique. Keep the "transcript not found" error and exit 1 when nothing matches. Under `set -euo pipefail` an unmatched glob stays literal: test the match with `[ -f ]`, do not rely on `nullglob`. The `--orchestrator` mode uses the same lookup. This removes the `pwd`-based folder name, which fails for a subdir and for paths with `.`. Do not change `write-metrics.py`.
 
 ### 5. Things that do not change
 
 - `dispatch-tab.sh`: the collision check, the `STATUS` write, the ack and the pointer claim stay the same. The ack file comes before `launch.sh`, so the git step in `launch.sh` does not delay or break the ack.
 - All task-dir files (`STATUS`, `TIMELINE`, `VERIFY`, `METRICS`, `tech-design.md`) are already written by absolute path in every brief.
 - The Neo core plugin hook and `~/.claude/settings.json`: no change (TASK.md).
+- `buildDeadSessionMessage` (`src/taskParser.ts`): it tells the developer to start `claude` in the existing worktree, which agrees with this change.
 - Per-repo worktree scripts (operator `./scripts/worktree-dev.sh`): no special case. `git worktree add` works for operator today.
 
 ## Existing failures (fix in this task)
@@ -164,7 +172,25 @@ Each test runs in scratch dirs with a scratch `HOME`. No test touches the dashbo
 
 `npx playwright test --project=ui e2e/worker-start-dir.spec.ts`: 21 failed, 1 passed. The CLI tests fail with `npm error Missing script: "worker-start-dir"`. The template tests fail with `no bash launch template containing 'worker-start-dir' found`. The write-metrics subdir test fails with `transcript not found at …-some-sub.dir/…`. The test that passes is "no transcript anywhere → clear error", which already works and stays as a guard.
 
+## Overlap with neo-setup-adaptation (local milestones)
+
+M0 and M1 are on local branches only (`claude/neo-setup-adaptation-m0` acc500b, `-m1` 3c0309d), with no PR. This task is a public fix and merges to `main` first. M0 and M1 then rebase onto it. This task does not wait for them and does not take their code.
+
+- **M0 (worktree command via repo settings)** changes the same template step: it adds `repo-settings -- worktree` and a `<resolved-worktree>` path, and keeps the worker-run git sequence. After this task, that logic moves into `worker-start-dir`: M0 makes `worktreePathFor` and `createWorktree` call `resolveWorktree`, and runs the repo's `create` command with the repo root as cwd. `reuse` then checks the resolved path, not `${WORKTREES_DIR}/<slug>`. M0's prompt-text edits to step 4 and to the `<resolved-worktree>` note are then dropped. M0's server-side resolver work (`parseTask`, sweep, shelve, merge cleanup) does not collide.
+- **M1 (Orca in place of iTerm2)** changes the "rename this iTerm2 tab … using osascript" clause of the same `exec claude` line and of the handover template. This task keeps that clause as it is on `main`. The overlap is a text conflict on one line, and M1 keeps its own wording. M1's stage hand-off (close the old terminal after the ack) is not affected, because `launch.sh` runs after the ack.
+- `src/skillContract.test.ts` and `e2e/repos-root-and-lazy-onboarding.spec.ts` are edited by this task, M0 and M1. The rebase of M0 and M1 must keep this task's assertions (no `cd` into the worktree, no `worktree add` in a prompt).
+
+## Push and PR
+
+Pushes and the PR go to `ayaniv/pipelinely` (developer's amendment, 2026-11-09). Use the personal account per command only: `GH_TOKEN=$(gh auth token -u ayaniv) git push …` and `GH_TOKEN=$(gh auth token -u ayaniv) gh pr create …`. Do not run `gh auth switch`. Push and open the PR only when the developer says so in the dev session.
+
+## Timetable
+
+dev → CR → CR fixes → QA → QA fixes → merge. Each stage starts only after the stage before it is done.
+
 ## Risks
+
+- Workspace trust: Claude Code shows its trust dialog in a folder that is not trusted, and the worker then waits. The ack comes before `launch.sh`, so dispatch-tab cannot see this. On this machine `~/Dev` is trusted, so `~/Dev/worktrees/*` does not show the dialog. For other users, `docs/user-guide.md` must say to trust the worktrees folder (or its parent) one time. Dev checks the dialog in one real dispatch before the PR.
 
 - `npm` on the PATH of the tmux tab: `launch.sh` already needs `claude` on that PATH, and both come from the same Node install. If `npm` is missing, the start-dir line fails, the `|| exec bash -l` keeps the tab open, and the shell's own error shows the cause. `STATUS` stays `working` in that case only. This is acceptable, because no CLI can run to write it.
 - Start-up time: `npm run` + `tsx` adds about 1–2 s, plus the fetch. The ack check is not affected.
