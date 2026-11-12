@@ -10,7 +10,7 @@
 #    or: bash install.sh   (from an existing clone)
 # Overrides (all optional): PIPELINELY_DIR, PIPELINELY_REMOTE, and — so tests
 # never depend on the developer's own machine — PIPELINELY_APP_DIRS (where to
-# look for iTerm.app) and PIPELINELY_BREW_PREFIXES (where to look for a
+# look for iTerm.app and Orca.app) and PIPELINELY_BREW_PREFIXES (where to look for a
 # Homebrew install that isn't on PATH yet) — both colon-separated lists, so a
 # path with a space in it survives — and PIPELINELY_GH_TIMEOUT_SECONDS (how
 # long to wait on `gh auth status`, which talks to the network).
@@ -198,12 +198,29 @@ check_command() {
   fi
 }
 
-iterm_installed() {
+# $1 = app bundle name.
+app_installed() {
   local app_dir
   for app_dir in "${APP_DIRS[@]}"; do
-    [[ -d "$app_dir/iTerm.app" ]] && return 0
+    [[ -d "$app_dir/$1" ]] && return 0
   done
   return 1
+}
+
+# Worker tabs open in iTerm2 or in Orca, so either one is enough.
+check_terminal_app() {
+  local has_terminal_app=false
+  if app_installed "iTerm.app"; then
+    record_ok "iTerm2"
+    has_terminal_app=true
+  fi
+  if app_installed "Orca.app"; then
+    record_ok "Orca"
+    has_terminal_app=true
+  fi
+  if [[ "$has_terminal_app" == false ]]; then
+    record_missing "no supported terminal app found (need iTerm2 or Orca)" "brew install --cask iterm2 (or install Orca)"
+  fi
 }
 
 # `command -v git` is true on a fresh Mac with no Command Line Tools, because
@@ -307,7 +324,7 @@ print_homebrew_advice() {
 preflight() {
   echo "Checking prerequisites..."
 
-  # Everything below assumes macOS (brew fixes, iTerm2), so a positively
+  # Everything below assumes macOS (brew fixes, the terminal apps), so a positively
   # identified other OS bails out early rather than print advice that's wrong
   # there. An unresolvable uname (empty PATH) just counts as a missing item.
   local os_name
@@ -320,11 +337,7 @@ preflight() {
   else
     record_missing "macOS required (could not run uname)" "(Pipelinely only runs on macOS)"
   fi
-  if iterm_installed; then
-    record_ok "iTerm2"
-  else
-    record_missing "iTerm2 not found" "brew install --cask iterm2"
-  fi
+  check_terminal_app
   check_git
   check_node
   check_command "npm" npm "brew install node"
