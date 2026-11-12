@@ -15,6 +15,7 @@ from a blank slate.
 
 ## 2026-11-12
 
+- [#14](https://github.com/ayaniv/pipelinely/pull/14) fix: start worker sessions in their worktree
 - [#13](https://github.com/ayaniv/pipelinely/pull/13) fix(install): accept Orca as well as iTerm2 in the preflight
 
 ## 2026-10-24
