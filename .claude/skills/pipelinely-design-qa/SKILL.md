@@ -30,7 +30,7 @@ Fresh, adversarial visual comparison of an already-open PR against its Figma des
 The component, its variants and the Figma node are recorded in `INTAKE.md` and the plan in the tasks dir. The designer reads your report next and decides whether the change ships.
 
 ## Steps
-1. `cd` into the **same existing worktree** at `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>` — do not create a new worktree or branch.
+1. Work in the **same existing worktree** at `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>` (this session starts there) — do not create a new worktree or branch.
 2. Run the repo's Storybook (its `storybook` script) and open every story of the changed component. If Storybook cannot start, report what is missing and stop — never write a passing report on a guess.
 3. Screenshot every story in **Light and Dark** into `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>/design-qa/` (the tasks dir, **not** the worktree), as `<story>-<theme>.png` in lowercase kebab-case, e.g. `primary-light.png`.
 4. For each story, get the matching Figma screenshot per variant through the Figma MCP and save it beside the Storybook one as `<story>-<theme>-figma.png`. If the Figma MCP is not authenticated, report that and stop.
@@ -59,7 +59,7 @@ Periodically run `bash ~/Dev/pipelinely/scripts/write-metrics.sh` so the dashboa
 Follow `orchestrator-prompt.md` step 4's shared tab-opening procedure ("Reusable form" subsection) with:
 - `<tmux-name>`: `worker-<slug>-dqa` · `<launch-script>`: `launch-dqa.sh` (distinct filename, so the dev tab's own `launch.sh` isn't touched)
 - Claim `ITERM_SESSION`/`TMUX_SESSION`: **no** — deliberately skip that part of the procedure. Those must keep pointing at the dev tab, which is what `pipelinely-design-fixes` returns to and what the dashboard's → Terminal button reaches.
-- Worktree: **reuse existing** at `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>` — no new worktree/branch
+- Worktree: `<worktree-flags>` = `--worktree reuse --copy-task-md` — the existing worktree at `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>`; no new worktree or branch
 - `COCKPIT_STAGE`: `design-qa`
 
 ## Step 4 — Track

@@ -43,7 +43,7 @@ Fresh, independent code-review pass against an already-open PR. Judge the PR aga
 They carry the implementation session's reasoning; this review must not inherit it.
 
 ## Steps
-1. `cd` into the same existing worktree at {{worktree}} — no new worktree or branch.
+1. Work in the same existing worktree at {{worktree}} (this session starts there) — no new worktree or branch.
 2. Read the Intent files above, then `gh pr diff {{prNumber}}` for the change and `gh pr view {{prNumber}} --json title,body,baseRefName,headRefName` — the title and body are the author's CLAIMS to check, never the intent.
 3. Read `docs/engineering-constraints.md` from the repo under review if it exists, otherwise from this checkout. Review the diff for correctness bugs, missing or weak tests (both happy and failure paths), silent failures, security issues, and violations of those constraints and of the repo's existing conventions. Read the surrounding code wherever the diff alone isn't enough to judge.
 4. Intent check against INTENT.md: for every acceptance criterion, every out-of-scope line and (for a milestone) the milestone scope, decide satisfied, partial, not met or out-of-scope violated. With no criteria stated, judge against the request text plus the approved plan. Each gap is a finding: `- [Intent] <criterion> — <what is missing> — `INTENT.md:<line>``. It is Must Fix when not met or an out-of-scope line is violated, Should Fix when partial.
@@ -93,8 +93,8 @@ The CR session is told to follow this example exactly — it's fed through the d
 Follow `orchestrator-prompt.md` step 4's shared tab-opening procedure ("Reusable form" subsection) with:
 - `<tmux-name>`: the line printed by `npm --prefix $HOME/Dev/pipelinely run --silent babysit -- tmux-name worker-<slug>-cr` (`worker-<slug>-cr`, or `-cr2`, `-cr3` when a finished review session still holds the name — never kill it to reuse the name) · `<launch-script>`: `launch-cr.sh`
 - Claim `ITERM_SESSION`/`TMUX_SESSION`: **no** — deliberately skip that part of the procedure. They must keep pointing at the dev tab, which `pipelinely-cr-fixes` returns to.
-- Worktree: **reuse existing** at `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>` — no new worktree/branch
-- Launch prompt: copy nothing into the worktree (the brief is read by absolute path, and this stage must leave the worktree's own `TASK.md` alone) and open with `"Read <resolved-tasks-dir>/<slug>/TASK-cr.md. BEFORE doing any task work: (1) rename this iTerm2 tab to '<slug>-cr' using osascript; (2) cd into ${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug> and complete the task from there."` — the tasks dir is the resolved one, never the hard-coded default root.
+- Worktree: `<worktree-flags>` = `--worktree reuse` (no `--copy-task-md`: this stage must leave the worktree's own `TASK.md` alone) — the existing worktree at `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>`; no new worktree or branch
+- Launch prompt: `"Read <resolved-tasks-dir>/<slug>/TASK-cr.md. This session starts in the task's worktree. BEFORE doing any task work: (1) rename this iTerm2 tab to '<slug>-cr' using osascript; (2) complete the task from this directory, and run git, gh and npm here without cd or git -C."` — the tasks dir is the resolved one, never the hard-coded default root.
 - `COCKPIT_STAGE`: `code-review`
 
 ## Step 4 — Track

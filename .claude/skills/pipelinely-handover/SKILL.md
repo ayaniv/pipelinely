@@ -127,17 +127,20 @@ a record.
 
 ```bash
 #!/bin/bash
-cd "<resolved-tasks-dir>/<slug>"
-export COCKPIT_TASK_SLUG=<slug>
+unset REPOS_DIR TASKS_DIR WORKTREES_DIR PIPELINELY_REMOTE_TOKEN_FILE BROWSER PLAYWRIGHT_TEST COCKPIT_TASK_SLUG COCKPIT_STAGE
 export REPOS_DIR='<resolved-repos-dir>'
-exec claude "Read TASK.md then HANDOVER-<N>.md. BEFORE doing any task work: (1) rename this iTerm2 tab to '<slug>' using osascript; (2) cd to the worktree at \${WORKTREES_DIR:-\$HOME/Dev/worktrees}/<slug>; (3) continue the task from where the previous session left off."
+export COCKPIT_TASK_SLUG=<slug>
+export COCKPIT_STAGE='<stage>'
+START_DIR="$(npm --prefix "$HOME/Dev/pipelinely" run --silent worker-start-dir -- --task-dir "<resolved-tasks-dir>/<slug>" --repo "<repo>" --branch "<branch>" --worktree reuse)" || exec bash -l
+cd "$START_DIR" || exec bash -l
+exec claude "Read <resolved-tasks-dir>/<slug>/TASK.md then <resolved-tasks-dir>/<slug>/HANDOVER-<N>.md. This session starts in the task's worktree. BEFORE doing any task work: (1) rename this iTerm2 tab to '<slug>' using osascript; (2) continue the task from where the previous session left off, and run git, gh and npm here without cd or git -C."
 ```
 
-`export REPOS_DIR='<resolved-repos-dir>'` hands the successor the same configured repo root a fresh dispatch gets (see `orchestrator-prompt.md`, Repo locations); a fresh shell has no `REPOS_DIR` of its own. Single-quote it exactly as step 4 does: replace each `'` inside the path with `'\''`.
-
-The `\$` escaping keeps `${WORKTREES_DIR:-$HOME/Dev/worktrees}` unexpanded when
-bash runs this script, so it reaches the claude prompt literally and expands later
-in the *successor's* environment — not this session's.
+This is the start-dir step of `orchestrator-prompt.md` step 4, so the successor gets the same environment and starts in the same worktree as a dispatch:
+- Fill `<repo>` and `<branch>` from `TASK.md` `## Workspace`, and `<stage>` from this session's `$COCKPIT_STAGE` (empty when it is not set).
+- `--worktree reuse` with no `--copy-task-md`: the successor reads the briefs by absolute path, and the worktree's `TASK.md` stays as it is. For a task with no worktree (adopt, a research task), use `--worktree none`.
+- `export REPOS_DIR='<resolved-repos-dir>'` hands the successor the configured repo root (see `orchestrator-prompt.md`, Repo locations). Single-quote it as step 4 does: replace each `'` inside the path with `'\''`.
+- If the worktree is missing, `worker-start-dir` writes the cause to `STATUS` and `TIMELINE`, the tab stays open on a shell, and `claude` does not start.
 
 #### 6c. Open the tab
 

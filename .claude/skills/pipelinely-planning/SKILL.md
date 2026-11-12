@@ -87,7 +87,7 @@ Periodically (after `STATUS` changes, before `/pipelinely-handover`, or every ~1
 Follow `orchestrator-prompt.md` step 4's shared tab-opening procedure ("Reusable form" subsection) with:
 - `<tmux-name>`: `worker-<slug>` · `<launch-script>`: `launch.sh`
 - Claim `ITERM_SESSION`/`TMUX_SESSION`: yes — there's no prior tab for this task to protect
-- Worktree: **new** — branch is new, standard `git checkout -b claude/<slug>` flow
+- Worktree: `<worktree-flags>` = `--worktree create --copy-task-md` — `worker-start-dir` makes the branch `claude/<slug>` and its worktree
 - `COCKPIT_STAGE`: `planning`
 - **`launch.sh`'s `claude` line must be `exec claude --model opus "<prompt>"`, not bare `exec claude`.** This stage requires Opus 5 (see this skill's own description) — the shared form defaults to no model flag, so it does not get added unless stated here explicitly. Omitting it doesn't error, it just silently dispatches on the default model instead — confirm the flag is actually in `launch.sh` before opening the tab, don't just remember to add it.
 

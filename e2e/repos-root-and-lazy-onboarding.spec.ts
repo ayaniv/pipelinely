@@ -269,9 +269,20 @@ function escapeForSingleQuotes(value: string): string {
   return value.split("'").join(`'\\''`)
 }
 
+// The launch templates run `worker-start-dir` with git. These tests check only
+// the repo root that reaches the worker, so each runs with no worktree.
+function withoutWorktree(script: string): string {
+  return script.split('<worktree-flags>').join('--worktree none').split('--worktree reuse').join('--worktree none')
+}
+
 // Runs a filled launch script under bash with a stale REPOS_DIR in its
-// environment and a stub `claude` that records what it inherited.
+// environment and a stub `claude` that records what it inherited. HOME is a
+// scratch dir whose Dev/pipelinely links to this checkout, because the
+// template runs the tool from $HOME/Dev/pipelinely.
 async function runLaunchScript(script: string, workDir: string, saved: string): Promise<WorkerView> {
+  const home = await makeScratchDir('launch-home-')
+  await fs.mkdir(path.join(home, 'Dev'))
+  await fs.symlink(REPO_ROOT, path.join(home, 'Dev', 'pipelinely'))
   const binDir = path.join(workDir, 'bin')
   const recordPath = path.join(workDir, 'worker-env.txt')
   await fs.mkdir(binDir, { recursive: true })
@@ -282,12 +293,13 @@ async function runLaunchScript(script: string, workDir: string, saved: string): 
     { mode: 0o755 },
   )
   const scriptPath = path.join(workDir, 'launch.sh')
-  await fs.writeFile(scriptPath, script, { mode: 0o755 })
+  await fs.writeFile(scriptPath, withoutWorktree(script), { mode: 0o755 })
 
   const result = await execa('bash', [scriptPath], {
-    env: cleanEnv({ PATH: `${binDir}:${process.env.PATH}`, REPOS_DIR: '/stale/e2e-fixture/repos' }),
+    env: cleanEnv({ HOME: home, PATH: `${binDir}:${process.env.PATH}`, REPOS_DIR: '/stale/e2e-fixture/repos' }),
     extendEnv: false,
     reject: false,
+    input: '',
   })
   expect(result.exitCode, result.stderr).toBe(0)
   expect(saved).not.toBe('/stale/e2e-fixture/repos')
@@ -319,7 +331,7 @@ test.describe('worker launch scripts keep the saved repo root through the unset'
     const workDir = path.join(parentDir, 'work')
     await fs.mkdir(path.join(workDir, 'demo-task'), { recursive: true })
     const orchestratorTemplate = findLaunchTemplate(await readText(PROMPT_PATH), 'unset REPOS_DIR')
-    const handoverTemplate = findLaunchTemplate(await readText(path.join(SKILLS_DIR, 'handover', 'SKILL.md')), 'COCKPIT_TASK_SLUG')
+    const handoverTemplate = findLaunchTemplate(await readText(path.join(SKILLS_DIR, 'pipelinely-handover', 'SKILL.md')), 'COCKPIT_TASK_SLUG')
 
     for (const template of [orchestratorTemplate, handoverTemplate]) {
       const script = fillPlaceholders(template, {
@@ -338,27 +350,6 @@ test.describe('worker launch scripts keep the saved repo root through the unset'
     await expect(fs.access(path.join(workDir, 'pwned'))).rejects.toThrow()
   })
 
-  test('the worker prompt quotes every repo-root expansion so a root with a space still works', async () => {
-    const workDir = await makeScratchDir('launch-prompt-')
-    const savedRoot = await makeScratchDir('launch-saved-root-')
-    await fs.mkdir(path.join(workDir, 'demo-task'), { recursive: true })
-    const template = findLaunchTemplate(await readText(PROMPT_PATH), 'unset REPOS_DIR')
-    const script = fillPlaceholders(template, {
-      'resolved-tasks-dir': workDir,
-      'resolved-repos-dir': escapeForSingleQuotes(savedRoot),
-      'task-slug': 'demo-task',
-      stage: 'dev',
-      repo: 'demo-repo',
-      branch: 'claude/demo-task',
-    })
-
-    const { prompt } = await runLaunchScript(script, workDir, savedRoot)
-
-    expect(prompt).toContain('git -C ')
-    expect(prompt).not.toMatch(/git -C \$\{REPOS_DIR/)
-    expect(prompt).toMatch(/git -C "\$\{REPOS_DIR:-\$HOME\/Dev\}\/demo-repo"/)
-  })
-
   test('the export comes after the unset, so the unset still clears a stale value first', async () => {
     const template = findLaunchTemplate(await readText(PROMPT_PATH), 'unset REPOS_DIR')
     const unsetAt = template.indexOf('unset REPOS_DIR')
@@ -370,12 +361,14 @@ test.describe('worker launch scripts keep the saved repo root through the unset'
   test('handover launch script hands the successor the saved root', async () => {
     const workDir = await makeScratchDir('launch-handover-')
     const savedRoot = await makeScratchDir('launch-saved-root-')
-    const template = findLaunchTemplate(await readText(path.join(SKILLS_DIR, 'handover', 'SKILL.md')), 'COCKPIT_TASK_SLUG')
+    const template = findLaunchTemplate(await readText(path.join(SKILLS_DIR, 'pipelinely-handover', 'SKILL.md')), 'COCKPIT_TASK_SLUG')
     const script = fillPlaceholders(template, {
       'resolved-tasks-dir': workDir,
       'resolved-repos-dir': savedRoot,
       slug: 'demo-task',
       N: '2',
+      repo: 'demo-repo',
+      branch: 'claude/demo-task',
     })
     await fs.mkdir(path.join(workDir, 'demo-task'), { recursive: true })
 

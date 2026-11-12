@@ -25,6 +25,11 @@ The first run in a fresh project onboards it first (a few configuration
 questions, then your first task); every run after that goes straight to
 the orchestrator.
 
+Each worker's Claude Code session starts inside its task's worktree, under
+`~/Dev/worktrees` (or `WORKTREES_DIR`). Trust that folder, or its parent, in
+Claude Code one time. If you do not, each new worker stops at the trust
+dialog and does no work until you answer it.
+
 ## The pipeline stages
 
 `/pipelinely-planning` explores the target repo in a fresh session, decides

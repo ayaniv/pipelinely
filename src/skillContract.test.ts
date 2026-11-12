@@ -399,13 +399,13 @@ describe('orchestrator-prompt.md ds rules', () => {
 })
 
 describe('orchestrator-prompt.md Reusable form', () => {
-  it('carves pipelinely-cr out of the reuse-worktree TASK.md cp, pointing it at TASK-cr.md instead', () => {
+  it('carves pipelinely-cr out of the TASK.md copy, pointing it at TASK-cr.md instead', () => {
     const prompt = read(ORCHESTRATOR_PROMPT)
-    const reuseNote = prompt.split('\n').find((line) => line.includes('**Reuse-worktree `TASK.md` refresh')) ?? ''
-    const worktreeRow = prompt.split('\n').find((line) => line.trim().startsWith('| Worktree |')) ?? ''
+    const refreshNote = prompt.split('\n').find((line) => line.includes('**`TASK.md` refresh.**')) ?? ''
+    const worktreeRow = prompt.split('\n').find((line) => line.trim().startsWith('| `<worktree-flags>` |')) ?? ''
 
-    expect(reuseNote).toContain('TASK-cr.md')
-    expect(worktreeRow).toContain('TASK-cr.md')
+    expect(refreshNote).toContain('pipelinely-cr')
+    expect(worktreeRow).toMatch(/`--worktree reuse` \(`pipelinely-cr`, `pipelinely-merge-conflicts`: the prompt reads [^|]*TASK-cr\.md/)
   })
 })
 

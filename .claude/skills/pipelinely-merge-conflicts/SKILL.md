@@ -42,7 +42,7 @@ Base: {{baseRef}}. As of the worktree's last fetch of it (recompute after Step 1
 {{conflictingFiles}}
 
 ## Steps
-1. `cd` into the existing worktree at {{worktree}} — no new worktree or branch. Check `git status` is clean first; if it is not, stop and say so. Run `echo "working" > {{taskDir}}/STATUS`, then `git fetch origin`.
+1. Work in the existing worktree at {{worktree}} (this session starts there) — no new worktree or branch. Check `git status` is clean first; if it is not, stop and say so. Run `echo "working" > {{taskDir}}/STATUS`, then `git fetch origin`.
 2. Run `git merge {{baseRef}}` — a merge commit, never a rebase, so the PR's history stays and nothing needs a force-push. Never force-push.
 3. Resolve each conflicting file keeping BOTH sides' intent: read what {{baseRef}} changed there (`git log -p HEAD..{{baseRef}} -- <file>`) and what this branch changed, then write the version that does both. Every export either side added stays; no duplicate definitions; one source of truth for anything both sides touch — never copy a function to make both compile. Check files git auto-merged for semantic breakage too (duplicate or contradicting rules, imports of something the other side renamed), not only for conflict markers. Never drop {{baseRef}}'s code to make a test pass, and never weaken or delete a test.
 4. Verify: the Verifier above, plus the repo's typecheck and unit tests (where it has them: `npx tsc --noEmit`, `npx tsc --noEmit -p web`, `npx vitest run --maxWorkers=3`) and the Playwright `ui` project specs covering the conflicted files (`npx playwright test --project=ui --workers=2 <specs>`). Never run test:e2e:integration, test:e2e:vm or anything under e2e/integration. A failure: re-run it alone once, compare against a clean {{baseRef}} scratch worktree under your scratchpad (removed afterwards), and fix it only if the merge caused it.
@@ -78,8 +78,8 @@ Periodically run `bash ~/Dev/pipelinely/scripts/write-metrics.sh` so the dashboa
 Follow `orchestrator-prompt.md` step 4's shared tab-opening procedure ("Reusable form" subsection) with:
 - `<tmux-name>`: `worker-<slug>-merge` · `<launch-script>`: `launch-merge.sh`
 - Claim `ITERM_SESSION`/`TMUX_SESSION`: **no** — deliberately skip that part of the procedure. They must keep pointing at the dev tab, which the next stage returns to.
-- Worktree: **reuse existing** at `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>` — no new worktree/branch
-- Launch prompt: copy nothing into the worktree (the brief is read by absolute path, and this stage must leave the worktree's own `TASK.md` alone) and open with `"Read <resolved-tasks-dir>/<slug>/TASK-merge.md. BEFORE doing any task work: (1) rename this iTerm2 tab to '<slug>-merge' using osascript; (2) cd into ${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug> and complete the task from there."` — the tasks dir is the resolved one, never the hard-coded default root.
+- Worktree: `<worktree-flags>` = `--worktree reuse` (no `--copy-task-md`: this stage must leave the worktree's own `TASK.md` alone) — the existing worktree at `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>`; no new worktree or branch
+- Launch prompt: `"Read <resolved-tasks-dir>/<slug>/TASK-merge.md. This session starts in the task's worktree. BEFORE doing any task work: (1) rename this iTerm2 tab to '<slug>-merge' using osascript; (2) complete the task from this directory, and run git, gh and npm here without cd or git -C."` — the tasks dir is the resolved one, never the hard-coded default root.
 - `COCKPIT_STAGE`: `merge-conflicts`
 
 ## Step 4 — Track

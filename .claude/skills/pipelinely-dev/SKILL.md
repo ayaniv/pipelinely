@@ -27,7 +27,7 @@ If the slug does **not** match `<parent>-m<N>`, treat it as an ordinary flat tas
 
 Before writing anything, check whether `${TASKS_DIR:-$HOME/Dev/pipelinely/tasks}/<slug>` already exists. If it does and `STATUS` reads `done`, this is a re-dispatch — append a `## ⚠️ NEW REQUEST (<date>)` section to its `TASK.md`, record the new words with `scripts/write-intent.sh --amend --source "NEW REQUEST <date>"` (or `--create` if the dir has no `INTENT.md` yet; Step 2's heredoc form), retire the old session (`tmux kill-session -t =worker-<slug> 2>/dev/null; exit 0`), reset `STATUS` to `working`. If it exists with any other `STATUS` (e.g. `waiting: plan ready for review` from `pipelinely-planning`, or `waiting: plan reviewed, ready for dev` from `pipelinely-plan-review`), that's expected for a flat task continuing the pipeline — proceed.
 
-**Separately, check whether the worktree already exists**, regardless of milestone-vs-flat: `[ -d "${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>" ]`. This is what actually decides new-vs-reuse in Steps 2-3 below — a milestone child's worktree never exists yet (first dispatch for that exact slug), so it's always new; a flat task's worktree was already created by `pipelinely-planning`, so it must be reused, never re-created. Do not assume "milestone = new, flat = new" — check the filesystem, since a milestone slug re-dispatched after a `git worktree remove` (post-merge cleanup) would also need a new one, and a flat task always needs a reuse.
+You do not check whether the worktree exists: `--worktree create` uses a worktree already on `claude/<slug>` (a flat task after `pipelinely-planning`), and makes one from the branch or from origin when there is none (a milestone child, or a slug after post-merge cleanup).
 
 ## Step 2 — Write `TASK.md`
 
@@ -84,7 +84,7 @@ Periodically run `bash ~/Dev/pipelinely/scripts/write-metrics.sh` so the dashboa
 Follow `orchestrator-prompt.md` step 4's shared tab-opening procedure ("Reusable form" subsection) with:
 - `<tmux-name>`: `worker-<slug>` · `<launch-script>`: `launch.sh`
 - Claim `ITERM_SESSION`/`TMUX_SESSION`: yes — this is the tab `pipelinely-qa-fixes`/`pipelinely-cr-fixes` will return to
-- Worktree: depends on the Step 1 filesystem check — **new** (standard `git checkout -b claude/<slug>` flow) if `${WORKTREES_DIR:-$HOME/Dev/worktrees}/<slug>` didn't already exist; **reuse existing** (no `git worktree add`; `cp` the fresh `TASK.md` in, then `cd`, per the shared form's reuse-worktree note) if it did
+- Worktree: `<worktree-flags>` = `--worktree create --copy-task-md`
 - `COCKPIT_STAGE`: `dev`
 
 ## Step 4 — Track
